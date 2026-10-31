@@ -1,0 +1,126 @@
+# Builds Ignite for Windows (Setup .exe + zip) and Linux (AppImage + tar.gz).
+# Run it from the Actions tab ("Run workflow") to get the files as artifacts, or
+# push a tag like v1.2.0 to also publish a GitHub release with all of them.
+name: Build
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write  # Only used by the release job, on tag pushes.
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: windows
+          # The oldest Ubuntu GitHub offers: a Linux build runs on systems as new or newer than where it was built.
+          - os: ubuntu-22.04
+            name: linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install system libraries
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libegl1 libgl1 libxkbcommon0 libxkbcommon-x11-0 \
+            libfontconfig1 libdbus-1-3 file
+
+      - name: Install
+        run: pip install -e ".[desktop,build]"
+
+      # tests/ is kept private; this runs only in a copy of the repo that has it.
+      - name: Test
+        if: hashFiles('tests/**/*.py') != ''
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m unittest
+
+      - name: Install Inno Setup
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup --no-progress -y
+          }
+
+      - name: Install appimagetool
+        if: runner.os == 'Linux'
+        run: |
+          curl -fL --retry 3 -o "$RUNNER_TEMP/appimagetool" \
+            https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x "$RUNNER_TEMP/appimagetool"
+          echo "APPIMAGETOOL=$RUNNER_TEMP/appimagetool" >> "$GITHUB_ENV"
+          echo "APPIMAGE_EXTRACT_AND_RUN=1" >> "$GITHUB_ENV"  # Runners have no FUSE to mount AppImages.
+
+      - name: Build
+        run: python packaging/build.py
+
+      # Launch the real app and check its log: catches modules or files that
+      # PyInstaller missed, which unit tests can't see.
+      - name: Smoke-test the exe
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+          IGNITE_CONFIG_DIR: ${{ runner.temp }}\ignite-smoke
+        run: |
+          $app = Start-Process dist\Ignite\Ignite.exe -PassThru
+          Start-Sleep -Seconds 20
+          $log = Get-Content "$env:IGNITE_CONFIG_DIR\logs\ignite.log" -Raw
+          Stop-Process -Id $app.Id -Force -ErrorAction SilentlyContinue
+          Write-Output $log
+          if ($log -notmatch "WinVaultKeyring") { throw "The exe can't reach Windows Credential Manager." }
+          if ($log -notmatch "overlay: degraded") { throw "The overlay server didn't start." }
+
+      - name: Smoke-test the Linux app
+        if: runner.os == 'Linux'
+        env:
+          QT_QPA_PLATFORM: offscreen
+          IGNITE_CONFIG_DIR: ${{ runner.temp }}/ignite-smoke
+        run: |
+          dist/Ignite/Ignite &
+          app=$!
+          sleep 20
+          kill "$app" 2>/dev/null || true
+          log="$IGNITE_CONFIG_DIR/logs/ignite.log"
+          cat "$log"
+          grep -q "overlay: degraded" "$log" || { echo "The overlay server didn't start."; exit 1; }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Ignite-${{ matrix.name }}
+          path: |
+            dist/Ignite-*.zip
+            dist/Ignite-*.tar.gz
+            dist/Ignite-*.AppImage
+            dist/Ignite-Setup-*.exe
+          if-no-files-found: error
+
+  # One release with every file, once both builds have passed.
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

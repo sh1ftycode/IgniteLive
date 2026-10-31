@@ -10,6 +10,18 @@ speech, all in one place.
 > `Programs\Ignite`. Keychain entries, `.shiftyprofile` files and `SHIFTYTOOL_*`
 > environment variables keep working.
 
+## Download
+
+Get the latest build from [Releases](https://github.com/sh1ftycode/IgniteLive/releases):
+
+- **Windows:** `Ignite-Setup-<version>.exe` (installer) or the `-windows.zip`.
+- **Linux:** `Ignite-<version>-x86_64.AppImage`: `chmod +x` it and run it. Or
+  unpack the `-linux.tar.gz` and run `Ignite/Ignite`.
+
+Builds come from GitHub Actions (`.github/workflows/build.yml`): push a tag
+like `v1.2.0` to publish a release, or run the workflow by hand from the Actions
+tab to get the files as artifacts.
+
 ## Why
 
 I was chilling in a VC with colleagues setting up OBS for TikTok and YouTube

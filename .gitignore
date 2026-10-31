@@ -10,6 +10,4 @@ packaging/bundled_keys.json
 
 # Kept locally, not published.
 tests/
-packaging/
-.github/
 maindoc/
