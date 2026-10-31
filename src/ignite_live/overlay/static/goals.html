@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ignite · Goals</title>
+<style>
+/*{{THEMES}}*/
+.wrap { padding: var(--gap); display: flex; flex-direction: column; gap: var(--gap); }
+.goal .bar { height: 0.9em; margin-top: 0.5em; }
+.goal .bar i { transition: width 0.6s ease; }
+.goal.done .bar i { background: var(--accent-2); }
+.goal .row { display: flex; justify-content: space-between; align-items: baseline; gap: 1em; }
+</style>
+</head>
+<body>
+<div class="wrap" id="wrap"></div>
+<script>
+/*{{COMMON}}*/
+// Goal bars from the Overlays tab. Options: &goal=<id> shows only that goal (default: all of them).
+const only = ST.params.get("goal");
+const wrap = document.getElementById("wrap");
+const cards = new Map();
+
+ST.on("goals", (m) => {
+  const goals = (m.goals || []).filter((g) => !only || g.id === only);
+  const keep = new Set(goals.map((g) => g.id));
+  for (const [id, card] of cards) {
+    if (!keep.has(id)) { card.remove(); cards.delete(id); }
+  }
+  goals.forEach((g) => {
+    let card = cards.get(g.id);
+    if (!card) {
+      card = ST.el("section", "card goal");
+      const row = ST.el("div", "row");
+      row.append(ST.el("div", "title"), ST.el("div", "meta"));
+      const bar = ST.el("div", "bar");
+      bar.append(ST.el("i"));
+      card.append(ST.el("div", "eyebrow"), row, bar);
+      cards.set(g.id, card);
+    }
+    wrap.append(card); // Keeps the app's order.
+    const wasDone = card.classList.contains("done");
+    card.querySelector(".eyebrow").textContent = g.name;
+    card.querySelector(".title").textContent = g.label;
+    card.querySelector(".meta").textContent = `${Math.floor(g.percent)}%`;
+    card.querySelector(".bar i").style.width = `${Math.max(0, Math.min(100, g.percent))}%`;
+    card.classList.toggle("done", g.done);
+    if (g.done && !wasDone) { // Replay the theme's "new" animation as a small celebration.
+      card.classList.remove("swap");
+      void card.offsetWidth;
+      card.classList.add("swap");
+    }
+  });
+});
+</script>
+</body>
+</html>

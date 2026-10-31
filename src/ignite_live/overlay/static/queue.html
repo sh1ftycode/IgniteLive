@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ignite · Up next</title>
+<style>
+/*{{THEMES}}*/
+.wrap { height: 100%; padding: var(--gap); }
+.rows { margin-top: 0.6em; }
+.empty { color: var(--muted); font-size: 0.8em; margin-top: 0.6em; }
+.empty b { color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap"><section class="card">
+  <div class="eyebrow" id="heading">Up next</div>
+  <ul class="rows" id="rows"></ul>
+  <div class="empty" id="empty">Request a song: <b>!sr song - artist</b></div>
+</section></div>
+<script>
+/*{{COMMON}}*/
+const limit = Math.max(1, Math.min(15, parseInt(ST.params.get("rows") || "5", 10)));
+ST.on("state", (state) => {
+  const upcoming = state.queue.upcoming.slice(0, limit);
+  document.getElementById("heading").textContent = ST.t("overlay.up_next", "Up next");
+  const empty = document.getElementById("empty");
+  empty.replaceChildren(...ST.tBold("overlay.queue_empty", "Request a song: {command}"));
+  empty.hidden = upcoming.length > 0;
+  document.getElementById("rows").replaceChildren(...upcoming.map((item, i) => {
+    const li = ST.el("li");
+    li.append(ST.el("span", "num", String(i + 1)), ST.el("span", "song", item.title || item.video_id),
+      ST.el("span", "who", item.requested_by));
+    return li;
+  }));
+});
+</script>
+</body>
+</html>

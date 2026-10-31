@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.venv/
+.env
+*.sqlite3
+*.egg-info/
+build/
+dist/
+packaging/bundled_keys.json
+
+# Kept locally, not published.
+tests/
+packaging/
+.github/
+maindoc/

@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ignite · Chat</title>
+<style>
+/*{{THEMES}}*/
+</style>
+</head>
+<body>
+<div class="chat" id="chat"></div>
+<script>
+/*{{COMMON}}*/
+// Options: &max=1..30 lines (default 8), &fade=seconds before a line disappears (default 45, 0 = never),
+// &gifts=0 / &follows=0 to hide those, &platforms=all / 0 for platform badges (see common.js).
+const max = Math.max(1, Math.min(30, parseInt(ST.params.get("max") || "8", 10)));
+const fade = Math.max(0, parseInt(ST.params.get("fade") || "45", 10));
+const show = { comment: true, gift: ST.params.get("gifts") !== "0", follow: ST.params.get("follows") !== "0" };
+const chat = document.getElementById("chat");
+
+function giftValues(m) {
+  const value = m.amount ? ` · ${m.amount}` : m.diamonds ? ` · ${m.diamonds.toLocaleString()} diamonds` : "";
+  return { gift: m.gift, count: m.count, times: m.count !== 1 ? ` ×${m.count}` : "", value, amount: m.amount || "",
+           message: m.message || "", platform: m.platform_name };
+}
+
+ST.on("chat", (m) => {
+  if (!show[m.kind]) return;
+  const line = ST.el("div", `line ${m.kind}`);
+  const body = ST.el("div");
+  const who = ST.el("div", "who-line", m.name);
+  const platform = ST.platformBadge(m);
+  if (platform) who.prepend(platform, " ");
+  (m.badges || []).forEach((b) => who.append(ST.el("span", "badge", b)));
+  let text;
+  if (m.kind === "gift") text = ST.t("overlay.chat_gift", "sent {gift}{times}{value}", giftValues(m));
+  else if (m.kind === "follow") text = ST.t("overlay.chat_follow", "followed", { platform: m.platform_name });
+  else text = m.text;
+  body.append(who, ST.el("div", "text", text));
+  if (m.kind === "gift" && m.message) body.append(ST.el("div", "text", m.message));
+  line.append(ST.avatar(m.name, m.avatar), body);
+  chat.append(line);
+  while (chat.children.length > max) chat.firstElementChild.remove();
+  if (fade) setTimeout(() => { line.classList.add("gone"); setTimeout(() => line.remove(), 700); }, fade * 1000);
+});
+</script>
+</body>
+</html>

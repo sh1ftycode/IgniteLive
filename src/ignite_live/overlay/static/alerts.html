@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ignite · Alerts</title>
+<style>
+/*{{THEMES}}*/
+</style>
+</head>
+<body>
+<div class="alert-wrap" id="wrap"></div>
+<script>
+/*{{COMMON}}*/
+// Shows gifts, follows, and alerts from action rules one at a time, and plays the rules' sounds.
+// Options: &seconds=2..15 (default 5), &follows=0, &min=<diamonds>, &sound=0 (silent copy, e.g. a second canvas)
+const seconds = Math.max(2, Math.min(15, parseInt(ST.params.get("seconds") || "5", 10)));
+const showFollows = ST.params.get("follows") !== "0";
+const playSounds = ST.params.get("sound") !== "0";
+const minDiamonds = Math.max(0, parseInt(ST.params.get("min") || "0", 10));
+const wrap = document.getElementById("wrap");
+const queue = [];
+let busy = false;
+let quiet = false; // Panic mode: nothing shows or plays until the streamer resumes.
+
+ST.on("state", (s) => {
+  quiet = !!s.quiet;
+  if (quiet) {
+    queue.length = 0;
+    wrap.replaceChildren();
+    busy = false;
+  }
+});
+
+ST.on("chat", (m) => {
+  if (quiet) return;
+  if (m.kind === "gift" && (m.diamonds || 0) >= minDiamonds) queue.push(m);
+  else if (m.kind === "follow" && showFollows) queue.push(m);
+  if (queue.length > 50) queue.shift(); // Don't fall minutes behind during a gift storm.
+  next();
+});
+ST.on("alert", (m) => {
+  if (quiet) return;
+  queue.push({ ...m, kind: "custom" });
+  if (queue.length > 50) queue.shift();
+  next();
+});
+ST.on("sound", (m) => play(m.sound, m.volume));
+
+function play(name, volume) {
+  if (!playSounds || !name || quiet) return;
+  const audio = new Audio(`/sounds/${encodeURIComponent(name)}?token=${encodeURIComponent(ST.params.get("token") || "")}`);
+  audio.volume = Math.max(0, Math.min(100, volume ?? 100)) / 100;
+  audio.play().catch(() => {}); // A missing or unplayable file just stays silent.
+}
+
+function showCustom(m) {
+  const card = ST.el("section", "card alert");
+  const text = ST.el("div");
+  text.append(ST.el("div", "eyebrow", m.title), ST.el("div", "title", m.text));
+  card.append(text);
+  if (m.image) {
+    const big = ST.el("div", "big");
+    const img = ST.el("img");
+    img.referrerPolicy = "no-referrer";
+    img.src = m.image;
+    big.append(img);
+    card.append(big);
+  }
+  play(m.sound, m.volume);
+  return card;
+}
+
+function next() {
+  if (busy || !queue.length) return;
+  busy = true;
+  const m = queue.shift();
+  if (m.kind === "custom") {
+    const custom = showCustom(m);
+    wrap.replaceChildren(custom);
+    return finish(custom);
+  }
+  const card = ST.el("section", "card alert");
+  const text = ST.el("div");
+  const value = m.amount ? ` · ${m.amount}` : m.diamonds ? ` · ${m.diamonds.toLocaleString()} diamonds` : "";
+  const values = { gift: m.gift, count: m.count, times: m.count !== 1 ? ` ×${m.count}` : "", value,
+                   amount: m.amount || "", message: m.message || "",
+                   platform: m.platform_name || "" };
+  const eyebrow = ST.el("div", "eyebrow", m.kind === "gift"
+    ? ST.t("overlay.alert_gift_title", "New gift", values) : ST.t("overlay.alert_follow_title", "New follower", values));
+  const platform = ST.platformBadge(m);
+  if (platform) eyebrow.append(" ", platform);
+  text.append(eyebrow,
+    ST.el("div", "title", m.name),
+    ST.el("div", "meta", m.kind === "gift"
+      ? ST.t("overlay.alert_gift_text", "sent {gift}{value}", values) : ST.t("overlay.alert_follow_text", "just followed", values)));
+  if (m.kind === "gift" && m.message) text.append(ST.el("div", "meta", m.message));
+  card.append(ST.avatar(m.name, m.avatar), text);
+  if (m.kind === "gift") {
+    if (m.image) {
+      const big = ST.el("div", "big");
+      const img = ST.el("img");
+      img.referrerPolicy = "no-referrer";
+      img.src = m.image;
+      big.append(img);
+      card.append(big);
+    }
+    card.append(ST.el("div", "count", m.amount && m.count === 1 ? m.amount : `×${m.count}`));
+  }
+  wrap.replaceChildren(card);
+  finish(card);
+}
+
+function finish(card) {
+  setTimeout(() => {
+    card.classList.add("fade", "hide");
+    setTimeout(() => {
+      if (!card.isConnected) return; // Cleared by panic mode: a newer alert may be showing now.
+      card.remove();
+      busy = false;
+      next();
+    }, 400);
+  }, seconds * 1000);
+}
+</script>
+</body>
+</html>

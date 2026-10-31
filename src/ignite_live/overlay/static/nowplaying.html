@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ignite · Now playing</title>
+<style>
+/*{{THEMES}}*/
+.wrap { height: 100%; padding: var(--gap); display: flex; align-items: center; }
+.card { width: 100%; display: flex; gap: 0.9em; align-items: center; }
+.cover { width: 4em; height: 4em; flex: none; border-radius: calc(var(--radius) / 2); object-fit: cover; }
+.cover[hidden] { display: none; }
+.body { flex: 1; min-width: 0; }
+</style>
+</head>
+<body>
+<div class="wrap"><section class="card fade hide" id="card">
+  <img class="cover" id="cover" alt="" referrerpolicy="no-referrer" hidden>
+  <div class="body">
+    <div class="eyebrow" id="label">Now playing</div>
+    <div class="title" id="title"></div>
+    <div class="meta" id="meta"></div>
+    <div class="bar"><i id="bar"></i></div>
+    <div class="times"><span id="pos"></span><span id="dur"></span></div>
+  </div>
+</section></div>
+<script>
+/*{{COMMON}}*/
+const $ = (id) => document.getElementById(id);
+let currentId = null;
+ST.on("state", (state) => {
+  const current = state.queue.current;
+  $("label").textContent = ST.t("overlay.now_playing", "Now playing");
+  $("card").classList.toggle("hide", !current); // Hides itself when nothing plays.
+  if (!current) { currentId = null; return; }
+  if (current.id !== currentId) {
+    $("bar").style.width = "0";
+    $("pos").textContent = $("dur").textContent = "";
+    $("card").classList.remove("swap");
+    void $("card").offsetWidth; // Restart the theme's "new song" animation.
+    $("card").classList.add("swap");
+  }
+  currentId = current.id;
+  $("cover").hidden = !current.image;
+  if (current.image) $("cover").src = current.image;
+  $("title").textContent = current.title || current.video_id;
+  $("meta").replaceChildren(current.channel ? current.channel + " · " : "", "requested by ",
+    ST.el("b", null, current.requested_by));
+});
+ST.on("progress", (p) => {
+  if (p.item_id !== currentId) return;
+  $("bar").style.width = p.duration ? `${Math.min(100, (p.position / p.duration) * 100)}%` : "0";
+  $("pos").textContent = ST.clock(p.position);
+  $("dur").textContent = p.duration ? ST.clock(p.duration) : "";
+});
+</script>
+</body>
+</html>

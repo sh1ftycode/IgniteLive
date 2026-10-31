@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<title>Ignite · Music player</title>
+<style>
+/*{{THEMES}}*/
+.overlay { height: 100%; padding: var(--gap); display: grid; gap: var(--gap);
+  grid-template-columns: minmax(200px, 1fr) minmax(220px, 34%); align-items: center; }
+@media (orientation: portrait) {
+  .overlay { grid-template-columns: 1fr; grid-template-rows: auto auto 1fr; align-content: start; }
+}
+/* YouTube requires the player to be visible, uncovered, and at least 200x200. */
+.screen { position: relative; width: 100%; aspect-ratio: 16 / 9; min-width: 200px; min-height: 200px;
+  border-radius: var(--radius); overflow: hidden; background: #000; border: var(--border); box-shadow: var(--shadow); }
+.screen iframe, #yt { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+.screen.idle { display: none; }
+.screen.demo { display: grid; place-items: center; color: var(--muted); font-size: 0.8em;
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 35%, #000), #000 70%); }
+.next { margin-top: 0.8em; padding-top: 0.7em; border-top: 1px solid var(--line); }
+.next li { color: var(--muted); font-size: 0.76em; margin-top: 0.3em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.next li b { color: var(--text); }
+.next:empty { display: none; }
+.toast { margin-top: 0.8em; font-size: 0.76em; border-left: 3px solid var(--accent); padding-left: 0.6em;
+  opacity: 0; transition: opacity 240ms; }
+.toast.show { opacity: 1; }
+.song { display: flex; gap: 0.8em; align-items: center; }
+</style>
+</head>
+<body>
+<main class="overlay">
+  <section class="screen idle" id="screen"><div id="yt"></div></section>
+  <aside class="card">
+    <div class="song">
+      <div style="min-width:0">
+        <div class="eyebrow" id="label">Song requests</div>
+        <div class="title" id="title">Nothing playing</div>
+        <div class="meta" id="meta"></div>
+      </div>
+    </div>
+    <div class="bar"><i id="bar"></i></div>
+    <div class="times"><span id="pos"></span><span id="dur"></span></div>
+    <ul class="next" id="next"></ul>
+    <div class="toast" id="toast"></div>
+  </aside>
+</main>
+<script>
+/*{{COMMON}}*/
+const $ = (id) => document.getElementById(id);
+let player = null, ready = false, latest = null, loaded = null, toastTimer = 0, youtubeLoading = false;
+
+function render(state) {
+  const queue = state.queue, current = queue.current;
+  $("screen").classList.toggle("idle", !current);
+  $("label").textContent = current
+    ? ST.t("overlay.now_playing", "Now playing") : ST.t("overlay.song_requests", "Song requests");
+  $("title").textContent = current ? current.title || current.video_id : ST.t("overlay.nothing_playing", "Nothing playing");
+  const meta = $("meta");
+  meta.replaceChildren();
+  if (current) {
+    meta.append(current.channel ? current.channel + " · " : "", "requested by ", ST.el("b", null, current.requested_by));
+  } else {
+    meta.append(...ST.tBold("overlay.request_hint", "Type {command} in chat"));
+    $("bar").style.width = "0";
+    $("pos").textContent = $("dur").textContent = "";
+  }
+  $("next").replaceChildren(...queue.upcoming.slice(0, 3).map((item, i) => {
+    const li = ST.el("li");
+    li.append(i === 0 ? ST.t("overlay.next", "Next: ") : "", ST.el("b", null, item.title || item.video_id), " · " + item.requested_by);
+    return li;
+  }));
+}
+
+function loadYouTube() {
+  if (youtubeLoading) return;
+  youtubeLoading = true;
+  const api = document.createElement("script");
+  api.src = "https://www.youtube.com/iframe_api";
+  document.head.append(api);
+}
+
+function apply(state) {
+  latest = state;
+  render(state);
+  if (ST.demo) return; // Preview: no video, the screen shows a placeholder.
+  loadYouTube();
+  if (!ready) return;
+  player.setVolume(state.volume);
+  const current = state.queue.current;
+  if (!current) {
+    if (loaded !== null) player.stopVideo();
+    loaded = null;
+  } else if (current.id !== loaded) {
+    loaded = current.id;
+    if (state.paused) player.cueVideoById(current.video_id); // Panic mode: ready, but not playing.
+    else player.loadVideoById(current.video_id);
+  } else if (state.paused) {
+    player.pauseVideo();
+  } else if (player.getPlayerState() === YT.PlayerState.PAUSED || player.getPlayerState() === YT.PlayerState.CUED) {
+    player.playVideo(); // Resumed after panic.
+  }
+}
+
+ST.on("state", apply);
+if (ST.demo) {
+  $("screen").classList.add("demo");
+  $("screen").textContent = "The video plays here";
+  ST.on("progress", (p) => {
+    $("bar").style.width = `${(p.position / p.duration) * 100}%`;
+    $("pos").textContent = ST.clock(p.position);
+    $("dur").textContent = ST.clock(p.duration);
+  });
+}
+ST.on("toast", (message) => {
+  $("toast").textContent = message.text;
+  $("toast").classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => $("toast").classList.remove("show"), 5000);
+});
+
+// Report progress so the now-playing and visualizer overlays can follow along.
+setInterval(() => {
+  if (!ready || loaded === null) return;
+  const position = player.getCurrentTime() || 0, duration = player.getDuration() || 0;
+  const playing = player.getPlayerState() === YT.PlayerState.PLAYING;
+  $("bar").style.width = duration ? `${Math.min(100, (position / duration) * 100)}%` : "0";
+  $("pos").textContent = ST.clock(position);
+  $("dur").textContent = duration ? ST.clock(duration) : "";
+  ST.send({ type: "progress", item_id: loaded, position, duration, playing });
+}, 500);
+
+window.onYouTubeIframeAPIReady = () => {
+  player = new YT.Player("yt", {
+    width: "100%", height: "100%",
+    playerVars: { autoplay: 1, controls: 0, rel: 0, playsinline: 1, origin: location.origin },
+    events: {
+      onReady: () => { ready = true; if (latest) apply(latest); },
+      onStateChange: (event) => {
+        if (event.data === YT.PlayerState.ENDED) ST.send({ type: "ended", item_id: loaded });
+        else if (event.data === YT.PlayerState.PLAYING) ST.send({ type: "playing", item_id: loaded });
+      },
+      // 2 bad id, 5 HTML5 error, 100 removed/private, 101/150 embedding disabled.
+      onError: (event) => ST.send({ type: "error", item_id: loaded, code: event.data }),
+    },
+  });
+};
+</script>
+</body>
+</html>

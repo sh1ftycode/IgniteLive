@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ignite · Overlay themes</title>
+<style>
+/* No color-scheme here: a dark scheme on this page makes Chromium paint the (light) iframes opaque white. */
+* { box-sizing: border-box; }
+body { margin: 0; background: #0c0e18; color: #e8ebf7; font: 15px/1.4 system-ui, "Segoe UI", sans-serif; }
+header { padding: 20px 24px 8px; }
+h1 { margin: 0 0 4px; font-size: 22px; }
+header p { margin: 0; color: #a5afa7; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 560px), 1fr)); gap: 18px; padding: 16px 24px 32px; }
+.tile { background: #171c1a; border: 1px solid #2a312e; border-radius: 12px; overflow: hidden; }
+.tile.current { border-color: #7c6cff; box-shadow: 0 0 0 1px #7c6cff; }
+.head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; }
+.head b { font-size: 16px; }
+.head span { color: #a5afa7; font-size: 13px; }
+button { font: inherit; background: #7c6cff; color: #fff; border: 0; border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+.tile.current button { background: #2a312e; color: #a5afa7; cursor: default; }
+/* A busy "game" backdrop, so the transparent overlays are judged the way they look on stream. */
+.scene { position: relative; aspect-ratio: 16 / 9;
+  background: radial-gradient(circle at 20% 30%, #3b5d50 0, transparent 40%), radial-gradient(circle at 80% 70%, #5b3b5d 0, transparent 45%),
+    linear-gradient(160deg, #24303a, #12181c 60%, #2b2218); }
+.scene iframe { position: absolute; inset: 0; width: 200%; height: 200%; border: 0; transform: scale(0.5); transform-origin: 0 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Overlay themes</h1>
+  <p>Every theme with sample songs and chat. “Use this theme” switches all your overlays at once.</p>
+</header>
+<main class="grid" id="grid"></main>
+<script>
+"use strict";
+const THEMES = /*{{THEME_LIST}}*/;
+const params = new URLSearchParams(location.search);
+const token = params.get("token") || "";
+const grid = document.getElementById("grid");
+const tiles = {};
+let socket = null;
+
+for (const [key, name] of Object.entries(THEMES)) {
+  const tile = document.createElement("section");
+  tile.className = "tile";
+  const head = document.createElement("div");
+  head.className = "head";
+  const label = document.createElement("div");
+  const title = document.createElement("b");
+  title.textContent = name;
+  const code = document.createElement("span");
+  code.textContent = ` · &theme=${key}`;
+  label.append(title, code);
+  const use = document.createElement("button");
+  use.textContent = "Use this theme";
+  use.onclick = () => socket && socket.send(JSON.stringify({ type: "choose_theme", theme: key }));
+  head.append(label, use);
+  const scene = document.createElement("div");
+  scene.className = "scene";
+  const frame = document.createElement("iframe");
+  frame.loading = "lazy";
+  frame.src = `/overlay/showcase?token=${encodeURIComponent(token)}&theme=${key}&demo=1`;
+  scene.append(frame);
+  tile.append(head, scene);
+  grid.append(tile);
+  tiles[key] = { tile, use };
+}
+
+function connect() {
+  socket = new WebSocket(`ws://${location.host}/ws?token=${encodeURIComponent(token)}&preview=1`);
+  socket.onmessage = (event) => {
+    const message = JSON.parse(event.data);
+    if (message.type !== "state") return;
+    for (const [key, { tile, use }] of Object.entries(tiles)) {
+      const current = key === message.theme;
+      tile.classList.toggle("current", current);
+      use.textContent = current ? "In use" : "Use this theme";
+    }
+  };
+  socket.onclose = () => setTimeout(connect, 2000);
+}
+connect();
+</script>
+</body>
+</html>

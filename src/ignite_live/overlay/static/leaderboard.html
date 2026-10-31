@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ignite · Leaderboard</title>
+<style>
+/*{{THEMES}}*/
+.wrap { padding: var(--gap); }
+.board .rows { display: flex; flex-direction: column; gap: 0.45em; margin-top: 0.6em; }
+.board .row { display: flex; align-items: center; gap: 0.7em; }
+.board .rank { width: 1.8em; text-align: center; font-weight: 700; opacity: 0.8; }
+.board .row:first-child .rank { opacity: 1; color: var(--accent); }
+.board .who { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.board .value { font-variant-numeric: tabular-nums; opacity: 0.85; }
+.board .empty { opacity: 0.6; margin-top: 0.6em; }
+.callout { margin-bottom: var(--gap); }
+.callout[hidden] { display: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <section class="card callout fade" id="callout" hidden><div class="eyebrow" id="callout-label"></div>
+    <div class="title" id="callout-name"></div></section>
+  <section class="card board"><div class="eyebrow" id="title">Top gifters</div><div class="rows" id="rows"></div></section>
+</div>
+<script>
+/*{{COMMON}}*/
+// Options: &board=gifters|likers|chatters|points, &period=stream|alltime, &rows=1..10 (default 5), &callout=0
+const kind = ["gifters", "likers", "chatters", "points"].includes(ST.params.get("board")) ? ST.params.get("board") : "gifters";
+const period = kind === "points" ? "alltime" : (ST.params.get("period") === "alltime" ? "alltime" : "stream");
+const board = `${kind}:${period}`;
+const rowsWanted = Math.max(1, Math.min(10, parseInt(ST.params.get("rows") || "5", 10)));
+const callouts = ST.params.get("callout") !== "0";
+const $ = (id) => document.getElementById(id);
+let hideTimer = null;
+
+ST.on("leaderboards", (m) => {
+  const data = (m.boards || {})[board];
+  if (!data) return;
+  $("title").textContent = data.title;
+  const list = (data.rows || []).slice(0, rowsWanted);
+  if (!list.length) {
+    $("rows").replaceChildren(ST.el("div", "empty", "Nobody yet. Be the first!"));
+    return;
+  }
+  $("rows").replaceChildren(...list.map((row, i) => {
+    const line = ST.el("div", "row");
+    const who = ST.el("div", "who", row.name);
+    const badge = ST.platformBadge(row);
+    if (badge) who.append(" ", badge);
+    line.append(ST.el("div", "rank", `${i + 1}`), ST.avatar(row.name, ""), who,
+                ST.el("div", "value", `${Number(row.value).toLocaleString()} ${data.unit}`));
+    return line;
+  }));
+});
+
+ST.on("leader", (m) => {
+  if (!callouts || m.board !== board) return;
+  $("callout-label").textContent = "New #1";
+  $("callout-name").textContent = `${m.name} takes the top spot!`;
+  const card = $("callout");
+  card.hidden = false;
+  card.classList.remove("hide", "swap");
+  void card.offsetWidth; // Replay the theme's "new" animation.
+  card.classList.add("swap");
+  clearTimeout(hideTimer);
+  hideTimer = setTimeout(() => {
+    card.classList.add("hide");
+    setTimeout(() => { card.hidden = true; }, 400);
+  }, 4500);
+});
+</script>
+</body>
+</html>

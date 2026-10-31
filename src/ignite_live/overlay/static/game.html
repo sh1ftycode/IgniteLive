@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ignite · Game</title>
+<style>
+/*{{THEMES}}*/
+.wrap { padding: var(--gap); display: flex; flex-direction: column; gap: var(--gap); }
+.row { display: flex; align-items: baseline; justify-content: space-between; gap: 1em; }
+.team { font-weight: 700; font-size: 1.15em; }
+.team small, .how { display: block; font-weight: 400; font-size: 0.75em; opacity: 0.75; }
+.score { font-variant-numeric: tabular-nums; }
+.rope { position: relative; height: 1.3em; border-radius: var(--bar-radius); overflow: hidden; margin-top: 0.6em;
+        display: flex; background: var(--line); }
+.rope > i { display: block; height: 100%; transition: width 0.5s ease; }
+.rope > b { position: absolute; top: -0.2em; width: 0.35em; height: 1.7em; background: var(--text, #fff);
+            border-radius: 0.2em; transform: translateX(-50%); transition: left 0.5s ease; }
+.timer { font-variant-numeric: tabular-nums; opacity: 0.8; }
+.boss { display: flex; gap: 1em; align-items: center; }
+.boss img, .boss .monster { width: 5.5em; height: 5.5em; object-fit: contain; flex: none; font-size: 1em; }
+.boss .body { flex: 1; min-width: 0; }
+.bar.hp { height: 1em; }
+.hit { animation: hit 0.25s ease; }
+@keyframes hit { 25% { transform: translateX(-4px); } 75% { transform: translateX(4px); } }
+.top { display: flex; gap: 1.2em; flex-wrap: wrap; margin-top: 0.5em; font-size: 0.85em; opacity: 0.85; }
+.option { margin-top: 0.55em; }
+.option .bar { height: 0.8em; margin-top: 0.25em; }
+.winner[hidden], .card[hidden] { display: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <section class="card winner fade" id="winner" hidden><div class="eyebrow" id="winner-label"></div>
+    <div class="title" id="winner-text"></div><div class="meta" id="winner-mvp"></div></section>
+  <section class="card fade hide" id="game"></section>
+</div>
+<script>
+// The default boss: a little monster in the theme's colours, drawn as SVG.
+function monster() {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 64 64");
+  svg.setAttribute("class", "monster");
+  const shapes = [
+    ["path", { d: "M14 20 L19 6 L27 17 Z M50 20 L45 6 L37 17 Z", style: "fill: var(--accent-2, #22c7e8)" }],
+    ["rect", { x: 8, y: 14, width: 48, height: 42, rx: 15, style: "fill: var(--accent, #7c6cff)" }],
+    ["circle", { cx: 24, cy: 32, r: 6.5, fill: "#fff" }],
+    ["circle", { cx: 40, cy: 32, r: 6.5, fill: "#fff" }],
+    ["circle", { cx: 25.5, cy: 33, r: 3, fill: "#111" }],
+    ["circle", { cx: 41.5, cy: 33, r: 3, fill: "#111" }],
+    ["path", { d: "M21 45 L25.5 49 L30 45 L34 49 L38.5 45 L43 49", fill: "none", stroke: "#fff",
+               "stroke-width": 2.5, "stroke-linejoin": "round", "stroke-linecap": "round" }],
+  ];
+  for (const [tag, attrs] of shapes) {
+    const node = document.createElementNS(ns, tag);
+    for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
+    svg.append(node);
+  }
+  return svg;
+}
+/*{{COMMON}}*/
+// Shows whichever game is running (Games tab): tug-of-war, boss fight, or poll. Hides itself when none is.
+const $ = (id) => document.getElementById(id);
+const card = $("game");
+let lastHp = null, winnerTimer = null;
+
+function timer(seconds) {
+  return seconds === null || seconds === undefined ? "" : ST.clock(seconds);
+}
+
+function podium(list, unit) {
+  const box = ST.el("div", "top");
+  (list || []).forEach((p, i) => box.append(ST.el("span", null, `${i + 1}. ${p.name} · ${Number(p.value).toLocaleString()} ${unit}`)));
+  return box;
+}
+
+function tug(g) {
+  const left = ST.el("div", "team"), right = ST.el("div", "team");
+  left.style.color = g.left.color;
+  right.style.color = g.right.color;
+  left.append(`${g.left.name} · `, ST.el("span", "score", Number(g.left.score).toLocaleString()), ST.el("small", null, g.left.how));
+  right.append(ST.el("span", "score", Number(g.right.score).toLocaleString()), ` · ${g.right.name}`, ST.el("small", null, g.right.how));
+  right.style.textAlign = "right";
+  const head = ST.el("div", "row");
+  head.append(left, ST.el("div", "timer", timer(g.remaining)), right);
+  const share = (1 - g.position) / 2; // Left's share of the rope.
+  const rope = ST.el("div", "rope");
+  const l = ST.el("i"), r = ST.el("i"), knot = ST.el("b");
+  l.style.background = g.left.color;
+  r.style.background = g.right.color;
+  l.style.width = `${share * 100}%`;
+  r.style.width = `${(1 - share) * 100}%`;
+  knot.style.left = `${share * 100}%`;
+  rope.append(l, r, knot);
+  return [ST.el("div", "eyebrow", "Tug-of-war"), head, rope, podium(g.top, "pulled")];
+}
+
+function boss(g) {
+  const box = ST.el("div", "boss");
+  if (g.image) {
+    const img = ST.el("img");
+    img.referrerPolicy = "no-referrer";
+    img.src = g.image.startsWith("https://") ? g.image
+      : `/images/${encodeURIComponent(g.image)}?token=${encodeURIComponent(ST.params.get("token") || "")}`;
+    box.append(img);
+  } else {
+    box.append(monster());
+  }
+  const body = ST.el("div", "body");
+  const head = ST.el("div", "row");
+  head.append(ST.el("div", "title", `${g.name} · Level ${g.level}`), ST.el("div", "timer", timer(g.remaining)));
+  const bar = ST.el("div", "bar hp");
+  const fill = ST.el("i");
+  fill.style.width = `${Math.max(0, (g.hp / g.max_hp) * 100)}%`;
+  bar.append(fill);
+  const hp = ST.el("div", "row");
+  hp.append(ST.el("div", "meta", `${Number(g.hp).toLocaleString()} / ${Number(g.max_hp).toLocaleString()} HP`),
+            ST.el("div", "meta", g.last_hit || "Likes and gifts deal damage"));
+  body.append(head, bar, hp, podium(g.top, "damage"));
+  box.append(body);
+  if (lastHp !== null && g.hp < lastHp) {
+    box.classList.add("hit");
+  }
+  lastHp = g.hp;
+  return [ST.el("div", "eyebrow", g.defeated ? `Boss fight · ${g.defeated} defeated` : "Boss fight"), box];
+}
+
+function poll(g) {
+  const head = ST.el("div", "row");
+  head.append(ST.el("div", "title", g.question), ST.el("div", "timer", timer(g.remaining)));
+  const options = g.options.map((o, i) => {
+    const line = ST.el("div", "option");
+    const label = ST.el("div", "row");
+    label.append(ST.el("div", null, `${i + 1}. ${o.label}`), ST.el("div", "meta", `${o.votes} · ${Math.round(o.percent)}%`));
+    const bar = ST.el("div", "bar");
+    const fill = ST.el("i");
+    fill.style.width = `${o.percent}%`;
+    bar.append(fill);
+    line.append(label, bar);
+    return line;
+  });
+  return [ST.el("div", "eyebrow", "Poll"), head, ...options,
+          ST.el("div", "how", `${g.how} · ${g.total} vote${g.total === 1 ? "" : "s"}`)];
+}
+
+ST.on("game", (m) => {
+  const g = m.game;
+  card.classList.toggle("hide", !g);
+  if (!g) { lastHp = null; return; }
+  const build = { tug, boss, poll }[g.kind];
+  if (build) card.replaceChildren(...build(g));
+});
+
+ST.on("game_over", (m) => {
+  $("winner-label").textContent = m.label;
+  $("winner-text").textContent = m.winner === "Nobody" ? "Nobody won this time" : `${m.winner} wins!`;
+  $("winner-mvp").textContent = m.mvp ? `MVP: ${m.mvp}` : "";
+  const box = $("winner");
+  box.hidden = false;
+  box.classList.remove("hide", "swap");
+  void box.offsetWidth;
+  box.classList.add("swap");
+  clearTimeout(winnerTimer);
+  winnerTimer = setTimeout(() => { box.classList.add("hide"); setTimeout(() => { box.hidden = true; }, 400); }, 8000);
+});
+</script>
+</body>
+</html>

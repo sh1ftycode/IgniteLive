@@ -1,0 +1,38 @@
+# Ignite backend + Caddy (automatic HTTPS). Run from this folder:
+#   cp .env.example .env   # then edit it
+#   docker compose up -d --build
+#   docker compose exec server ignite-server add-user YOURNAME
+services:
+  server:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - shiftytool-data:/data
+    # Not published: only Caddy can reach it.
+    expose:
+      - "8787"
+
+  caddy:
+    image: caddy:2.8
+    restart: unless-stopped
+    depends_on:
+      - server
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      IGNITE_DOMAIN: ${IGNITE_DOMAIN:-${SHIFTYTOOL_DOMAIN:?Set IGNITE_DOMAIN in deploy/.env}}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  # Named before the rename to Ignite; renaming it would start servers on an empty volume.
+  shiftytool-data:
+  caddy-data:
+  caddy-config:

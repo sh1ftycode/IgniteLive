@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ignite · Visualizer</title>
+<style>
+/*{{THEMES}}*/
+</style>
+</head>
+<body>
+<div class="viz" id="viz"></div>
+<script>
+/*{{COMMON}}*/
+// Animated, not audio-reactive: YouTube doesn't let pages read its audio.
+// It follows the play state: moving while a song plays, settling when paused or idle.
+// Options: &bars=8..128 (default 48), &style=mirror, &speed=0.5..2
+const count = Math.max(8, Math.min(128, parseInt(ST.params.get("bars") || "48", 10)));
+const speed = Math.max(0.5, Math.min(2, parseFloat(ST.params.get("speed") || "1")));
+const viz = document.getElementById("viz");
+if (ST.params.get("style") === "mirror") viz.classList.add("mirror");
+const bars = Array.from({ length: count }, () => viz.appendChild(ST.el("i")));
+const heights = new Float32Array(count);
+const seeds = Array.from({ length: count }, (_, i) => [Math.random() * 6.28, 0.6 + Math.random() * 1.4, i / count]);
+let hasSong = false, playing = null, lastProgress = 0, energy = 0;
+
+ST.on("state", (state) => { hasSong = !!state.queue.current; });
+ST.on("progress", (p) => { playing = p.playing; lastProgress = performance.now(); });
+
+function frame(now) {
+  // Use the player's reports when they arrive; otherwise assume "playing" whenever a song is queued.
+  const fresh = now - lastProgress < 2500;
+  const active = hasSong && (fresh ? playing : true);
+  energy += ((active ? 1 : 0) - energy) * 0.05;
+  const t = (now / 1000) * speed;
+  const beat = Math.pow(Math.max(0, Math.sin(t * Math.PI * 2 * 0.95)), 6); // ~114 bpm pulse
+  for (let i = 0; i < count; i++) {
+    const [phase, rate, pos] = seeds[i];
+    const bass = 1 - pos * 0.55; // Lower "frequencies" on the left move more.
+    const wave = 0.5 + 0.5 * Math.sin(t * 3.1 * rate + phase) * Math.sin(t * 1.7 + pos * 9);
+    const target = energy * bass * (0.25 + 0.55 * wave + 0.35 * beat * (pos < 0.35 ? 1 : 0.4));
+    heights[i] += (target - heights[i]) * 0.22;
+    bars[i].style.height = `${Math.max(2, heights[i] * 100)}%`;
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
