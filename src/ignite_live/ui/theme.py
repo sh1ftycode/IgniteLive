@@ -1,8 +1,8 @@
-"""App appearance: a dark or a light mode (Preferences → Appearance).
+"""App appearance: dark, light, a season, a holiday, or "Seasonal" (Preferences → Appearance).
 
 Both modes are Qt's Fusion style (through a thin proxy for dock titles and
 spacing), a matching ``QPalette``, and one app-wide stylesheet, built from one
-of the two palettes below. Change a colour there and the whole app follows.
+of the palettes below. Change a colour there and the whole app follows.
 
 Rules the stylesheet follows: content (chat, stream stats) stands out, the UI
 around it stays quiet. Colour only where it means something: orange for the
@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ignite_live.core import seasons
 from ignite_live.core.events import ConnectionState
 
 
@@ -92,8 +93,92 @@ LIGHT = Palette(
     tiktok="#0E8F8B", twitch="#7B3FE4", youtube="#D9302A",
 )
 
-PALETTES = {"dark": DARK, "light": LIGHT}
-THEMES = {"dark": "Dark", "light": "Light"}  # Saved setting value -> name in Preferences.
+# Holiday modes: dark palettes in seasonal colours. Same rules as Dark: one accent for the main action and
+# selection, red only for live and danger, and text that stays readable.
+CHRISTMAS = Palette(
+    name="christmas", dark=True,
+    window="#0B1611", panel="#10201A", raised="#172C24", divider="#22392F",
+    text="#EEF4EF", text_muted="#93A99C", text_disabled="#5E7368",
+    accent="#E8B54A", accent_hover="#F0C567", accent_pressed="#D9A53A", accent_text="#E8B54A", on_accent="#1A1405",
+    live="#E5394B", live_hover="#EA5464", live_pressed="#CF2E40", on_live="#FFFFFF",
+    healthy="#4CC38A", warning="#F28C38",
+    panel_alt="#13251E", selected="#333822", pressed="#2A4237", handle="#2A4237",
+    tiktok="#25F4EE", twitch="#A970FF", youtube="#FF4E45",
+)
+
+HALLOWEEN = Palette(
+    name="halloween", dark=True,
+    window="#0D0A12", panel="#15111C", raised="#1F1928", divider="#2C2338",
+    text="#F1ECF7", text_muted="#A396B5", text_disabled="#6B5F7D",
+    accent="#FF7A1A", accent_hover="#FF9447", accent_pressed="#EB6A0C", accent_text="#FF8A33", on_accent="#1A0D02",
+    live="#E5394B", live_hover="#EA5464", live_pressed="#CF2E40", on_live="#FFFFFF",
+    healthy="#7BD88F", warning="#F5D04C",
+    panel_alt="#19141F", selected="#33204A", pressed="#33284A", handle="#3A2D4D",
+    tiktok="#25F4EE", twitch="#B98CFF", youtube="#FF4E45",
+)
+
+THANKSGIVING = Palette(
+    name="thanksgiving", dark=True,
+    window="#140E0A", panel="#1C1510", raised="#271D16", divider="#35281E",
+    text="#F6EEE4", text_muted="#B9A48F", text_disabled="#7A6656",
+    accent="#E9963A", accent_hover="#F0AA5A", accent_pressed="#D6852B", accent_text="#EFA04A", on_accent="#1E1206",
+    live="#E0473F", live_hover="#E6625B", live_pressed="#C93A33", on_live="#FFFFFF",
+    healthy="#8DBF5A", warning="#F2C65A",
+    panel_alt="#201812", selected="#3D2A17", pressed="#3A2C21", handle="#3A2C21",
+    tiktok="#25F4EE", twitch="#A970FF", youtube="#FF4E45",
+)
+
+# Seasons: dark palettes too, same rules.
+SPRING = Palette(
+    name="spring", dark=True,
+    window="#0E1512", panel="#141D19", raised="#1C2722", divider="#27352E",
+    text="#EEF5F0", text_muted="#95AA9E", text_disabled="#627468",
+    accent="#F28DB2", accent_hover="#F5A6C3", accent_pressed="#E57AA1", accent_text="#F49CBC", on_accent="#2A0F1A",
+    live="#E5394B", live_hover="#EA5464", live_pressed="#CF2E40", on_live="#FFFFFF",
+    healthy="#6CD49A", warning="#F5C451",
+    panel_alt="#18221D", selected="#372F31", pressed="#2E3D35", handle="#2E3D35",
+    tiktok="#25F4EE", twitch="#A970FF", youtube="#FF4E45",
+)
+
+SUMMER = Palette(
+    name="summer", dark=True,
+    window="#0B1420", panel="#101C2A", raised="#172636", divider="#213245",
+    text="#EEF4FA", text_muted="#93A7BC", text_disabled="#5F7389",
+    accent="#2EC4B6", accent_hover="#4FD3C7", accent_pressed="#22AFA2", accent_text="#3CCFC1", on_accent="#04201D",
+    live="#F2425E", live_hover="#F45D75", live_pressed="#DE3550", on_live="#FFFFFF",
+    healthy="#8BD66B", warning="#FFC145",
+    panel_alt="#13202F", selected="#15373F", pressed="#22364B", handle="#2A3F55",
+    tiktok="#25F4EE", twitch="#A970FF", youtube="#FF4E45",
+)
+
+AUTUMN = Palette(
+    name="autumn", dark=True,
+    window="#12120C", panel="#191A12", raised="#222419", divider="#2F3123",
+    text="#F3F1E6", text_muted="#ABA88F", text_disabled="#6F6C58",
+    accent="#E3B341", accent_hover="#EBC261", accent_pressed="#D4A332", accent_text="#E8BB52", on_accent="#1C1504",
+    live="#E0473F", live_hover="#E6625B", live_pressed="#C93A33", on_live="#FFFFFF",
+    healthy="#8FBF5A", warning="#F08A3C",
+    panel_alt="#1D1E15", selected="#393219", pressed="#34372A", handle="#34372A",
+    tiktok="#25F4EE", twitch="#A970FF", youtube="#FF4E45",
+)
+
+WINTER = Palette(
+    name="winter", dark=True,
+    window="#0C121A", panel="#121A24", raised="#19232F", divider="#24303E",
+    text="#EEF3F8", text_muted="#97A6B8", text_disabled="#627184",
+    accent="#7CC4FF", accent_hover="#9AD2FF", accent_pressed="#62B5F5", accent_text="#8ACBFF", on_accent="#06121F",
+    live="#F2425E", live_hover="#F45D75", live_pressed="#DE3550", on_live="#FFFFFF",
+    healthy="#5FD3A0", warning="#F5C451",
+    panel_alt="#151E29", selected="#233547", pressed="#2A3747", handle="#2C3A4C",
+    tiktok="#25F4EE", twitch="#A970FF", youtube="#FF4E45",
+)
+
+PALETTES = {"dark": DARK, "light": LIGHT, "spring": SPRING, "summer": SUMMER, "autumn": AUTUMN, "winter": WINTER,
+            "halloween": HALLOWEEN, "thanksgiving": THANKSGIVING, "christmas": CHRISTMAS}
+# Saved setting value -> name in Preferences. "Seasonal" picks a season or holiday by the date (core/seasons.py).
+THEMES = {"dark": "Dark", "light": "Light", seasons.SEASONAL: seasons.SEASONAL_LABEL, "spring": "Spring",
+          "summer": "Summer", "autumn": "Autumn", "winter": "Winter", "halloween": "Halloween",
+          "thanksgiving": "Thanksgiving", "christmas": "Christmas"}
 
 # The app icon keeps its own colours, so the logo stays the same in either mode.
 LOGO_TILE = "#12152A"
@@ -140,8 +225,10 @@ def colors() -> Palette:
 
 
 def resolve_theme(name: str) -> str:
-    """"dark" or "light". Anything else (e.g. an older "system") follows the desktop's colour scheme."""
-    if name in THEMES:
+    """The palette to use: "seasonal" picks today's; an unknown name (e.g. an older "system") follows the desktop's
+    colour scheme."""
+    name = seasons.resolve(name)
+    if name in PALETTES:
         return name
     hints = QGuiApplication.styleHints() if QGuiApplication.instance() is not None else None
     return "light" if hints is not None and hints.colorScheme() == Qt.ColorScheme.Light else "dark"

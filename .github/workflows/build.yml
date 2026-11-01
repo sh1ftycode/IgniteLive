@@ -120,6 +120,13 @@ jobs:
           path: dist
           merge-multiple: true
 
+      # Ignite's updater only installs a file whose SHA-256 matches this list.
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum Ignite-* > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*

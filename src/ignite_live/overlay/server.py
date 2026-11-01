@@ -53,7 +53,15 @@ THEMES = {
     "bloodmoon": "Blood Moon",
     "ocean": "Deep Ocean",
     "brutal": "Neo-Brutalist",
+    "spring": "Spring",
+    "summer": "Summer",
+    "autumn": "Autumn",
+    "winter": "Winter",
+    "halloween": "Halloween",
+    "thanksgiving": "Thanksgiving",
+    "christmas": "Christmas",
 }
+# The app also offers "Seasonal" (core/seasons.py): it resolves that to one of the themes above before sending it.
 # Pages for the app's previews, not for OBS: every theme side by side, and the page each tile shows.
 PREVIEW_PAGES = ("gallery", "showcase")
 MUSIC_PAGE = "nowplaying"  # The overlay that plays the song requests.

@@ -1,7 +1,7 @@
 /* Ignite overlay themes. Every overlay page inlines this file.
    A theme is a set of variables on :root[data-theme=…] plus a few signature rules.
    Fonts come from Google Fonts; without internet the fallbacks are used. */
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@500;700;800&family=Orbitron:wght@600;800&family=Rajdhani:wght@600;700&family=Press+Start+2P&family=Nunito:wght@600;800&family=Audiowide&family=Chakra+Petch:wght@500;700&family=VT323&family=Cinzel:wght@600;800&family=EB+Garamond:wght@500;700&family=Fredoka:wght@500;700&family=Creepster&family=Quicksand:wght@500;700&family=Space+Grotesk:wght@500;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@500;700;800&family=Orbitron:wght@600;800&family=Rajdhani:wght@600;700&family=Press+Start+2P&family=Nunito:wght@600;800&family=Audiowide&family=Chakra+Petch:wght@500;700&family=VT323&family=Cinzel:wght@600;800&family=EB+Garamond:wght@500;700&family=Fredoka:wght@500;700&family=Creepster&family=Quicksand:wght@500;700&family=Space+Grotesk:wght@500;700&family=Mountains+of+Christmas:wght@700&family=Griffy&family=Lora:wght@500;700&display=swap");
 
 :root {
   /* Minimal: the Ignite app colours. */
@@ -259,6 +259,130 @@
   --pop: slam;
 }
 
+/* Seasons. */
+:root[data-theme="spring"] {
+  --font: "Quicksand", "Segoe UI", system-ui, sans-serif;
+  --surface: rgba(22, 38, 31, 0.86);
+  --line: rgba(242, 141, 178, 0.32);
+  --text: #fbf7f9;
+  --muted: #cfe3d6;
+  --accent: #f28db2;
+  --accent-2: #8fd6a8;
+  --radius: 20px;
+  --border: 1px solid rgba(242, 141, 178, 0.38);
+  --shadow: 0 8px 26px rgba(0, 0, 0, 0.25);
+  --bar-radius: 999px;
+  --on-accent: #2a0f1a;
+  --enter: rise;
+  --pop: bounce;
+}
+
+:root[data-theme="summer"] {
+  --font: "Fredoka", "Segoe UI", system-ui, sans-serif;
+  --surface: rgba(8, 40, 62, 0.86);
+  --line: rgba(46, 196, 182, 0.4);
+  --text: #ffffff;
+  --muted: #bfe6ef;
+  --accent: #ffc145;
+  --accent-2: #2ec4b6;
+  --radius: 18px;
+  --border: 1px solid rgba(46, 196, 182, 0.45);
+  --shadow: 0 8px 28px rgba(0, 20, 40, 0.35);
+  --glow: 0 0 12px rgba(255, 193, 69, 0.45);
+  --bar-radius: 999px;
+  --on-accent: #2a1a00;
+  --enter: rise;
+}
+
+:root[data-theme="autumn"] {
+  --font: "Nunito", "Segoe UI", system-ui, sans-serif;
+  --title-font: "EB Garamond", Georgia, serif;
+  --surface: rgba(36, 30, 16, 0.88);
+  --line: rgba(227, 179, 65, 0.32);
+  --text: #fff8e8;
+  --muted: #e0cf9e;
+  --accent: #e3b341;
+  --accent-2: #c8553d;
+  --radius: 14px;
+  --border: 1px solid rgba(227, 179, 65, 0.38);
+  --shadow: 0 10px 28px rgba(0, 0, 0, 0.3);
+  --bar-radius: 999px;
+  --on-accent: #1c1504;
+  --enter: drift;
+}
+
+:root[data-theme="winter"] {
+  --font: "Quicksand", "Segoe UI", system-ui, sans-serif;
+  --surface: rgba(14, 26, 42, 0.78);
+  --line: rgba(124, 196, 255, 0.38);
+  --text: #f4f9ff;
+  --muted: #b8cbe0;
+  --accent: #7cc4ff;
+  --accent-2: #e8f4ff;
+  --radius: 16px;
+  --border: 1px solid rgba(200, 230, 255, 0.45);
+  --shadow: 0 0 24px rgba(124, 196, 255, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  --glow: 0 0 10px rgba(124, 196, 255, 0.55);
+  --bar-radius: 999px;
+  --on-accent: #06121f;
+  --enter: rise;
+}
+
+/* Holiday themes. */
+:root[data-theme="christmas"] {
+  --font: "Nunito", "Segoe UI", system-ui, sans-serif;
+  --title-font: "Mountains of Christmas", Georgia, serif;
+  --surface: rgba(14, 42, 31, 0.88);
+  --line: rgba(232, 181, 74, 0.32);
+  --text: #fdf8ef;
+  --muted: #cfe0d4;
+  --accent: #e5394b;
+  --accent-2: #e8b54a;
+  --radius: 16px;
+  --border: 1px solid rgba(232, 181, 74, 0.45);
+  --shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+  --glow: 0 0 10px rgba(232, 181, 74, 0.45);
+  --bar-radius: 999px;
+  --on-accent: #ffffff;
+  --enter: rise;
+}
+
+:root[data-theme="halloween"] {
+  --font: "Nunito", "Segoe UI", system-ui, sans-serif;
+  --title-font: "Griffy", "Creepster", "Impact", fantasy;
+  --surface: rgba(22, 12, 32, 0.90);
+  --line: rgba(255, 122, 26, 0.38);
+  --text: #f7efff;
+  --muted: #bca8d6;
+  --accent: #ff7a1a;
+  --accent-2: #9d5cff;
+  --radius: 12px;
+  --border: 1px solid rgba(157, 92, 255, 0.45);
+  --shadow: 0 0 24px rgba(157, 92, 255, 0.28);
+  --glow: 0 0 10px rgba(255, 122, 26, 0.6);
+  --title-spacing: 0.03em;
+  --bar-radius: 999px;
+  --on-accent: #1a0d02;
+  --enter: rise;
+  --pop: bounce;
+}
+
+:root[data-theme="thanksgiving"] {
+  --font: "Nunito", "Segoe UI", system-ui, sans-serif;
+  --title-font: "Lora", Georgia, serif;
+  --surface: rgba(48, 28, 16, 0.88);
+  --line: rgba(233, 150, 58, 0.32);
+  --text: #fff6ea;
+  --muted: #e6caa6;
+  --accent: #e9963a;
+  --accent-2: #c0392b;
+  --radius: 18px;
+  --border: 1px solid rgba(233, 150, 58, 0.4);
+  --shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+  --bar-radius: 999px;
+  --on-accent: #2a1606;
+}
+
 /* Base. */
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; background: transparent; color: var(--text); font-family: var(--font);
@@ -395,12 +519,90 @@ ul { list-style: none; }
 :root[data-theme="brutal"] .avatar { border: 2px solid #000; }
 :root[data-theme="brutal"] .bar { border: 2px solid #000; height: 12px; }
 
+/* Spring: blossom petals drifting on the cards, a pink-to-green bar. */
+:root[data-theme="spring"] .card, :root[data-theme="spring"] .line {
+  background: radial-gradient(ellipse 4px 2.5px at 14% 26%, rgba(242, 141, 178, 0.55), transparent),
+    radial-gradient(ellipse 3px 2px at 71% 18%, rgba(255, 214, 230, 0.5), transparent),
+    radial-gradient(ellipse 4px 2.5px at 46% 80%, rgba(242, 141, 178, 0.4), transparent),
+    linear-gradient(160deg, rgba(28, 48, 39, 0.9), rgba(20, 34, 28, 0.9)); }
+:root[data-theme="spring"] .eyebrow::before { content: "🌸 "; }
+:root[data-theme="spring"] .bar > i { background: linear-gradient(90deg, var(--accent-2), var(--accent)); }
+
+/* Summer: sun over the sea, a shimmering sun-to-sea bar. */
+:root[data-theme="summer"] .card, :root[data-theme="summer"] .line {
+  background: linear-gradient(180deg, rgba(12, 58, 86, 0.9), rgba(6, 34, 54, 0.9) 70%, rgba(10, 70, 82, 0.9)); }
+:root[data-theme="summer"] .title { color: var(--accent); text-shadow: var(--glow); }
+:root[data-theme="summer"] .eyebrow { color: var(--accent-2); }
+:root[data-theme="summer"] .eyebrow::before { content: "☀ "; color: var(--accent); }
+:root[data-theme="summer"] .bar > i { background: linear-gradient(90deg, var(--accent), var(--accent-2), var(--accent));
+  background-size: 200% 100%; animation: wave 4s linear infinite; }
+
+/* Autumn: golden leaves, an olive-to-rust card, a gold-to-rust bar. */
+:root[data-theme="autumn"] .card, :root[data-theme="autumn"] .line {
+  background: linear-gradient(150deg, rgba(46, 40, 20, 0.92), rgba(34, 28, 14, 0.92) 55%, rgba(58, 26, 16, 0.92)); }
+:root[data-theme="autumn"] .title { color: #ffe39a; font-size: 1.25em; }
+:root[data-theme="autumn"] .eyebrow::before { content: "🍁 "; }
+:root[data-theme="autumn"] .bar > i { background: linear-gradient(90deg, var(--accent), #d98a2b, var(--accent-2)); }
+
+/* Winter: frosted glass with falling snow, an icy bar. */
+:root[data-theme="winter"] .card, :root[data-theme="winter"] .line {
+  -webkit-backdrop-filter: blur(14px) saturate(140%); backdrop-filter: blur(14px) saturate(140%);
+  background: radial-gradient(circle at 10% 30%, rgba(255, 255, 255, 0.6) 0 1px, transparent 2px),
+    radial-gradient(circle at 33% 70%, rgba(255, 255, 255, 0.45) 0 1.2px, transparent 2px),
+    radial-gradient(circle at 58% 22%, rgba(255, 255, 255, 0.5) 0 1px, transparent 2px),
+    radial-gradient(circle at 84% 64%, rgba(255, 255, 255, 0.45) 0 1.2px, transparent 2px),
+    var(--surface); }
+:root[data-theme="winter"] .title { text-shadow: var(--glow); }
+:root[data-theme="winter"] .eyebrow::before { content: "❅ "; color: var(--accent-2); }
+:root[data-theme="winter"] .bar > i { background: linear-gradient(90deg, #e8f4ff, var(--accent)); box-shadow: var(--glow); }
+
+/* Christmas: a light snowfall on the cards, gold labels, a candy-cane progress bar. */
+:root[data-theme="christmas"] .card, :root[data-theme="christmas"] .line {
+  background: radial-gradient(circle at 12% 22%, rgba(255, 255, 255, 0.5) 0 1px, transparent 2px),
+    radial-gradient(circle at 37% 74%, rgba(255, 255, 255, 0.35) 0 1px, transparent 2px),
+    radial-gradient(circle at 64% 18%, rgba(255, 255, 255, 0.45) 0 1.2px, transparent 2px),
+    radial-gradient(circle at 88% 61%, rgba(255, 255, 255, 0.35) 0 1px, transparent 2px),
+    linear-gradient(160deg, rgba(20, 58, 42, 0.92), rgba(12, 36, 27, 0.92)); }
+:root[data-theme="christmas"] .title { color: var(--accent-2); text-shadow: var(--glow); font-size: 1.3em; }
+:root[data-theme="christmas"] .eyebrow { color: var(--accent); }
+:root[data-theme="christmas"] .eyebrow::before { content: "❄ "; color: #fff; }
+:root[data-theme="christmas"] .bar > i { background: repeating-linear-gradient(45deg, var(--accent) 0 7px, #fff 7px 14px); }
+:root[data-theme="christmas"] .line.gift { border-color: var(--accent-2); }
+
+/* Halloween: a glowing pumpkin title, a cobweb in the corner, purple and orange. */
+:root[data-theme="halloween"] .title { color: var(--accent); text-shadow: var(--glow); font-size: 1.3em; }
+:root[data-theme="halloween"] .eyebrow { color: var(--accent-2); }
+:root[data-theme="halloween"] .eyebrow::before { content: "🎃 "; }
+:root[data-theme="halloween"] .card::after { content: ""; position: absolute; top: 0; right: 0; width: 3.2em; height: 3.2em;
+  pointer-events: none; border-radius: 0 var(--radius) 0 0; opacity: 0.35;
+  background: repeating-radial-gradient(circle at 100% 0, transparent 0 0.5em, rgba(255, 255, 255, 0.7) 0.5em 0.56em),
+    repeating-conic-gradient(from 180deg at 100% 0, transparent 0 13deg, rgba(255, 255, 255, 0.7) 13deg 14deg, transparent 14deg 22.5deg);
+  -webkit-mask: linear-gradient(225deg, #000 40%, transparent 70%); mask: linear-gradient(225deg, #000 40%, transparent 70%); }
+:root[data-theme="halloween"] .bar > i { background: linear-gradient(90deg, var(--accent-2), var(--accent)); }
+
+/* Thanksgiving: a warm harvest glow, falling-leaf labels, an amber-to-cranberry bar. */
+:root[data-theme="thanksgiving"] .card, :root[data-theme="thanksgiving"] .line {
+  background: linear-gradient(150deg, rgba(74, 40, 18, 0.92), rgba(44, 24, 14, 0.92) 60%, rgba(60, 22, 16, 0.92)); }
+:root[data-theme="thanksgiving"] .title { color: #ffe3b8; }
+:root[data-theme="thanksgiving"] .eyebrow::before { content: "🍂 "; }
+:root[data-theme="thanksgiving"] .bar > i { background: linear-gradient(90deg, #f2c14e, var(--accent), var(--accent-2)); }
+:root[data-theme="thanksgiving"] .line.gift { border-color: #f2c14e; }
+
 /* Visualizer bars per theme. */
 :root[data-theme="synthwave"] .viz i { background: linear-gradient(0deg, #ff2a6d, #ffb347 70%, #fff); }
 :root[data-theme="cyberpunk"] .viz i, :root[data-theme="brutal"] .viz i, :root[data-theme="terminal"] .viz i { border-radius: 0; }
 :root[data-theme="terminal"] .viz i { background: repeating-linear-gradient(0deg, var(--accent) 0 6px, transparent 6px 8px); }
 :root[data-theme="brutal"] .viz i { border: 2px solid #000; }
 :root[data-theme="bloodmoon"] .viz i { background: linear-gradient(0deg, #3a0000, var(--accent)); }
+
+:root[data-theme="spring"] .viz i { background: linear-gradient(0deg, var(--accent-2), var(--accent)); }
+:root[data-theme="summer"] .viz i { background: linear-gradient(0deg, var(--accent-2), var(--accent)); }
+:root[data-theme="autumn"] .viz i { background: linear-gradient(0deg, var(--accent-2), #d98a2b, var(--accent)); }
+:root[data-theme="winter"] .viz i { background: linear-gradient(0deg, var(--accent), #e8f4ff); }
+:root[data-theme="christmas"] .viz i:nth-child(odd) { background: linear-gradient(0deg, #1f7a4d, #4cc38a); }
+:root[data-theme="christmas"] .viz i:nth-child(even) { background: linear-gradient(0deg, #a3162a, var(--accent)); }
+:root[data-theme="halloween"] .viz i { background: linear-gradient(0deg, var(--accent-2), var(--accent)); }
+:root[data-theme="thanksgiving"] .viz i { background: linear-gradient(0deg, var(--accent-2), var(--accent), #f2c14e); }
 
 @keyframes enter { from { opacity: 0; transform: translateX(-12px); } to { opacity: 1; transform: none; } }
 @keyframes pop { from { opacity: 0; transform: scale(0.85) translateY(10px); } to { opacity: 1; transform: none; } }

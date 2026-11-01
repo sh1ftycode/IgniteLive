@@ -47,6 +47,7 @@ from ignite_live.core.templates import BY_KEY, GROUPS, PLACEHOLDERS, SAMPLE, TEM
 from ignite_live.integrations.discord_bridge import valid_webhook_url
 from ignite_live.music.commands import CommandKind
 from ignite_live.music.youtube import video_id_from
+from ignite_live.core.seasons import SEASONAL, SEASONAL_LABEL
 from ignite_live.overlay.server import THEMES as OVERLAY_THEMES
 from ignite_live.ui.pages.stream import note
 from ignite_live.speech.voices import PROVIDERS, tiktok_voices, valid_session
@@ -438,7 +439,8 @@ class PreferencesDialog(QDialog):
                          "Change the line format in Messages → Discord."))
 
         form = _tab(self.tabs, "Appearance")
-        self.ui_theme = _choice(APP_THEMES, resolve_theme(s.ui_theme))
+        # "Seasonal" stays selected as itself; an old or unknown value shows what it looks like now.
+        self.ui_theme = _choice(APP_THEMES, s.ui_theme if s.ui_theme in APP_THEMES else resolve_theme(s.ui_theme))
         form.addRow("&Mode:", self.ui_theme)
         self.close_to_tray = QCheckBox("Keep running in the system tray when the window is closed")
         self.close_to_tray.setChecked(s.close_to_tray)
@@ -446,7 +448,7 @@ class PreferencesDialog(QDialog):
             self.close_to_tray.setEnabled(False)
             self.close_to_tray.setToolTip("Your desktop has no system tray")
         form.addRow("Window:", self.close_to_tray)
-        self.overlay_theme = _choice(OVERLAY_THEMES, s.overlay_theme)
+        self.overlay_theme = _choice({SEASONAL: SEASONAL_LABEL, **OVERLAY_THEMES}, s.overlay_theme)
         form.addRow("&Overlay theme:", self.overlay_theme)
         self.overlay_accent = ColorButton(s.overlay_accent)
         self.overlay_accent_2 = ColorButton(s.overlay_accent_2)
@@ -479,6 +481,12 @@ class PreferencesDialog(QDialog):
         self.sign_key = _secret(keychain.SIGN_API_KEY)
         form.addRow("&Euler Stream API key:", self.sign_key)
         form.addRow(note("Optional. Raises TikTok chat rate limits."))
+        self.auto_update = QCheckBox("Keep Ignite up to date automatically")
+        self.auto_update.setChecked(s.auto_update)
+        form.addRow("&Updates:", self.auto_update)
+        form.addRow(note("Checks Ignite's GitHub releases every few hours and downloads a new version in the "
+                         "background. It installs when you quit Ignite, or right away from the banner, never in "
+                         "the middle of a stream. Help → Check for Updates checks now."))
 
         self.message = QLabel("")
         self.message.setWordWrap(True)
@@ -843,6 +851,7 @@ class PreferencesDialog(QDialog):
             texts=dict(self.messages.texts),
             ui_theme=self.ui_theme.currentData(),
             close_to_tray=self.close_to_tray.isChecked(),
+            auto_update=self.auto_update.isChecked(),
             overlay_theme=self.overlay_theme.currentData(),
             overlay_accent=self.overlay_accent.value,
             overlay_accent_2=self.overlay_accent_2.value,

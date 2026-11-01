@@ -139,6 +139,7 @@ def main() -> int:
         if not s.setup_done and not s.tiktok_username:  # First run: the setup guide, once the window is up.
             QTimer.singleShot(400, window.open_setup_guide)
         controller.start()
+        window.updates.start()  # Checks GitHub releases shortly, then every few hours.
 
     QTimer.singleShot(max(0, int((SPLASH_SECONDS - (time.monotonic() - started)) * 1000)), reveal)
     return app.exec()

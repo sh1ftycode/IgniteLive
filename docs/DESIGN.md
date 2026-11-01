@@ -623,8 +623,13 @@ Plugin outputs send no events, so their live state is polled every 5 s.
 
 ### Design system
 
-The app comes in a **dark** and a **light** mode (`ui/theme.py`: two named
-palettes, `DARK` and `LIGHT`, one stylesheet built from either, on Fusion).
+The app comes in **dark**, **light**, four seasons (**spring**, **summer**,
+**autumn**, **winter**) and three holidays (**halloween**, **thanksgiving**,
+**christmas**) (`ui/theme.py`: named palettes, one stylesheet built from any of
+them, on Fusion). The seasonal and holiday modes are dark palettes that keep the
+same rules (one accent, red only for live and danger); a test checks every
+mode's text contrast. **Seasonal** (`core/seasons.py`) picks one by the date,
+for the app and the overlays alike, and the app re-checks twice an hour.
 Dark: window `#0E1015`, panels `#161920`, inputs `#1E222B`, dividers `#262B36`;
 text `#E8EAF0` / `#8B92A5`. Light: window `#E9ECF1`, white panels, inputs
 `#F0F2F5`, dividers `#DCE0E7`; text `#161A22` / `#5E6577`. Both: one
@@ -635,7 +640,17 @@ docks are separated by background, not boxes; tabs are flat with an orange
 underline; only Start Streaming and Panic are filled. Buttons take `primary` /
 `live` / `danger` Qt properties. Code that paints its own colours reads
 `colors()` and listens to `theme_changed()`. The overlays
-keep their own 14 themes (`overlay/static/themes.css`), unaffected by the app theme.
+keep their own 21 themes (`overlay/static/themes.css`), seasons and holidays included, chosen
+separately from the app mode.
+
+**Updates** (`core/updates.py`, `ui/updates.py`): the app reads GitHub's
+latest release for `sh1ftycode/IgniteLive`, downloads the file for how it was
+installed (the setup for an Inno Setup install, the AppImage for an AppImage),
+verifies it against the release's `SHA256SUMS.txt` (made by the release job),
+and installs it on quit or from the banner: the setup runs with `/VERYSILENT`
+(and `/RELAUNCH=1` to start Ignite again, see `installer.iss`); the AppImage is
+swapped in place. The checksum catches broken or swapped downloads, not a
+compromised repository; signing the builds would.
 
 - Navigation: a left rail with **Dashboard · Chat · Music · Stream · Settings**.
 - A persistent status strip shows four pills (TikTok chat, Streamlabs, OBS,

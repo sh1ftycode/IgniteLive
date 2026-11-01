@@ -17,12 +17,12 @@ from urllib.parse import urlsplit
 from dataclasses import fields, replace
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Signal
+from PySide6.QtCore import QObject, QTimer, Signal
 
 from ignite_live.actions.engine import ActionEngine, Fired
 from ignite_live.actions.goals import GoalReached, GoalTracker, parse_goals
 from ignite_live.actions.rules import SOUND_NAME, Action, Rule, parse_rules
-from ignite_live.core import keychain, profiles, settings as settings_store
+from ignite_live.core import keychain, profiles, seasons, settings as settings_store
 from ignite_live.core.events import (
     PLATFORMS,
     ChatComment,
@@ -335,6 +335,11 @@ class Controller(QObject):
         self.overlay.on_clients_changed = self._overlay_clients_changed
         self.overlay.on_toast = lambda text: self.notice.emit("info", text)
         self.overlay.on_choose_theme = lambda theme: self.runtime.to_ui(self.set_overlay_theme, theme)
+        # "Seasonal" overlays move on to the next season or holiday when the date gets there.
+        self._overlay_season = seasons.resolve(self.settings.overlay_theme)
+        self._season_timer = QTimer(self, interval=30 * 60 * 1000)
+        self._season_timer.timeout.connect(self._overlay_season_tick)
+        self._season_timer.start()
         self.music.on_other_command = self._other_command
         self.music.charge = self._charge
         self.music.on_refused = self._song_refused
@@ -371,7 +376,7 @@ class Controller(QObject):
         try:
             await self.overlay.start()
             await self.overlay.set_volume(self.settings.volume)
-            await self.overlay.set_theme(self.settings.overlay_theme)
+            await self.overlay.set_theme(seasons.resolve(self.settings.overlay_theme))
             await self._push_overlay_texts()
             await self.overlay.set_style(overlay_style_of(self.settings))
             await self.overlay.set_goals(self.goal_snapshot)
@@ -2218,6 +2223,12 @@ class Controller(QObject):
         self.runtime.loop.call_soon_threadsafe(self.music.clear_playlist)
         self._playlist_info_changed(None)
 
+    def _overlay_season_tick(self) -> None:
+        theme = seasons.resolve(self.settings.overlay_theme)
+        if self.settings.overlay_theme == seasons.SEASONAL and theme != self._overlay_season:
+            self._overlay_season = theme
+            self.runtime.submit(self.overlay.set_theme(theme))
+
     def set_overlay_theme(self, theme: str) -> None:
         if theme != self.settings.overlay_theme:
             self.save_settings(replace(self.settings, overlay_theme=theme))
@@ -2253,7 +2264,8 @@ class Controller(QObject):
         settings_store.save(new, self.settings_path)
         self._apply_settings()
         if new.overlay_theme != old.overlay_theme:
-            self.runtime.submit(self.overlay.set_theme(new.overlay_theme))
+            self._overlay_season = seasons.resolve(new.overlay_theme)
+            self.runtime.submit(self.overlay.set_theme(self._overlay_season))
         if new.obs_url != old.obs_url:
             self.reconnect_obs()
         discord_fields = ("discord_enabled", "discord_comments", "discord_gifts", "discord_follows", "texts",

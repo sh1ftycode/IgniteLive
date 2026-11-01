@@ -143,11 +143,15 @@ good-looking live setup. Ignite puts all of that into one program.
   later, or exports it as a `.igniteprofile` file to share. Usernames,
   connections, keys, and passwords are never included. Importing shows what will
   change first.
-- **Overlays:** music player, now playing, up next, visualizer, chat,
-  gift/follow alerts, and goal bars for OBS, in 14 themes (Minimal, Neon Arcade, Esports HUD,
+- **Overlays:** now playing (which plays the music), up next, visualizer, chat,
+  gift/follow alerts, and goal bars for OBS, in 21 themes (Minimal, Neon Arcade, Esports HUD,
   Retro 8-bit, Cozy Lo-fi, Synthwave Sunset, Cyberpunk, Frosted Glass, Hacker
   Terminal, Fantasy Quest, Pastel Kawaii, Blood Moon, Deep Ocean,
-  Neo-Brutalist), each with its own animations, that switch live from the app.
+  Neo-Brutalist, the seasons Spring, Summer, Autumn and Winter, and the
+  holidays Halloween, Thanksgiving and Christmas), each with its own
+  animations, that switch live from the app. **Seasonal** follows the calendar
+  by itself: Halloween from October 15, Thanksgiving through Thanksgiving Day,
+  Christmas until December 26, and the season the rest of the year.
   **Browse Themes** (Overlays tab) shows them all side by side with sample songs
   and chat, and **Preview with Sample Data** shows any overlay without going live.
 - **Workspace:** a standard desktop window with menus, a toolbar, tabs you can
@@ -156,8 +160,16 @@ good-looking live setup. Ignite puts all of that into one program.
   pages scroll and button rows wrap rather than cutting anything off, and the
   panels keep their share of the window as you resize it. Closing the window keeps Ignite running in
   the system tray (its menu can start the stream, save a clip, or panic); File →
-  Quit or the tray's Quit really quits. Uses your system font, in a dark or a
-  light mode (Preferences → Appearance).
+  Quit or the tray's Quit really quits. Uses your system font, in Dark, Light, a
+  season (Spring, Summer, Autumn, Winter), a holiday (Halloween, Thanksgiving,
+  Christmas), or Seasonal, which follows the calendar like the overlays
+  (Preferences → Appearance).
+- **Updates:** Ignite checks its GitHub releases every few hours and downloads a
+  new version in the background, checked against the release's SHA-256 list. It
+  installs when you quit Ignite, or right away from the banner ("Restart and
+  Update"), never mid-stream. Works for the Windows installer and the Linux
+  AppImage; the zip and tar.gz show a download link instead. Turn it off in
+  Preferences → Advanced; Help → Check for Updates checks now.
 - **Logs:** everything goes to `logs/ignite.log` in the Ignite folder (File →
   Open Log Folder), rotated at 2 MB, never to a terminal or console window. Set
   `IGNITE_DEBUG=1` to also see it in the terminal.

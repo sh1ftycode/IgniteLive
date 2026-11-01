@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 )
 
 from ignite_live.controller import Controller
+from ignite_live.core.seasons import SEASONAL, SEASONAL_LABEL
 from ignite_live.overlay.server import PAGES, THEMES
 from ignite_live.ui.goals import GoalsBox
 from ignite_live.ui.simulate import sample_events
@@ -97,7 +98,7 @@ class OverlaysPage(QWidget):
         theme_box = QGroupBox("Theme")
         form = QFormLayout(theme_box)
         self.theme = QComboBox()
-        for key, name in THEMES.items():
+        for key, name in {SEASONAL: SEASONAL_LABEL, **THEMES}.items():
             self.theme.addItem(name, key)
         self.theme.setCurrentIndex(max(0, self.theme.findData(controller.settings.overlay_theme)))
         self.theme.activated.connect(self._theme_chosen)

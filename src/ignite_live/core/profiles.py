@@ -264,7 +264,10 @@ def summary(profile: Profile, sounds_dir: Path) -> list[str]:
         line = f"{len(profile.sounds)} sound file{'s' if len(profile.sounds) != 1 else ''}"
         lines.append(line + (f" ({existing} already in your sounds folder)" if existing else ""))
     if "overlay_theme" in s:
-        lines.append(f"Overlay theme: {THEMES.get(s['overlay_theme'], s['overlay_theme'])}")
+        from ignite_live.core.seasons import SEASONAL, SEASONAL_LABEL
+
+        names = {SEASONAL: SEASONAL_LABEL, **THEMES}
+        lines.append(f"Overlay theme: {names.get(s['overlay_theme'], s['overlay_theme'])}")
     if any(s.get(name) for name in ("overlay_accent", "overlay_accent_2", "overlay_font", "overlay_css")):
         lines.append("Overlay colours, font or custom CSS")
     if s.get("texts"):

@@ -29,6 +29,7 @@ from ignite_live import __version__
 from ignite_live.controller import Controller
 from ignite_live.core import settings as settings_store
 from ignite_live.core.events import ConnectionState, StatusChange
+from ignite_live.core.seasons import SEASONAL
 from ignite_live.ui.actions import AppActions
 from ignite_live.ui.pages.actions import ActionsPage
 from ignite_live.ui.pages.streams import StreamsPage
@@ -43,10 +44,12 @@ from ignite_live.ui.checklist import ChecklistDialog, go_live
 from ignite_live.ui.preferences import PreferencesDialog
 from ignite_live.ui.profiles import ProfilesMenu
 from ignite_live.ui.simulate import SimulateDialog
+from ignite_live.ui.updates import UpdateBanner, UpdateManager
 from ignite_live.ui.theme import (
     STATE_TEXT,
     apply_theme,
     colors,
+    resolve_theme,
     set_live,
     set_props,
     state_color,
@@ -160,6 +163,10 @@ class MainWindow(QMainWindow):
         column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(0)
         column.addWidget(self.panic_banner)
+        # Updates from GitHub releases: checks start with the app (app.py), not with every window.
+        self.updates = UpdateManager(controller, self)
+        self.update_banner = UpdateBanner(self.updates, self)
+        column.addWidget(self.update_banner)
         column.addWidget(self.stack, 1)
         self.setCentralWidget(central)
 
@@ -190,6 +197,10 @@ class MainWindow(QMainWindow):
         controller.notice.connect(self._notice)
         controller.settings_changed.connect(self._settings_changed)
         self._theme = controller.settings.ui_theme  # Applied by app.py at startup.
+        # "Seasonal": move on to the next season or holiday when the date gets there (checked twice an hour).
+        self._season_timer = QTimer(self, interval=30 * 60 * 1000)
+        self._season_timer.timeout.connect(self._season_tick)
+        self._season_timer.start()
         theme_changed().connect(self._restyle)
         self._restyle()
         for change in controller.statuses.values():
@@ -253,6 +264,7 @@ class MainWindow(QMainWindow):
 
         help_menu = bar.addMenu("&Help")
         help_menu.addAction("&Setup Guide…", self.open_setup_guide).setShortcut("F1")
+        help_menu.addAction("Check for &Updates…", lambda: self.updates.check(manual=True))
         help_menu.addSeparator()
         help_menu.addAction(a.about)
 
@@ -492,6 +504,11 @@ class MainWindow(QMainWindow):
             self._theme = settings.ui_theme
             apply_theme(app, settings.ui_theme)
 
+    def _season_tick(self) -> None:
+        app = QApplication.instance()
+        if app is not None and self.controller.settings.ui_theme == SEASONAL and resolve_theme(SEASONAL) != colors().name:
+            apply_theme(app, SEASONAL)
+
     def _restyle(self, _palette=None) -> None:
         """Colours set in code (rather than by the stylesheet) follow a switch between dark and light."""
         p = colors()
@@ -620,3 +637,4 @@ class MainWindow(QMainWindow):
         self.shut_down = True
         self._save_layout()
         self.controller.shutdown()
+        self.updates.install_on_quit()  # A downloaded update goes in place for next time.

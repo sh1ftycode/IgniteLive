@@ -50,6 +50,14 @@ Name: "{autodesktop}\Ignite"; Filename: "{app}\Ignite.exe"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\Ignite.exe"; Description: "Launch Ignite"; Flags: nowait postinstall skipifsilent
+; Ignite's own updater runs this setup silently with /RELAUNCH=1 ("Restart and update"): start the new version.
+Filename: "{app}\Ignite.exe"; Flags: nowait; Check: RelaunchAfterUpdate
 
 ; Settings, the log, and keychain entries are kept on uninstall, so a reinstall
 ; picks up where you left off. Delete %APPDATA%\Ignite to reset.
+
+[Code]
+function RelaunchAfterUpdate: Boolean;
+begin
+  Result := WizardSilent and (ExpandConstant('{param:RELAUNCH|0}') = '1');
+end;
