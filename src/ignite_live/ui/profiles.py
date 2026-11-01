@@ -26,6 +26,7 @@ from ignite_live.controller import Controller
 from ignite_live.core import profiles
 from ignite_live.core.profiles import Profile, ProfileError
 from ignite_live.ui.pages.stream import note
+from ignite_live.ui.theme import warn_color
 
 FILTER = f"Ignite profiles (*{profiles.EXTENSION})"
 OPEN_FILTER = f"Ignite profiles (*{profiles.EXTENSION} *{profiles.LEGACY_EXTENSION})"
@@ -56,7 +57,7 @@ class ImportDialog(QDialog):
         for warning in profiles.warnings(profile):
             label = QLabel("<b>Warning:</b> " + _escape(warning))
             label.setWordWrap(True)
-            label.setStyleSheet("color: #f5a623")
+            label.setStyleSheet(f"color: {warn_color(label).name()};")
             layout.addWidget(label)
         self.replace_rules = QRadioButton("Replace my action rules and goals")
         self.add_rules = QRadioButton("Add them to my action rules and goals")

@@ -138,7 +138,8 @@ def create_app(
         if parsed is None:
             return _error(400, "Send a YouTube link or song - artist.")
         cache_key = (
-            f"id:{parsed.video_id}" if isinstance(parsed, LinkRequest) else "q:" + parsed.query.lower()
+            f"id:{parsed.video_id}" if isinstance(parsed, LinkRequest)
+            else "ytm:" + parsed.query.lower()  # YouTube Music searches (not older "q:" YouTube results).
         )
         cached = store.cached_search(cache_key, SEARCH_CACHE_S)
         if cached is not None:

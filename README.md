@@ -36,15 +36,14 @@ good-looking live setup. Ignite puts all of that into one program.
   [Aitum Vertical Canvas](https://github.com/Aitum/obs-vertical-canvas) and
   [Aitum Multistream](https://github.com/Aitum/obs-aitum-multistream) plugins:
   pick which output gets the TikTok key, and only that one is started.
-- **OBS control:** a dockable OBS panel with stream health (bitrate, dropped frames,
-  rendering and encoding lag, CPU, disk) that warns you when something goes
-  wrong, a scene switcher, an audio mixer, recording (with pause), the replay
-  buffer with **Save Clip**, the virtual camera, screenshots, refreshing every
+- **OBS control:** from the OBS menu and the toolbar: recording (with pause), the
+  replay buffer with **Save Clip**, the virtual camera, screenshots, refreshing every
   overlay, and **Add Overlays to OBS…**: tick which overlays (or all of them)
   and which scene; ones already in OBS are skipped. With Aitum Vertical Canvas,
-  its scenes, recording and backtrack (clips) are there too, and overlays can be
-  added straight into vertical scenes (needs obs-websocket 5.7+). Live time and health also sit in the
-  status bar. Automations (Preferences → OBS): record and run the replay buffer
+  its recording and backtrack (clips) are there too, and overlays can be
+  added straight into vertical scenes (needs obs-websocket 5.7+). Live time, bitrate
+  and dropped frames sit in the status bar, and Ignite warns you when the stream
+  drops frames, lags, or runs low on disk. Automations (Preferences → OBS): record and run the replay buffer
   while live, and switch to a chosen scene when you go live. Moderators can type
   `!clip` to save a clip, and `!scene name` if you allow it.
 - **Chat:** comments, gifts, follows, and viewer count from your TikTok LIVE,
@@ -66,10 +65,14 @@ good-looking live setup. Ignite puts all of that into one program.
   `{placeholders}` and a live preview (Preferences → Messages). Commands and
   their prefix can be renamed (Preferences → Commands), and overlays take your
   own accent colours, font and CSS (Preferences → Appearance).
-- **Music:** viewers on any platform type `!sr song - artist` or a YouTube link. Songs play in
-  a YouTube player overlay inside OBS, with queue limits, cooldowns, and bans.
-  No API key needed. A public Spotify playlist can fill the gaps when nobody
-  has requested anything.
+- **Music:** viewers on any platform type `!sr song - artist` or a YouTube (or YouTube
+  Music) link. Searches come from YouTube Music's song catalog: official audio
+  with album art, no music videos or covers. Songs play in the **Now Playing**
+  overlay, in its cover square, with what's next and replies to viewers ("added",
+  "not found", "queue full"), plus queue limits, cooldowns, and bans. No API key
+  needed. When nobody has requested anything, a public Spotify, YouTube or
+  YouTube Music playlist can fill the gaps, or **autoplay** plays songs like
+  what chat requested (YouTube Music radio), so it stays in the room's genre.
 - **Actions:** rules that react to your LIVE. Pick a trigger (a gift, optionally
   by name or coin value; a follow; every N likes; a share; a chat command; a
   viewer milestone) and what happens: show an alert, play a sound, read a
@@ -152,11 +155,13 @@ good-looking live setup. Ignite puts all of that into one program.
   **Browse Themes** (Overlays tab) shows them all side by side with sample songs
   and chat, and **Preview with Sample Data** shows any overlay without going live.
 - **Workspace:** a standard desktop window with menus, a toolbar, tabs you can
-  close and rearrange (View brings them back), and dockable Chat, OBS,
-  Connections, and Activity panels. Closing the window keeps Ignite running in
+  close and rearrange (View brings them back), and dockable Chat,
+  Connections, and Activity panels. It fits small screens (down to 720×480):
+  pages scroll and button rows wrap rather than cutting anything off, and the
+  panels keep their share of the window as you resize it. Closing the window keeps Ignite running in
   the system tray (its menu can start the stream, save a clip, or panic); File →
-  Quit or the tray's Quit really quits. Uses your system font and either the
-  Ignite "midnight" look or your desktop's theme (Preferences → Appearance).
+  Quit or the tray's Quit really quits. Uses your system font, in a dark or a
+  light mode (Preferences → Appearance).
 - **Logs:** everything goes to `logs/ignite.log` in the Ignite folder (File →
   Open Log Folder), rotated at 2 MB, never to a terminal or console window. Set
   `IGNITE_DEBUG=1` to also see it in the terminal.

@@ -29,7 +29,7 @@ from ignite_live.controller import Controller, command_config
 from ignite_live.core.events import PLATFORMS
 from ignite_live.music.commands import CommandKind
 from ignite_live.ui.pages.music import read_only_table
-from ignite_live.ui.pages.stream import note
+from ignite_live.ui.pages.stream import note, scrolling
 from ignite_live.viewers.points import ACTIVE_EVERY_MIN, ACTIVE_WINDOW_MIN, CHAT_COOLDOWN_S, config_to_dict, parse_config
 
 
@@ -48,8 +48,8 @@ class ViewersPage(QWidget):
     def __init__(self, controller: Controller) -> None:
         super().__init__()
         self.controller = controller
-        layout = QHBoxLayout(self)
-        split = QSplitter()
+        layout = scrolling(self, QHBoxLayout)
+        self.split = split = QSplitter()  # Side by side, or stacked when the window is too narrow for both.
         layout.addWidget(split)
 
         # Points settings.
@@ -154,6 +154,13 @@ class ViewersPage(QWidget):
         split.setStretchFactor(1, 3)
         self._fill_sounds(c)
         self.refresh()
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt override
+        super().resizeEvent(event)
+        side_by_side = sum(self.split.widget(i).minimumSizeHint().width() for i in range(self.split.count())) + 32
+        wanted = Qt.Orientation.Horizontal if self.width() >= side_by_side else Qt.Orientation.Vertical
+        if self.split.orientation() != wanted:
+            self.split.setOrientation(wanted)
 
     def _fill_sounds(self, c) -> None:
         folder = self.controller.sounds_dir

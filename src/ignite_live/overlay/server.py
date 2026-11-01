@@ -7,6 +7,10 @@ can't drive the player (DNS rebinding, cross-site WebSocket).
 Pages are addressed as ``localhost``, not ``127.0.0.1``: YouTube refuses to
 embed most label-owned music (error 150, "embedding disabled") on a page whose
 origin is a bare IP, but plays it on ``localhost``.
+
+Music plays in the Now Playing overlay. When it's open more than once (say in a
+horizontal and a vertical scene), only one copy plays the audio, so it's never
+heard twice; the others show the album cover and follow along.
 """
 
 from __future__ import annotations
@@ -25,8 +29,7 @@ from ignite_live.games.base import IMAGE_NAME
 
 # name -> (title, suggested OBS Browser Source width, height)
 PAGES = {
-    "player": ("Music player", 1280, 720),
-    "nowplaying": ("Now playing", 700, 160),
+    "nowplaying": ("Now playing", 760, 240),  # Also plays the music (see MUSIC_PAGE).
     "queue": ("Up next", 520, 420),
     "visualizer": ("Visualizer", 1280, 240),
     "chat": ("Chat", 460, 720),
@@ -53,6 +56,9 @@ THEMES = {
 }
 # Pages for the app's previews, not for OBS: every theme side by side, and the page each tile shows.
 PREVIEW_PAGES = ("gallery", "showcase")
+MUSIC_PAGE = "nowplaying"  # The overlay that plays the song requests.
+# Old page names, still served so Browser Sources added before keep working.
+PAGE_ALIASES = {"player": MUSIC_PAGE}
 DEFAULT_PORT = 17_845
 MAX_CSS = 20_000
 _COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
@@ -104,6 +110,8 @@ class OverlayServer:
         self._sockets: set[web.WebSocketResponse] = set()
         self._previews: set[web.WebSocketResponse] = set()  # Gallery and &demo=1 pages: not counted as overlays.
         self._pages: dict[web.WebSocketResponse, str] = {}  # Which overlay each socket is (for the checklist).
+        self._players: list[web.WebSocketResponse] = []  # Open Now Playing overlays, oldest first.
+        self._audio: web.WebSocketResponse | None = None  # The one of them that plays the music.
         self._state: dict = {
             "type": "state", "queue": {"current": None, "upcoming": []}, "volume": 60, "theme": "minimal",
             "texts": {}, "style": overlay_style(), "quiet": False, "paused": False,
@@ -119,7 +127,7 @@ class OverlayServer:
         self.app.router.add_get("/sounds/{name}", self._sound)
         self.app.router.add_get("/images/{name}", self._image)
 
-    def url(self, page: str = "player", theme: str = "") -> str:
+    def url(self, page: str = MUSIC_PAGE, theme: str = "") -> str:
         """``theme`` pins this one overlay to a theme instead of following the app's choice."""
         extra = f"&theme={theme}" if theme in THEMES else ""
         return f"http://localhost:{self.port}/overlay/{page}?token={self.token}{extra}"
@@ -212,7 +220,7 @@ class OverlayServer:
         return _media(self.images_dir, name, IMAGE_NAME)
 
     async def set_panic(self, quiet_alerts: bool, paused: bool) -> None:
-        """Panic mode: the Alerts overlay drops what's showing and waiting; the music player pauses."""
+        """Panic mode: the Alerts overlay drops what's showing and waiting; the music pauses."""
         self._state = {**self._state, "quiet": quiet_alerts, "paused": paused}
         await self._broadcast(self._state)
 
@@ -247,6 +255,8 @@ class OverlayServer:
                 self._sockets.discard(ws)
                 self._previews.discard(ws)
                 self._pages.pop(ws, None)
+                if ws in self._players:
+                    self._players.remove(ws)  # The socket's own cleanup chooses another copy to play.
                 self._clients_changed()
 
     def _allowed_hosts(self) -> set[str]:
@@ -268,7 +278,7 @@ class OverlayServer:
         return response
 
     async def _page(self, request: web.Request) -> web.Response:
-        page = request.match_info["page"]
+        page = PAGE_ALIASES.get(request.match_info["page"], request.match_info["page"])
         if page not in PAGES and page not in PREVIEW_PAGES:
             raise web.HTTPNotFound()
         return web.Response(text=render_page(page), content_type="text/html")
@@ -290,12 +300,18 @@ class OverlayServer:
         await ws.prepare(request)
         if request.query.get("preview") == "1":
             self._previews.add(ws)
-        if request.query.get("page") in PAGES:
-            self._pages[ws] = request.query["page"]
+        page = PAGE_ALIASES.get(request.query.get("page", ""), request.query.get("page", ""))
+        if page in PAGES:
+            self._pages[ws] = page
         self._sockets.add(ws)
+        if page == MUSIC_PAGE and ws not in self._previews:
+            self._players.append(ws)
         self._clients_changed()
         try:
             await ws.send_json(self._state)
+            if ws in self._players:
+                await ws.send_json({"type": "role", "audio": False})  # Until told otherwise.
+                await self._choose_audio()
             if self._progress:
                 await ws.send_json(self._progress)
             if self._goals["goals"]:
@@ -313,20 +329,40 @@ class OverlayServer:
                     continue
                 if not isinstance(data, dict):
                     continue
-                if data.get("type") in {"ended", "error", "playing"} and self.on_player_message:
+                kind = data.get("type")
+                if kind in {"ended", "error", "playing", "progress"} and ws is not self._audio:
+                    continue  # Only the copy that plays the music reports on it.
+                if kind in {"ended", "error", "playing"} and self.on_player_message:
                     self.on_player_message(data)
                 elif data.get("type") == "choose_theme" and data.get("theme") in THEMES and self.on_choose_theme:
                     self.on_choose_theme(data["theme"])
                 elif data.get("type") == "progress":
-                    # From the player page; the now-playing and visualizer overlays follow it.
+                    # From the copy that plays; other Now Playing copies and the visualizer follow it.
                     self._progress = _progress(data)
                     await self._broadcast(self._progress, skip=ws)
         finally:
             self._sockets.discard(ws)
             self._previews.discard(ws)
             self._pages.pop(ws, None)
+            was_player = ws in self._players or ws is self._audio
+            if ws in self._players:
+                self._players.remove(ws)
+            if was_player:
+                await self._choose_audio()  # Another open copy takes over the music.
             self._clients_changed()
         return ws
+
+    async def _choose_audio(self) -> None:
+        """The oldest open Now Playing overlay plays the music; tell it when that changes."""
+        leader = self._players[0] if self._players else None
+        if leader is self._audio:
+            return
+        self._audio = leader
+        if leader is not None:
+            try:
+                await leader.send_json({"type": "role", "audio": True})
+            except ConnectionError:
+                pass  # It's closing; its own cleanup chooses again.
 
 
 def _media(folder: Path | None, name: str, pattern) -> Path | None:

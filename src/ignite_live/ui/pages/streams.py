@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 from ignite_live.controller import Controller
 from ignite_live.live import analytics
 from ignite_live.ui.pages.music import read_only_table
-from ignite_live.ui.pages.stream import note
+from ignite_live.ui.pages.stream import note, scrolling
 
 MOMENT_COLORS = {"clip": "#7c6cff", "goal": "#59c27a", "gift": "#f5a623", "scene": "#8b9a93"}
 
@@ -131,7 +131,7 @@ class StreamsPage(QWidget):
         self.controller = controller
         self.data: dict | None = None
         self.path: Path | None = None
-        layout = QHBoxLayout(self)
+        layout = scrolling(self, QHBoxLayout)
         split = QSplitter()
         left = QWidget()
         left_layout = QVBoxLayout(left)

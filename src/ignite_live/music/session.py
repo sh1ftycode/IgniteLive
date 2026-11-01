@@ -1,4 +1,4 @@
-"""Glue between chat commands, the queue, song lookup, and the player overlay."""
+"""Glue between chat commands, the queue, song lookup, and the Now Playing overlay (which plays the music)."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import asyncio
 import logging
 import random
 import time
+from collections import deque
 from typing import Callable
 
 from ignite_live.core.events import ChatComment, ChatUser
@@ -18,10 +19,15 @@ from ignite_live.overlay.server import OverlayServer
 log = logging.getLogger(__name__)
 
 PLAYLIST_USER = ChatUser("playlist", "Playlist")
+RADIO_USER = ChatUser("autoplay", "Autoplay")
 # Refusals for what the song is (not for the queue being full): these can ban it for good (auto-ban).
 AUTO_BAN = {"queue.too_long", "queue.explicit", "queue.blocked_word"}
 # Give up on a playlist after this many songs in a row can't be found.
 MAX_PLAYLIST_MISSES = 5
+# Autoplay: how many chat requests it remembers to follow, and how many songs back it avoids repeating.
+RADIO_SEEDS = 20
+RADIO_NO_REPEAT = 100
+MAX_RADIO_MISSES = 8
 
 # Player error codes that mean "this video will never play here".
 _UNPLAYABLE = {
@@ -41,12 +47,14 @@ class MusicSession:
         engine: CommandEngine | None = None,
         queue: SongQueue | None = None,
         clock: Callable[[], float] = time.monotonic,
+        radio: Callable[[str], list[Track]] | None = None,
     ) -> None:
-        """``resolve`` is blocking (YouTubeClient or BackendClient); it runs off-loop."""
+        """``resolve`` and ``radio`` (songs like a video ID) are blocking; they run off-loop."""
         self.overlay = overlay
         self.engine = engine or CommandEngine()
         self.queue = queue or SongQueue()
         self._resolve = resolve
+        self._radio = radio
         self._clock = clock
         self._tasks: set[asyncio.Task] = set()
         self.queue.on_change = self._queue_changed
@@ -56,6 +64,16 @@ class MusicSession:
         self._playlist_pos = 0
         self._filling = False
         self.on_playlist_change: Callable[[dict | None], None] | None = None
+        # Autoplay: with the queue empty and no playlist, songs like what chat requested (same genre).
+        self.radio_on = False
+        self.radio_start = ""  # A song or artist to start from, before chat has requested anything.
+        self.radio_seeds: list[str] = []  # Video IDs chat requested, newest first. Never autoplay's own picks.
+        self.on_seeds_change: Callable[[list[str]], None] | None = None
+        self.on_radio_change: Callable[[str], None] | None = None  # A line for the Music tab.
+        self._radio_queue: list[Track] = []
+        self._radio_seed: str | None = None  # Whose radio _radio_queue is.
+        self._start_seed: tuple[str, str] | None = None  # (radio_start, its video ID), looked up once.
+        self._played: deque[str] = deque(maxlen=RADIO_NO_REPEAT)
         # Commands that aren't about music (e.g. !skiptts) go here.
         self.on_other_command: Callable[[Command], None] | None = None
         # Loyalty points for chat requests and !bump: charge(user, "request" | "bump") returns why it's refused
@@ -106,13 +124,110 @@ class MusicSession:
 
     def _queue_changed(self, queue: SongQueue) -> None:
         self._spawn(self.overlay.publish_state(queue.snapshot()))
+        if queue.current is not None and (not self._played or self._played[-1] != queue.current.track.video_id):
+            self._played.append(queue.current.track.video_id)
         self._maybe_fill()
 
+    def _idle(self) -> bool:
+        return self.queue.current is None and not self.queue.upcoming
+
     def _maybe_fill(self) -> None:
-        idle = self.queue.current is None and not self.queue.upcoming
-        if idle and self.playlist is not None and not self._filling:
+        if not self._idle() or self._filling:
+            return
+        if self.playlist is not None:
             self._filling = True
             self._spawn(self._fill_from_playlist())
+        elif self.radio_on and self._radio is not None:
+            self._filling = True
+            self._spawn(self._fill_from_radio())
+
+    # Autoplay ("community radio"): YouTube Music's radio for a song chat requested, so it stays in the
+    # genre the room is into. It follows the newest request, then older ones as each radio runs out, and
+    # never seeds from its own picks, so it doesn't drift.
+
+    def set_radio(self, on: bool, start: str) -> None:
+        self.radio_on, self.radio_start = on, start.strip()
+        if not self.radio_seeds and self._radio_seed is not None and self._radio_seed != self._start_id():
+            self._radio_queue, self._radio_seed = [], None  # A new starting point.
+        self._radio_status()
+        self._maybe_fill()
+
+    def remember_request(self, track: Track) -> None:
+        """A song chat asked for: autoplay follows it next."""
+        self.radio_seeds = [track.video_id] + [v for v in self.radio_seeds if v != track.video_id][:RADIO_SEEDS - 1]
+        self._radio_queue, self._radio_seed = [], None
+        if self.on_seeds_change:
+            self.on_seeds_change(list(self.radio_seeds))
+        self._radio_status()
+
+    def _start_id(self) -> str | None:
+        return self._start_seed[1] if self._start_seed and self._start_seed[0] == self.radio_start else None
+
+    def _radio_status(self, problem: str = "") -> None:
+        if not self.on_radio_change:
+            return
+        if not self.radio_on:
+            text = "Off"
+        elif problem:
+            text = problem
+        elif self.radio_seeds:
+            text = "Plays songs like the latest requests when nothing's queued."
+        elif self.radio_start:
+            text = f"Plays songs like “{self.radio_start}” until chat requests something."
+        else:
+            text = "Waiting for the first song request (or set a song or artist to start from)."
+        self.on_radio_change(text)
+
+    async def _choose_seed(self) -> str | None:
+        seeds = self.radio_seeds
+        if seeds:
+            if self._radio_seed in seeds:  # That radio is used up: the next older request, and around again.
+                return seeds[(seeds.index(self._radio_seed) + 1) % len(seeds)]
+            return seeds[0]
+        if not self.radio_start:
+            return None
+        if self._start_id() is None:
+            track = await asyncio.to_thread(self._resolve, self.radio_start)
+            self._start_seed = (self.radio_start, track.video_id)
+        return self._start_id()
+
+    async def _next_radio_track(self) -> Track | None:
+        for _ in range(3):  # A used-up radio, then the next seed's.
+            while self._radio_queue:
+                track = self._radio_queue.pop(0)
+                if track.video_id not in self._played and track.video_id not in self.radio_seeds:
+                    return track
+            seed = await self._choose_seed()
+            if seed is None:
+                return None
+            self._radio_seed = seed
+            self._radio_queue = await asyncio.to_thread(self._radio, seed)
+        return None
+
+    async def _fill_from_radio(self) -> None:
+        try:
+            for _ in range(MAX_RADIO_MISSES):
+                if not self.radio_on or self.playlist is not None or not self._idle():
+                    return
+                track = await self._next_radio_track()
+                if track is None:
+                    return  # Nothing to follow yet.
+                if not self.radio_on or self.playlist is not None or not self._idle():
+                    self._radio_queue.insert(0, track)  # A request came in meanwhile: keep it for later.
+                    return
+                try:
+                    self.queue.add(track, RADIO_USER, privileged=True)
+                    self._radio_status()
+                    return
+                except QueueRejected as error:  # Too long, explicit, banned…: the next one.
+                    log.info("Autoplay: skipping %r: %s", track.title, error)
+        except TrackLookupError as error:
+            log.warning("Autoplay: %s", error)
+            self._radio_status(f"Paused: {error} It tries again after the next song.")
+        except Exception:
+            log.exception("Autoplay failed unexpectedly")
+        finally:
+            self._filling = False
 
     async def _fill_from_playlist(self) -> None:
         """Look up the next playlist song on YouTube (one search at a time) and play it."""
@@ -126,7 +241,8 @@ class MusicSession:
                 song = self._peek()
                 self._playlist_pos += 1  # Loops back to the start after the last song.
                 try:
-                    track = await asyncio.to_thread(self._resolve, song.request)
+                    # From a YouTube playlist it's already a track; from Spotify, look it up by name.
+                    track = song.track or await asyncio.to_thread(self._resolve, song.request)
                     if self.playlist is not playlist or self.queue.current is not None or self.queue.upcoming:
                         self._playlist_pos -= 1  # Not played: keep it for the next gap.
                         return
@@ -139,7 +255,8 @@ class MusicSession:
                     log.exception("Playlist: lookup of %r failed unexpectedly", song.request)
                     return
             await self.overlay.toast(
-                f"Playlist paused: {MAX_PLAYLIST_MISSES} songs in a row couldn't be found on YouTube."
+                f"Playlist paused: {MAX_PLAYLIST_MISSES} songs in a row couldn't be played (not found on YouTube, "
+                "or refused by your song request limits, e.g. too long)."
             )
             self.playlist = None
             self._playlist_changed()
@@ -203,6 +320,7 @@ class MusicSession:
                 if paid:
                     self._give_back(user, "request")
                 raise
+            self.remember_request(track)  # Autoplay follows chat's taste (its radio is official audio only).
             values = dict(user=user.nickname, platform=user.platform_name, title=track.title, artist=track.channel)
             await self.overlay.toast(
                 self.texts.format("music.added_now", **values) if position == 0

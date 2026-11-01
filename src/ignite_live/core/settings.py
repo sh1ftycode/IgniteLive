@@ -33,6 +33,8 @@ SYNCED_FIELDS = (
     "banned_video_ids",
     "music_playlist_url",
     "music_playlist_shuffle",
+    "music_radio",
+    "music_radio_start",
     "overlay_theme",
     "texts",
     "command_prefix",
@@ -127,7 +129,7 @@ class Settings:
     overlay_port: int = 17_845
     overlay_token: str = ""
     overlay_theme: str = "minimal"  # See overlay/server.py THEMES.
-    ui_theme: str = "ignite"  # "ignite" or "system"
+    ui_theme: str = "dark"  # "dark" or "light"; an old "system" follows the desktop until changed
     window_state: str = ""  # Qt saveState()/saveGeometry() of the main window, base64
     tab_order: list[str] = field(default_factory=list)  # Page keys in the order the tabs were dragged into.
     closed_tabs: list[str] = field(default_factory=list)  # Reopened from the View menu.
@@ -142,9 +144,13 @@ class Settings:
     max_per_user: int = 2
     max_minutes: int = 10
     banned_video_ids: list[str] = field(default_factory=list)
-    # Background playlist (public Spotify link) that plays when the queue is empty.
+    # Background playlist (public Spotify, YouTube or YouTube Music link) that plays when the queue is empty.
     music_playlist_url: str = ""
     music_playlist_shuffle: bool = True
+    # Autoplay: with the queue empty and no playlist, songs like what chat requested (YouTube Music radio).
+    music_radio: bool = False
+    music_radio_start: str = ""  # A song or artist to start from, before chat has requested anything.
+    music_radio_seeds: list[str] = field(default_factory=list)  # Video IDs chat requested, newest first.
     chat_popout_geometry: str = ""  # Qt saveGeometry(), base64
     chat_popout_locked: bool = False  # Picture-in-picture chat: locked in place, ignores clicks.
     # Discord bridge (the webhook URL itself is a secret: it lives in the keychain).
@@ -224,8 +230,8 @@ class Settings:
         """Copy valid values in, ignoring unknown keys and wrong types."""
         if "tts_blocked_words" in values and "blocked_words" not in values:  # Before 2026-10-29: TTS only.
             values = {**values, "blocked_words": values["tts_blocked_words"]}
-        if values.get("ui_theme") == "shiftytool":  # Before the rename to Ignite.
-            values = {**values, "ui_theme": "ignite"}
+        if values.get("ui_theme") in ("shiftytool", "ignite"):  # Older names of the dark look.
+            values = {**values, "ui_theme": "dark"}
         defaults = Settings()
         for spec in dataclasses.fields(self):
             if spec.name not in values or (only is not None and spec.name not in only):

@@ -51,6 +51,7 @@ from ignite_live.overlay.server import THEMES as OVERLAY_THEMES
 from ignite_live.ui.pages.stream import note
 from ignite_live.speech.voices import PROVIDERS, tiktok_voices, valid_session
 from ignite_live.ui.theme import THEMES as APP_THEMES
+from ignite_live.ui.theme import resolve_theme
 
 ROLE_NAMES = {"everyone": "Everyone", "followers": "Followers (Twitch subs, YouTube members)", "mods": "Moderators"}
 TABS = ("OBS", "Chat platforms", "Server", "Song requests", "Commands", "Text to speech", "Moderation", "Messages",
@@ -437,8 +438,8 @@ class PreferencesDialog(QDialog):
                          "Change the line format in Messages → Discord."))
 
         form = _tab(self.tabs, "Appearance")
-        self.ui_theme = _choice(APP_THEMES, s.ui_theme)
-        form.addRow("&App theme:", self.ui_theme)
+        self.ui_theme = _choice(APP_THEMES, resolve_theme(s.ui_theme))
+        form.addRow("&Mode:", self.ui_theme)
         self.close_to_tray = QCheckBox("Keep running in the system tray when the window is closed")
         self.close_to_tray.setChecked(s.close_to_tray)
         if not QSystemTrayIcon.isSystemTrayAvailable():

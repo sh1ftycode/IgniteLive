@@ -8,7 +8,7 @@ from __future__ import annotations
 import zlib
 
 from PySide6.QtCore import QModelIndex, QObject, QPointF, QRect, QRectF, QSize, Qt, QUrl, Signal
-from PySide6.QtGui import QColor, QFont, QFontMetrics, QImage, QLinearGradient, QPainter, QPainterPath, QPalette, QPen
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QImage, QPainter, QPainterPath, QPalette
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -20,12 +20,12 @@ from PySide6.QtWidgets import (
 )
 
 from ignite_live.core.images import allowed_image_url
-from ignite_live.core.events import ChatComment, ChatEvent, ChatFollow, ChatGift, ChatUser
+from ignite_live.core.events import PLATFORMS, ChatComment, ChatEvent, ChatFollow, ChatGift, ChatUser
+from ignite_live.ui.theme import RADIUS, colors, tint_color
 
-TIKTOK_PINK = "#fe2c55"
-TIKTOK_CYAN = "#25f4ee"
-# Platform pills shown before names from Twitch and YouTube (TikTok is the default, so it has none).
-PLATFORM_BADGES = {"twitch": ("Twitch", "#9146ff", "#ffffff"), "youtube": ("YouTube", "#ff0033", "#ffffff")}
+# Twitch and YouTube names always get a platform pill; TikTok (the default) gets one once the chat is mixed.
+ALWAYS_BADGED = {"twitch", "youtube"}
+GIFT_TINT = 0.09  # Gifts, subs and Super Chats: a faint orange wash on the row.
 EVENT_ROLE = Qt.ItemDataRole.UserRole
 KIND_ROLE = Qt.ItemDataRole.UserRole + 1
 
@@ -113,7 +113,7 @@ class ChatDelegate(QStyledItemDelegate):
         base = view.font()
         self.name_font = _font(base, 12 * self.scale, QFont.Weight.DemiBold)
         self.text_font = _font(base, 14 * self.scale)
-        self.badge_font = _font(base, 9.5 * self.scale, QFont.Weight.Bold)
+        self.badge_font = _font(base, 10 * self.scale, QFont.Weight.DemiBold)
         self.big_font = _font(base, 18 * self.scale, QFont.Weight.Black)
         self.small_font = _font(base, 11 * self.scale)
         self.pad = round(10 * self.scale)
@@ -131,6 +131,7 @@ class ChatDelegate(QStyledItemDelegate):
         color = self._text()
         color.setAlpha(150)
         return color
+
 
     # Geometry.
 
@@ -183,38 +184,41 @@ class ChatDelegate(QStyledItemDelegate):
         painter.setFont(_font(self.name_font, size * 0.42, QFont.Weight.Bold))
         painter.drawText(circle, Qt.AlignmentFlag.AlignCenter, (user.nickname or user.unique_id or "?")[:1].upper())
 
-    def _badge(self, painter: QPainter, x: float, center_y: float, text: str, bg: str, fg: str) -> float:
+    def _badge(self, painter: QPainter, x: float, center_y: float, text: str, color: str) -> float:
+        """A small pill: a faint tint of ``color`` behind ``color`` text. Returns where the next item starts."""
         metrics = QFontMetrics(self.badge_font)
-        w, h = metrics.horizontalAdvance(text) + round(10 * self.scale), metrics.height() + 2
+        w, h = metrics.horizontalAdvance(text) + round(12 * self.scale), metrics.height() + 2
         box = QRectF(x, center_y - h / 2, w, h)
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(bg))
+        painter.setBrush(tint_color(color, 0.16 if self._dark() else 0.14))
         painter.drawRoundedRect(box, h / 2, h / 2)
-        painter.setPen(QColor(fg))
+        painter.setPen(QColor(color))
         painter.setFont(self.badge_font)
         painter.drawText(box, Qt.AlignmentFlag.AlignCenter, text)
-        return x + w + 5
+        return x + w + 4
 
     def _name_line(self, painter: QPainter, x: float, y: float, max_w: float, user: ChatUser, color: QColor) -> float:
         """Platform pill, nickname, and Host/Mod/Sub/follower badges; returns the line's height."""
         metrics = QFontMetrics(self.name_font)
         mid = y + metrics.height() / 2
-        platform = PLATFORM_BADGES.get(user.platform)
-        if platform:
-            x = self._badge(painter, x, mid, *platform)
+        mixed = len(getattr(self.view, "platforms", ())) > 1
+        p = colors()  # Each mode's colours are picked to read on its own background.
+        platform_color = getattr(p, user.platform, None) if user.platform in PLATFORMS else None
+        if platform_color and (user.platform in ALWAYS_BADGED or mixed):
+            x = self._badge(painter, x, mid, PLATFORMS[user.platform], platform_color)
         name = metrics.elidedText(user.nickname or user.unique_id, Qt.TextElideMode.ElideRight, int(max_w * 0.6))
         painter.setFont(self.name_font)
         painter.setPen(QColor(color))
         painter.drawText(QPointF(x, y + metrics.ascent()), name)
         bx = x + metrics.horizontalAdvance(name) + 6
         if user.is_host:
-            bx = self._badge(painter, bx, mid, "HOST", TIKTOK_PINK, "#ffffff")
+            bx = self._badge(painter, bx, mid, "HOST", p.accent_text)
         if user.is_moderator:
-            bx = self._badge(painter, bx, mid, "MOD", TIKTOK_CYAN, "#0b1f1f")
+            bx = self._badge(painter, bx, mid, "MOD", p.healthy)
         if user.is_subscriber:
-            bx = self._badge(painter, bx, mid, "MEMBER" if user.platform == "youtube" else "SUB", "#f5a623", "#1f1400")
+            bx = self._badge(painter, bx, mid, "MEMBER" if user.platform == "youtube" else "SUB", p.warning)
         if user.is_follower:
-            bx = self._badge(painter, bx, mid, "FOLLOWER", TIKTOK_PINK, "#ffffff")
+            bx = self._badge(painter, bx, mid, "FOLLOWER", p.text_muted)
         return metrics.height()
 
     def _paint_comment(self, painter: QPainter, rect: QRect, event: ChatComment) -> None:
@@ -232,13 +236,10 @@ class ChatDelegate(QStyledItemDelegate):
         )
 
     def _paint_gift(self, painter: QPainter, rect: QRect, event: ChatGift) -> None:
-        card = QRectF(rect).adjusted(4, 3, -4, -3)
-        gradient = QLinearGradient(card.topLeft(), card.topRight())
-        gradient.setColorAt(0, QColor(254, 44, 85, 70))
-        gradient.setColorAt(1, QColor(254, 44, 85, 8))
-        painter.setPen(QPen(QColor(254, 44, 85, 90), 1))
-        painter.setBrush(gradient)
-        painter.drawRoundedRect(card, card.height() / 2, card.height() / 2)
+        card = QRectF(rect).adjusted(4, 2, -4, -2)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(tint_color(colors().accent, GIFT_TINT if self._dark() else GIFT_TINT + 0.03))
+        painter.drawRoundedRect(card, RADIUS, RADIUS)
 
         size = self.avatar
         x = card.left() + 8
@@ -252,7 +253,7 @@ class ChatDelegate(QStyledItemDelegate):
         # A Super Chat is one gift: show its amount rather than "×1".
         count = event.amount if event.amount and event.count == 1 else f"×{event.count}"
         count_w = QFontMetrics(self.big_font).horizontalAdvance(count)
-        painter.setPen(QColor("#ffd34d" if self._dark() else "#a86a00"))
+        painter.setPen(QColor(colors().accent_text))
         painter.drawText(QRectF(right - count_w, card.top(), count_w, card.height()), Qt.AlignmentFlag.AlignVCenter, count)
         right -= count_w + 8
         icon = image_cache().get(event.image_url) if event.image_url else None
@@ -270,7 +271,7 @@ class ChatDelegate(QStyledItemDelegate):
         if event.message:
             detail += f"  ·  “{event.message}”"
         painter.setFont(self.small_font)
-        painter.setPen(QColor("#ffc2cf" if self._dark() else TIKTOK_PINK))
+        painter.setPen(self._muted())
         metrics = QFontMetrics(self.small_font)
         painter.drawText(
             QPointF(tx, top - 1 + name_h + 2 + metrics.ascent()),
@@ -290,7 +291,7 @@ class ChatDelegate(QStyledItemDelegate):
         painter.setPen(self._text())
         painter.drawText(QPointF(tx, baseline), name)
         painter.setFont(self.small_font)
-        painter.setPen(QColor(TIKTOK_PINK))
+        painter.setPen(self._muted())
         painter.drawText(QPointF(tx + metrics.horizontalAdvance(name) + 6, baseline), "followed the host")
 
 
@@ -301,6 +302,7 @@ class ChatFeed(QListWidget):
         super().__init__()
         self.max_rows = max_rows
         self.filters = {"comments": True, "gifts": True, "follows": True}
+        self.platforms: set[str] = set()  # Seen so far; with more than one, every name gets a platform pill.
         self.setObjectName("chatFeed")
         self.setItemDelegate(ChatDelegate(self, compact))
         self.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
@@ -313,8 +315,8 @@ class ChatFeed(QListWidget):
         self.new_pill = QPushButton("", self)
         self.new_pill.setObjectName("newMessages")
         self.new_pill.setStyleSheet(
-            "QPushButton { background: #fe2c55; color: white; border: 0; border-radius: 12px; padding: 4px 12px;"
-            " font-weight: bold; }"
+            f"QPushButton {{ background: {colors().accent}; color: {colors().on_accent}; border: 0; border-radius: {RADIUS}px;"
+            " padding: 4px 12px; font-weight: 600; }"
         )
         self.new_pill.setCursor(Qt.CursorShape.PointingHandCursor)
         self.new_pill.clicked.connect(self.jump_to_latest)
@@ -327,6 +329,10 @@ class ChatFeed(QListWidget):
         if kind is None:
             return
         following = self._at_bottom()
+        platform = event.user.platform
+        if platform not in self.platforms:
+            self.platforms.add(platform)
+            self.viewport().update()  # Earlier rows get their platform pill too.
         item = QListWidgetItem()
         item.setData(EVENT_ROLE, event)
         item.setData(KIND_ROLE, kind)

@@ -23,19 +23,21 @@ from ignite_live.overlay.server import PAGES, THEMES
 from ignite_live.ui.goals import GoalsBox
 from ignite_live.ui.simulate import sample_events
 from ignite_live.ui.pages.music import read_only_table
-from ignite_live.ui.pages.stream import note
+from ignite_live.ui.pages.stream import note, scrolling
+from ignite_live.ui.flow_layout import FlowLayout
 
 DESCRIPTIONS = {
-    "player": (
-        "The YouTube player and now-playing card. Required for music: the video must stay visible "
-        "(YouTube's rules). In OBS, tick <b>Control audio via OBS</b> on this source."
+    "nowplaying": (
+        "Plays the song requests, with the cover, title, requester, progress, what's next, and replies to "
+        "viewers. Required for music. Songs come from YouTube Music and play in the cover square: YouTube's "
+        "rules say it must stay visible, at least 200×200. In OBS, tick <b>Control audio via OBS</b> on this "
+        "source. Added in more than one scene, only one copy plays the sound."
     ),
-    "nowplaying": "Compact title, requester, and progress bar. Hides itself when nothing is playing.",
     "queue": "The next songs and who requested them.",
     "visualizer": (
         "Bars that move while a song plays and settle when it stops. YouTube doesn't let pages read its audio, "
         "so they're animated rather than audio-reactive. For bars that follow the real audio, add an OBS "
-        "audio-visualizer plugin to the music player's audio."
+        "audio-visualizer plugin to the Now Playing overlay's audio."
     ),
     "chat": "Chat from TikTok, Twitch and YouTube on stream: comments, gifts, and follows. Lines fade out after a while.",
     "alerts": (
@@ -51,7 +53,6 @@ DESCRIPTIONS = {
             "Hides itself when no game runs.",
 }
 OPTIONS = {
-    "player": [],
     "nowplaying": [],
     "queue": [("rows=8", "how many songs to list (1–15, default 5)")],
     "visualizer": [
@@ -91,7 +92,7 @@ class OverlaysPage(QWidget):
     def __init__(self, controller: Controller) -> None:
         super().__init__()
         self.controller = controller
-        layout = QVBoxLayout(self)
+        layout = scrolling(self)
 
         theme_box = QGroupBox("Theme")
         form = QFormLayout(theme_box)
@@ -149,10 +150,11 @@ class OverlaysPage(QWidget):
         self.test.clicked.connect(self._send_test)
         self.row_buttons = [copy, preview, self.test, add]
         self.add_all = add_all
-        row = QHBoxLayout()
-        row.addWidget(note("Theme for this URL:"))
+        row = FlowLayout()  # Wraps in a narrow window rather than cutting off the buttons.
+        theme_label = note("Theme for this URL:")
+        theme_label.setWordWrap(False)
+        row.addWidget(theme_label)
         row.addWidget(self.url_theme)
-        row.addStretch(1)
         for widget in self.row_buttons:
             row.addWidget(widget)
         row.addWidget(add_all)
@@ -177,7 +179,7 @@ class OverlaysPage(QWidget):
 
     def _page(self) -> str:
         items = self.table.selectedItems()
-        return items[0].tableWidget().item(items[0].row(), 0).data(Qt.ItemDataRole.UserRole) if items else "player"
+        return items[0].tableWidget().item(items[0].row(), 0).data(Qt.ItemDataRole.UserRole) if items else "nowplaying"
 
     def _url(self, page: str) -> str:
         return self.controller.overlay.url(page, self.url_theme.currentData() or "")

@@ -13,7 +13,6 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QFormLayout,
     QGroupBox,
-    QHBoxLayout,
     QHeaderView,
     QLabel,
     QLineEdit,
@@ -40,8 +39,11 @@ from ignite_live.actions.goals import (
 )
 from ignite_live.actions.rules import new_id
 from ignite_live.controller import Controller
+from ignite_live.core.events import ConnectionState
 from ignite_live.ui.pages.music import read_only_table
 from ignite_live.ui.pages.stream import note
+from ignite_live.ui.theme import state_color
+from ignite_live.ui.flow_layout import FlowLayout
 
 
 class GoalDialog(QDialog):
@@ -84,7 +86,7 @@ class GoalDialog(QDialog):
         layout.addWidget(note("Bar text can use " + ", ".join(f"{{{p}}}" for p in LABEL_PLACEHOLDERS) +
                               ". To celebrate, add a rule with the “Goal reached” trigger on the Actions tab."))
         self.error = QLabel()
-        self.error.setStyleSheet("color: #e5484d")
+        self.error.setStyleSheet(f"color: {state_color(ConnectionState.ERROR, self.error).name()};")
         layout.addWidget(self.error)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self._accept)
@@ -127,7 +129,7 @@ class GoalsBox(QGroupBox):
         self.table.itemDoubleClicked.connect(lambda _item: self._edit())
         self.table.itemSelectionChanged.connect(self._selection_changed)
         layout.addWidget(self.table, 1)
-        row = QHBoxLayout()
+        row = FlowLayout()  # Wraps in a narrow window rather than cutting off the buttons.
         self.buttons = {}
         for key, text, slot in (("add", "Add Goal…", self._add), ("edit", "Edit…", self._edit),
                                 ("delete", "Delete", self._delete), ("test", "Test", self._test),
@@ -140,7 +142,6 @@ class GoalsBox(QGroupBox):
         self.buttons["copy"].setToolTip("The Goals overlay showing only this goal")
         self.buttons["test"].setToolTip("Show it reached on the overlay and run its “Goal reached” rules; "
                                         "the real progress comes back after a few seconds")
-        row.addStretch(1)
         layout.addLayout(row)
         controller.settings_changed.connect(lambda _s: self._refresh())
         controller.goals_changed.connect(self._progress)

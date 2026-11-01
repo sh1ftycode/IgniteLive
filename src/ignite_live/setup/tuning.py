@@ -32,9 +32,9 @@ ENCODERS = {"nvidia": ("nvenc", "NVIDIA NVENC"), "amd": ("amd", "AMD AMF"), "int
 X264 = ("x264", "x264 (CPU)")
 ENCODER_LABELS = dict([X264, *ENCODERS.values()])
 OVERLAYS = {
-    "light": ("player", "alerts", "chat"),
-    "balanced": ("player", "nowplaying", "alerts", "chat", "goals"),
-    "strong": ("player", "nowplaying", "queue", "alerts", "chat", "goals", "leaderboard"),
+    "light": ("nowplaying", "alerts", "chat"),
+    "balanced": ("nowplaying", "alerts", "chat", "goals"),
+    "strong": ("nowplaying", "queue", "alerts", "chat", "goals", "leaderboard"),
 }
 
 

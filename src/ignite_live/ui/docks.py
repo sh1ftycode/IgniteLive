@@ -32,7 +32,7 @@ from ignite_live.ui.actions import AppActions
 from ignite_live.ui.chat_feed import ChatFeed
 from ignite_live.ui.pages.music import read_only_table
 from ignite_live.ui.icons import glyph
-from ignite_live.ui.theme import COLORS, STATE_TEXT, state_color
+from ignite_live.ui.theme import STATE_TEXT, colors, state_color, tabular, theme_changed
 
 HISTORY = 200  # Chat events replayed into a newly opened pop-out.
 MAX_ACTIVITY = 500
@@ -78,11 +78,11 @@ class ChatPanel(QWidget):
         self.history: deque[ChatEvent] = deque(maxlen=HISTORY)
         self.viewers: int | None = None
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setContentsMargins(8, 8, 8, 8)
 
         grid = QGridLayout()
         grid.setColumnStretch(1, 1)
-        grid.setHorizontalSpacing(6)
+        grid.setHorizontalSpacing(8)
         self.names: dict[str, QLineEdit] = {}
         self.lights: dict[str, QLabel] = {}
         self.toggles: dict[str, QToolButton] = {}
@@ -106,6 +106,7 @@ class ChatPanel(QWidget):
 
         top = QHBoxLayout()
         self.live = QLabel("Not live")
+        self.live.setFont(tabular(self.live.font()))  # The viewer count changes; its digits stay put.
         self.live.setWordWrap(True)
         top.addWidget(self.live, 1)
         for action in (actions.connect_chat, actions.disconnect_chat, actions.popout_chat):
@@ -201,9 +202,10 @@ class ChatPopout(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         frame = QFrame()
         frame.setFrameShape(QFrame.Shape.StyledPanel)  # A visible edge, since there's no title bar.
+        frame.setObjectName("popoutFrame")
         outer.addWidget(frame)
         layout = QVBoxLayout(frame)
-        layout.setContentsMargins(6, 4, 6, 2)
+        layout.setContentsMargins(8, 4, 8, 4)
         layout.setSpacing(4)
 
         self.header = QWidget()  # The drag handle.
@@ -254,10 +256,11 @@ class ChatPopout(QWidget):
             self.restoreGeometry(QByteArray.fromBase64(geometry.encode()))
         self.lock.setChecked(controller.settings.chat_popout_locked)
         self.set_locked(self.lock.isChecked())
+        theme_changed().connect(self._restyle)
 
     def set_locked(self, locked: bool) -> None:
         self.locked = locked
-        self.lock.setIcon(glyph("lock" if locked else "unlock", COLORS["accent_2"] if locked else COLORS["muted"]))
+        self.lock.setIcon(glyph("lock" if locked else "unlock", colors().accent_text if locked else None))
         self.lock.setToolTip("Unlock to move, resize, scroll or close the chat" if locked
                              else "Lock the chat in place: it ignores every click except this button")
         # The feed and everything on it (links, the "new messages" pill, the scroll bar) stop taking the mouse.
@@ -267,6 +270,12 @@ class ChatPopout(QWidget):
         self.header.setCursor(Qt.CursorShape.ArrowCursor if locked else Qt.CursorShape.SizeAllCursor)
         if locked:
             self.feed.jump_to_latest()  # Locked, it can't be scrolled back down: follow new messages.
+
+    def _restyle(self, _palette=None) -> None:
+        """Icons are drawn in the mode's colours: redraw them when it changes."""
+        self.close_button.setIcon(glyph("close"))
+        self.set_locked(self.locked)
+        self._status(self.controller.statuses["tiktok"])
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802 - Qt override
         if (event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton
@@ -302,8 +311,8 @@ class ConnectionsPanel(QWidget):
     def __init__(self, controller: Controller) -> None:
         super().__init__()
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 6, 6, 6)
-        self.table = read_only_table(["Service", "State", "Details"])
+        layout.setContentsMargins(8, 8, 8, 8)
+        self.table = read_only_table(["Service", "State", "Details"], min_rows=2)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.table.setWordWrap(False)
         header = self.table.horizontalHeader()
@@ -335,8 +344,8 @@ class ActivityPanel(QWidget):
     def __init__(self, controller: Controller) -> None:
         super().__init__()
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 6, 6, 6)
-        self.table = read_only_table(["Time", "Message"])
+        layout.setContentsMargins(8, 8, 8, 8)
+        self.table = read_only_table(["Time", "Message"], min_rows=2)
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         layout.addWidget(self.table)
@@ -363,5 +372,6 @@ class ActivityPanel(QWidget):
 def dock(title: str, name: str, widget: QWidget, parent: QWidget) -> QDockWidget:
     panel = QDockWidget(title, parent)
     panel.setObjectName(name)  # Needed for saveState()/restoreState().
+    widget.setAutoFillBackground(True)  # A panel on the window background; the gap between docks divides them.
     panel.setWidget(widget)
     return panel

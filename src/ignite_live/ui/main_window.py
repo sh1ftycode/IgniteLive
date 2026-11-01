@@ -1,18 +1,22 @@
 """Main window: menu bar, toolbar, closable tabs (Stream, Music, Overlays, …, Games),
-dockable Chat / OBS / Connections / Activity panels, a status bar, and the system tray icon."""
+dockable Chat / Connections / Activity panels, a status bar, and the system tray icon."""
 
 from __future__ import annotations
 
-from PySide6.QtCore import QByteArray, Qt, QUrl
-from PySide6.QtGui import QCloseEvent, QDesktopServices
+from dataclasses import dataclass
+
+from PySide6.QtCore import QByteArray, QSize, Qt, QTimer, QUrl
+from PySide6.QtGui import QCloseEvent, QDesktopServices, QResizeEvent
 from PySide6.QtWidgets import (
     QApplication,
+    QDockWidget,
     QHBoxLayout,
     QLabel,
     QMainWindow,
     QMenu,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QStackedWidget,
     QSystemTrayIcon,
     QTabWidget,
@@ -32,7 +36,6 @@ from ignite_live.ui.pages.games import GamesPage
 from ignite_live.ui.pages.viewers import ViewersPage
 from ignite_live.ui.docks import ActivityPanel, ChatPanel, ChatPopout, ConnectionsPanel, dock
 from ignite_live.integrations.obs_studio import Studio, clock
-from ignite_live.ui.obs_panel import ObsPanel
 from ignite_live.ui.pages.music import MusicPage
 from ignite_live.ui.pages.overlays import OverlaysPage
 from ignite_live.ui.pages.stream import StreamPage
@@ -40,7 +43,17 @@ from ignite_live.ui.checklist import ChecklistDialog, go_live
 from ignite_live.ui.preferences import PreferencesDialog
 from ignite_live.ui.profiles import ProfilesMenu
 from ignite_live.ui.simulate import SimulateDialog
-from ignite_live.ui.theme import COLORS, STATE_TEXT, apply_theme, state_color, warn_color
+from ignite_live.ui.theme import (
+    STATE_TEXT,
+    apply_theme,
+    colors,
+    set_live,
+    set_props,
+    state_color,
+    tabular,
+    theme_changed,
+    warn_color,
+)
 
 # Tab titles, in the default order (View → Ctrl+1… follows it too).
 PAGE_TITLES = {
@@ -68,7 +81,15 @@ STATUS_NAMES = {
 OPTIONAL_STATUS = {"twitch", "youtube", "tts"}
 INFO_SECONDS = 8
 ERROR_SECONDS = 20
+MIN_WIDTH, MIN_HEIGHT = 720, 480
+COMPACT_STATUS_WIDTH = 1100  # Narrower than this, the status bar shows each connection as just its dot.
 
+
+
+@dataclass
+class DockShare:
+    share: float  # Of the window's width (side panels) or height (bottom panels).
+    settled: int | None = None  # The room it last ended up with; None while a resize is pending.
 
 class MainWindow(QMainWindow):
     def __init__(self, controller: Controller) -> None:
@@ -78,7 +99,10 @@ class MainWindow(QMainWindow):
         screen = QApplication.primaryScreen()
         room = screen.availableGeometry() if screen is not None else None
         self.resize(min(1440, room.width()) if room else 1440, min(900, room.height()) if room else 900)
-        self.setMinimumSize(900, 600)
+        self.setMinimumSize(MIN_WIDTH, MIN_HEIGHT)
+        self._compact_status = False
+        # Each dock's share of the window, kept as the window is resized.
+        self._dock_shares: dict[QDockWidget, DockShare] = {}
         self.setDockOptions(QMainWindow.DockOption.AnimatedDocks | QMainWindow.DockOption.AllowTabbedDocks)
         self.chat_popout: ChatPopout | None = None
         self.simulator: SimulateDialog | None = None
@@ -97,11 +121,10 @@ class MainWindow(QMainWindow):
         bar.customContextMenuRequested.connect(self._tab_menu)
         # Panic mode banner, above the tabs.
         self.panic_banner = QWidget()
-        self.panic_banner.setStyleSheet("background: #b4232a; color: white;")
+        self.panic_banner.setObjectName("panicBanner")
         banner = QHBoxLayout(self.panic_banner)
-        banner.setContentsMargins(12, 6, 12, 6)
+        banner.setContentsMargins(16, 8, 16, 8)
         self.panic_label = QLabel()
-        self.panic_label.setStyleSheet("font-weight: 600;")
         resume = QPushButton("Resume")
         resume.clicked.connect(controller.resume)
         banner.addWidget(self.panic_label, 1)
@@ -132,6 +155,7 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.no_tabs)
         self._restore_tabs()
         central = QWidget()
+        central.setAutoFillBackground(True)  # The tabs sit on a panel, apart from the window background.
         column = QVBoxLayout(central)
         column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(0)
@@ -144,19 +168,16 @@ class MainWindow(QMainWindow):
         self.setCorner(Qt.Corner.BottomRightCorner, Qt.DockWidgetArea.RightDockWidgetArea)
         self.chat_panel = ChatPanel(controller, self.actions)
         self.chat_dock = dock("Chat", "chatDock", self.chat_panel, self)
-        self.obs_panel = ObsPanel(controller, self.actions)
-        self.obs_dock = dock("OBS", "obsDock", self.obs_panel, self)
         self.connections_dock = dock("Connections", "connectionsDock", ConnectionsPanel(controller), self)
         self.activity_panel = ActivityPanel(controller)
         self.activity_dock = dock("Activity", "activityDock", self.activity_panel, self)
-        self.docks = (self.chat_dock, self.obs_dock, self.connections_dock, self.activity_dock)
+        self.docks = (self.chat_dock, self.connections_dock, self.activity_dock)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.chat_dock)
-        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.obs_dock)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.connections_dock)
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.activity_dock)
         self.tabifyDockWidget(self.connections_dock, self.activity_dock)
         self.activity_dock.raise_()
-        self.resizeDocks([self.chat_dock, self.obs_dock], [360, 300], Qt.Orientation.Horizontal)
+        self.resizeDocks([self.chat_dock], [360], Qt.Orientation.Horizontal)
         self.resizeDocks([self.activity_dock], [180], Qt.Orientation.Vertical)
 
         self._menus()
@@ -168,6 +189,9 @@ class MainWindow(QMainWindow):
         controller.status_changed.connect(self._status)
         controller.notice.connect(self._notice)
         controller.settings_changed.connect(self._settings_changed)
+        self._theme = controller.settings.ui_theme  # Applied by app.py at startup.
+        theme_changed().connect(self._restyle)
+        self._restyle()
         for change in controller.statuses.values():
             self._status(change)
         self._restore_layout()
@@ -239,15 +263,29 @@ class MainWindow(QMainWindow):
         bar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)  # Icons stay in the menus.
         bar.setMovable(False)
         # Only what's needed mid-stream; the rest is a tab or a menu away.
-        for item in (a.toggle_stream, a.toggle_record, a.save_replay, None, a.popout_chat, a.preferences, None,
-                     a.panic):
+        for item in (a.toggle_stream, a.toggle_record, a.save_replay, None, a.popout_chat, a.preferences):
             bar.addSeparator() if item is None else bar.addAction(item)
-        for action, role in ((a.toggle_stream, "primary"), (a.panic, "danger")):  # Styled in ui/theme.py.
-            button = bar.widgetForAction(action)
-            if button is not None:
-                button.setObjectName(role)
+        # Panic sits apart, at the far end, in a toolbar of its own: in a narrow window the main toolbar
+        # tucks its last buttons into a » menu, and Panic must never be one of them.
+        panic_bar = QToolBar("Panic")
+        panic_bar.setObjectName("panicToolbar")
+        panic_bar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+        panic_bar.setMovable(False)
+        gap = QWidget()
+        gap.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        panic_bar.addWidget(gap)
+        panic_bar.addAction(a.panic)
+        # Styled in ui/theme.py: the only two filled buttons.
+        stream = bar.widgetForAction(a.toggle_stream)
+        if stream is not None:
+            set_live(stream, self.controller.obs_streaming)
+            self.controller.obs_streaming_changed.connect(lambda live: set_live(stream, live))
+        panic = panic_bar.widgetForAction(a.panic)
+        if panic is not None:
+            set_props(panic, live=True)
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, bar)
-        self.toolbar = bar
+        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, panic_bar)
+        self.toolbar, self.panic_toolbar = bar, panic_bar
 
     def _tray(self) -> None:
         """Tray icon: click to show or hide the window; the menu has the go-live essentials."""
@@ -288,7 +326,10 @@ class MainWindow(QMainWindow):
     def _status_bar(self) -> None:
         # Live/recording time and stream health at a glance; empty while idle.
         self.health_label = QLabel("")
-        self.health_label.setContentsMargins(6, 0, 12, 0)
+        self.health_label.setObjectName("healthLabel")
+        self.health_label.setTextFormat(Qt.TextFormat.RichText)
+        self.health_label.setFont(tabular(self.health_label.font()))  # Fixed-width digits: no jitter.
+        self.health_label.setContentsMargins(8, 0, 16, 0)
         self.statusBar().addPermanentWidget(self.health_label)
         self.controller.studio_changed.connect(self._health)
         self.status_labels: dict[str, QLabel] = {}
@@ -316,9 +357,6 @@ class MainWindow(QMainWindow):
             self.chat_dock.show()
             self.chat_dock.raise_()
             self.chat_panel.username.setFocus()
-        elif key == "obs":  # The OBS tab before 1.2.
-            self.obs_dock.show()
-            self.obs_dock.raise_()
         else:
             key = key if key in self.pages else "stream"
             if self.tabs.indexOf(self.pages[key]) < 0:
@@ -412,8 +450,8 @@ class MainWindow(QMainWindow):
         label = self.status_labels[change.source]
         name = STATUS_NAMES[change.source]
         lit = change.state.value in ("connected", "error")
-        dot = state_color(change.state, label).name() if lit else COLORS["faint"]
-        label.setText(f'<span style="color: {dot};">●</span> {name}')
+        dot = state_color(change.state, label).name() if lit else colors().text_disabled
+        label.setText(f'<span style="color: {dot};">●</span>' + ("" if self._compact_status else f" {name}"))
         label.setToolTip(f"{name}: {STATE_TEXT[change.state]}" + (f"\n{change.detail}" if change.detail else ""))
         label.setEnabled(change.state is not ConnectionState.OFFLINE)
         label.setVisible(change.source not in OPTIONAL_STATUS or change.state is not ConnectionState.OFFLINE)
@@ -428,12 +466,13 @@ class MainWindow(QMainWindow):
             parts.append(f"{health.network_dropped_pct:.1f}% dropped")
         if studio.recording:
             parts.append(("REC paused " if studio.record_paused else "● REC ") + clock(studio.record_duration_ms))
-        self.health_label.setText("  ·  ".join(parts))
+        # Numbers in normal text, the dot in red; all of it turns yellow only when something is wrong.
+        dot = f'<span style="color: {state_color(ConnectionState.ERROR, self.health_label).name()};">●</span> '
+        self.health_label.setText("&nbsp;&nbsp;·&nbsp;&nbsp;".join(part.replace("● ", dot) for part in parts))
         if self.tray is not None:
             self.tray.setToolTip("  ·  ".join(["Ignite", *(part.removeprefix("● ") for part in parts)]))
         bad = studio.streaming and (health.reconnecting or health.network_dropped_pct >= 1 or health.render_lag_pct >= 1)
-        color = (warn_color(self.health_label) if bad else state_color(ConnectionState.ERROR, self.health_label)).name()
-        self.health_label.setStyleSheet(f"color: {color}; font-weight: bold;" if parts else "")
+        self.health_label.setStyleSheet(f"color: {warn_color(self.health_label).name()};" if bad else "")
 
     def _panic_changed(self, on: bool) -> None:
         s = self.controller.settings
@@ -449,9 +488,18 @@ class MainWindow(QMainWindow):
 
     def _settings_changed(self, settings) -> None:
         app = QApplication.instance()
-        if app is not None and settings.ui_theme != getattr(self, "_theme", None):
+        if app is not None and settings.ui_theme != self._theme:
             self._theme = settings.ui_theme
             apply_theme(app, settings.ui_theme)
+
+    def _restyle(self, _palette=None) -> None:
+        """Colours set in code (rather than by the stylesheet) follow a switch between dark and light."""
+        p = colors()
+        self.panic_banner.setStyleSheet(f"QWidget#panicBanner {{ background: {p.live}; }} "
+                                        f"QLabel {{ color: {p.on_live}; font-weight: 600; }}")
+        for change in self.controller.statuses.values():
+            self._status(change)
+        self._health(self.controller.studio)
 
     def _about(self) -> None:
         QMessageBox.about(
@@ -463,6 +511,60 @@ class MainWindow(QMainWindow):
             f"<p>Settings: {self.controller.settings_path.parent}<br>"
             f"Log: {settings_store.log_dir(self.controller.settings_path) / 'ignite.log'}</p>",
         )
+
+    # Resizing: the docks keep their share of the window, and the status bar condenses when narrow.
+
+    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 - Qt override
+        super().resizeEvent(event)
+        compact = self.width() < COMPACT_STATUS_WIDTH
+        if compact != self._compact_status:
+            self._compact_status = compact
+            for change in self.controller.statuses.values():
+                self._status(change)
+        old = event.oldSize()
+        if self.isVisible() and old.isValid() and not old.isEmpty():
+            self._keep_dock_shares(old, event.size())
+
+    def _keep_dock_shares(self, old: QSize, new: QSize) -> None:
+        """Scale each docked panel with the window, so growing it doesn't give every pixel to the tabs and
+        shrinking it doesn't squeeze them first. A panel the user resized by hand keeps its new share."""
+        for panel in self.docks:
+            if not panel.isVisible() or panel.isFloating():
+                continue
+            across = self._across(panel)
+            before, after = (old.width(), new.width()) if across else (old.height(), new.height())
+            if before == after:
+                continue
+            extent = self._extent(panel)
+            share = self._dock_shares.get(panel)
+            if share is None or (share.settled is not None and abs(extent - share.settled) > 2):
+                share = self._dock_shares[panel] = DockShare(extent / before)  # New, or the user dragged it.
+            share.settled = None  # Until the layout has applied the new size.
+            self.resizeDocks([panel], [round(share.share * after)],
+                             Qt.Orientation.Horizontal if across else Qt.Orientation.Vertical)
+            QTimer.singleShot(0, lambda p=panel: self._dock_settled(p))
+
+    def _dock_settled(self, panel: QDockWidget) -> None:
+        """Remember the size the layout gave a panel (it may be held at its minimum), to tell our resizing
+        from the user's."""
+        share = self._dock_shares.get(panel)
+        if share is not None and share.settled is None:
+            share.settled = self._extent(panel)
+
+    def _across(self, panel: QDockWidget) -> bool:
+        return self.dockWidgetArea(panel) in (Qt.DockWidgetArea.LeftDockWidgetArea, Qt.DockWidgetArea.RightDockWidgetArea)
+
+    def _extent(self, panel: QDockWidget) -> int:
+        """The room a panel's dock area takes, as resizeDocks() measures it: with its tab bar, if tabbed."""
+        box, area = panel.geometry(), self.dockWidgetArea(panel)
+        if area == Qt.DockWidgetArea.RightDockWidgetArea:
+            return self.width() - box.left()
+        if area == Qt.DockWidgetArea.LeftDockWidgetArea:
+            return box.right() + 1
+        if area == Qt.DockWidgetArea.BottomDockWidgetArea:
+            bar = self.statusBar()
+            return (bar.geometry().top() if bar.isVisible() else self.height()) - box.top()
+        return box.height()
 
     # Window layout is remembered between runs.
 

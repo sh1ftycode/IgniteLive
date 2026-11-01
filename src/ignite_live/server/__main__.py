@@ -6,7 +6,7 @@
 Environment:
     IGNITE_DATA         data directory (default ~/.local/share/ignite-server)
     IGNITE_SECRET       Fernet key for encrypting stream keys (default: generated file)
-    IGNITE_YOUTUBE_KEY  YouTube Data API key, enables "song - artist" search
+    IGNITE_YOUTUBE_KEY  YouTube Data API key (optional): song links get their length up front
     (The old SHIFTYTOOL_* names still work.)
 
 Run behind HTTPS (e.g. Caddy) whenever it listens on anything but localhost.
@@ -88,8 +88,6 @@ def _run(args: argparse.Namespace, store: Store) -> int:
         print("\n".join(store.users()))
     else:
         youtube = YouTubeClient(env("YOUTUBE_KEY"))
-        if not env("YOUTUBE_KEY"):
-            print("IGNITE_YOUTUBE_KEY not set: song search uses YouTube's keyless search.", file=sys.stderr)
         web.run_app(create_app(store, youtube), host=args.host, port=args.port, access_log=None)
     return 0
 

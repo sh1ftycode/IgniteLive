@@ -66,8 +66,16 @@ from ignite_live.music.commands import (
 )
 from ignite_live.music.queue import QueueRejected, QueueRules, SongQueue
 from ignite_live.music.session import MusicSession
-from ignite_live.music.spotify import Playlist, SpotifyError, fetch_public_playlist
-from ignite_live.music.youtube import LinkRequest, Track, TrackLookupError, YouTubeClient, parse_request
+from ignite_live.music.spotify import Playlist, PlaylistSong, SpotifyError, fetch_public_playlist
+from ignite_live.music.youtube import (
+    LinkRequest,
+    Track,
+    TrackLookupError,
+    YouTubeClient,
+    parse_request,
+    playlist_id_from,
+    video_id_from,
+)
 from ignite_live.overlay.chat import chat_payload
 from ignite_live.overlay.server import PAGES, OverlayServer
 from ignite_live.speech.rules import TtsRules, clean, shorten
@@ -219,6 +227,7 @@ class Controller(QObject):
     obs_streaming_changed = Signal(bool)
     targets_changed = Signal(list)  # [StreamTarget]
     playlist_changed = Signal(object)  # MusicSession.playlist_info() or None
+    radio_changed = Signal(str)  # A line about autoplay for the Music tab.
     settings_changed = Signal(object)  # Settings
     busy_changed = Signal(str, bool)  # action name, busy
     studio_changed = Signal(object)  # integrations.obs_studio.Studio
@@ -312,7 +321,13 @@ class Controller(QObject):
             self._resolve_song,
             CommandEngine(command_config(self.settings)),
             SongQueue(queue_rules(self.settings)),
+            radio=self._radio_songs,
         )
+        # Autoplay remembers what chat requested, between runs, to follow the same genre.
+        self.music.radio_seeds = [v for v in self.settings.music_radio_seeds if video_id_from(v) == v][:20]
+        self.music.on_seeds_change = lambda seeds: self.runtime.to_ui(self._radio_seeds_changed, seeds)
+        self.radio_status = ""
+        self.music.on_radio_change = lambda text: self.runtime.to_ui(self._radio_status_changed, text)
         publish = self.music.queue.on_change
         self.music.queue.on_change = lambda queue: (publish(queue), self._queue_changed(queue))
         self.playlist_info: dict | None = None
@@ -361,6 +376,7 @@ class Controller(QObject):
             await self.overlay.set_style(overlay_style_of(self.settings))
             await self.overlay.set_goals(self.goal_snapshot)
             self._overlay_clients_changed(0)
+            self.music.set_radio(self.settings.music_radio, self.settings.music_radio_start)  # Starts autoplay.
         except OSError:
             self._status("overlay", ConnectionState.ERROR, f"Port {self.overlay.port} is in use. Change it in Settings.")
         self._obs_task = asyncio.create_task(self._obs_loop())
@@ -1300,7 +1316,9 @@ class Controller(QObject):
                 p.player_sources = tuple(
                     checklist.PlayerSource(name, bool(settings.get("reroute_audio")), muted.get(name))
                     for name, settings in (await obs.browser_sources()).items()
-                    if (self._current_overlay_url(str(settings.get("url", ""))) or "").split("?")[0].endswith("/player")
+                    # Now Playing plays the music ("/player" is its name from before).
+                    if (self._current_overlay_url(str(settings.get("url", ""))) or "").split("?")[0].endswith(
+                        ("/nowplaying", "/player"))
                 )
                 if p.needs_replay and not vertical_clips and studio.replay is not None:
                     p.replay_seconds = await obs.replay_seconds()
@@ -1843,9 +1861,6 @@ class Controller(QObject):
     def set_input_mute(self, name: str, muted: bool) -> None:
         self._obs_action(lambda obs: obs.set_mute(name, muted))
 
-    def set_input_volume(self, name: str, db: float) -> None:
-        self._obs_action(lambda obs: obs.set_volume_db(name, db))
-
     def toggle_recording(self) -> None:
         self._obs_action(lambda obs: obs.set_recording(not self.studio.recording))
 
@@ -1993,7 +2008,7 @@ class Controller(QObject):
 
         self.runtime.submit(toggle(), on_error=self._error)
 
-    def add_overlay_to_obs(self, page: str = "player") -> None:
+    def add_overlay_to_obs(self, page: str = "nowplaying") -> None:
         self.add_overlays([page])
 
     # Streamlabs and stream keys.
@@ -2150,9 +2165,10 @@ class Controller(QObject):
         self.runtime.loop.call_soon_threadsafe(self.music.queue.clear)
 
     def load_playlist(self, link: str, shuffle: bool, quiet: bool = False) -> None:
-        """A public Spotify playlist that plays whenever the queue is empty.
+        """A public Spotify, YouTube or YouTube Music playlist that plays whenever the queue is empty.
 
-        Reads the playlist's public page for song names and looks each one up on YouTube.
+        Spotify: reads the playlist's public page for song names and looks each one up on YouTube Music
+        right before it plays. YouTube: its songs play as they are, no lookups.
         """
 
         def loaded(playlist: Playlist) -> None:
@@ -2164,7 +2180,37 @@ class Controller(QObject):
                     "info", f"Loaded “{playlist.name}” ({len(playlist.songs)} songs). It plays when the queue is empty."
                 )
 
-        self._run("playlist", fetch_public_playlist, link, on_success=loaded)
+        self._run("playlist", self._fetch_playlist, link, on_success=loaded)
+
+    def _fetch_playlist(self, link: str) -> Playlist:
+        """Blocking: a Spotify or a YouTube / YouTube Music playlist link."""
+        playlist_id = playlist_id_from(link)
+        if playlist_id is None:
+            return fetch_public_playlist(link)  # Refuses anything that isn't a Spotify playlist either.
+        name, tracks = YouTubeClient(prefer_clean=self.settings.refuse_explicit).playlist(playlist_id)
+        songs = tuple(PlaylistSong(t.title, t.channel, (t.duration_s or 0) * 1000, track=t) for t in tracks)
+        return Playlist(playlist_id, name, songs)
+
+    # Autoplay.
+
+    def set_radio(self, on: bool, start: str) -> None:
+        """Autoplay songs like chat's requests (same genre) whenever nothing is queued and no playlist is on."""
+        start = " ".join(start.split())[:100]
+        if (on, start) != (self.settings.music_radio, self.settings.music_radio_start):
+            self.save_settings(replace(self.settings, music_radio=on, music_radio_start=start))
+
+    def _radio_songs(self, video_id: str) -> list[Track]:
+        """Blocking; called on a worker thread by MusicSession."""
+        return YouTubeClient(prefer_clean=self.settings.refuse_explicit).radio(video_id)
+
+    def _radio_seeds_changed(self, seeds: list[str]) -> None:
+        if seeds != self.settings.music_radio_seeds:
+            self.settings.music_radio_seeds = seeds
+            settings_store.save(self.settings, self.settings_path)
+
+    def _radio_status_changed(self, text: str) -> None:
+        self.radio_status = text
+        self.radio_changed.emit(text)
 
     def stop_playlist(self) -> None:
         if self.settings.music_playlist_url:
@@ -2242,10 +2288,13 @@ class Controller(QObject):
         actions = action_engine_config(self.settings)
         goals = parse_goals(self.settings.goals)
         points = points_config(self.settings.points)
+        radio = (self.settings.music_radio, self.settings.music_radio_start)
 
         def apply() -> None:
             self.music.engine.config = config
             self.music.queue.rules = rules
+            if radio != (self.music.radio_on, self.music.radio_start):
+                self.music.set_radio(*radio)
             self.action_engine.update(*actions)
             self.points.config = points
             self.leaderboards.currency = points.currency

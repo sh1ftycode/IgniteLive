@@ -139,17 +139,19 @@ def evaluate(p: Preflight) -> list[Check]:
     # Overlays.
     if p.obs_connected:
         if not p.player_sources:
-            add(Check("player", "The music player isn't in OBS", WARN,
-                      "Song requests won't be seen or heard.", "add_overlay:player", "Add to OBS"))
+            add(Check("player", "The Now Playing overlay isn't in OBS", WARN,
+                      "It plays the song requests: without it they won't be seen or heard.",
+                      "add_overlay:nowplaying", "Add to OBS"))
         else:
-            source = p.player_sources[0]
+            # With copies in several scenes, judge the best set-up one (only one copy plays the sound).
+            source = min(p.player_sources, key=lambda s: (not s.reroute_audio, bool(s.muted)))
             if not source.reroute_audio:
-                add(Check("player", "Music player audio isn't controlled by OBS", WARN,
+                add(Check("player", "Music audio isn't controlled by OBS", WARN,
                           f"In OBS, open “{source.name}” and tick Control audio via OBS."))
             elif source.muted:
-                add(Check("player", "The music player is muted in OBS", WARN, "", f"unmute:{source.name}", "Unmute"))
-            elif "player" not in p.pages_open:
-                add(Check("player", "The music player isn't loaded", WARN,
+                add(Check("player", "The music is muted in OBS", WARN, "", f"unmute:{source.name}", "Unmute"))
+            elif "nowplaying" not in p.pages_open:
+                add(Check("player", "The Now Playing overlay isn't loaded", WARN,
                           f"“{source.name}” is in OBS but not running: show it in your scene, or untick "
                           "“Shutdown source when not visible”."))
             else:

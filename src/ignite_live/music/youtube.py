@@ -1,13 +1,19 @@
 """YouTube lookups for song requests. Metadata only: nothing is downloaded.
 
-Links resolve with the keyless oEmbed endpoint, or with the Data API when a key
-is set (then duration and embeddability are known up front).
+"song - artist" requests search YouTube Music's song catalog: official audio
+("art tracks", whose picture is just the album cover), not music videos,
+covers or lyric uploads. It's the search music.youtube.com itself calls (no
+key, no quota); it's undocumented and could change. Each pick is checked with
+oEmbed, which refuses songs that can't be embedded.
 
-"song - artist" requests use the Data API when a key is set (``search.list``
-costs 100 of the default 10,000 daily quota units). Without a key they use the
-search that youtube.com itself calls (no key, no quota). It's undocumented and
-could change; each pick is checked with oEmbed, which refuses videos that
-can't be embedded.
+Links (youtube.com or music.youtube.com) resolve with the keyless oEmbed
+endpoint, or with the Data API when a key is set (then duration and
+embeddability are known up front).
+
+``radio`` gives songs like one song (YouTube Music's radio for it, the same
+genre and vibe), and ``playlist`` reads a public YouTube or YouTube Music
+playlist; both come from the same undocumented "up next" list music.youtube.com
+shows, so they share its limits (about the first 50 to 200 songs).
 """
 
 from __future__ import annotations
@@ -23,8 +29,13 @@ _VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
 _HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"}
 _DURATION = re.compile(r"^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$")
 _CLOCK = re.compile(r"^(?:(\d+):)?(\d{1,2}):(\d{2})$")
-_WEB_CLIENT = {"clientName": "WEB", "clientVersion": "2.20250101.00.00", "hl": "en", "gl": "US"}
-_VIDEOS_ONLY = "EgIQAQ%3D%3D"  # The "Type: Video" search filter.
+_MUSIC_CLIENT = {"clientName": "WEB_REMIX", "clientVersion": "1.20250101.01.00", "hl": "en", "gl": "US"}
+_SONGS_ONLY = "EgWKAQIIAWoMEA4QChADEAQQCRAF"  # YouTube Music's "Songs" search filter.
+_ART_TRACK = "MUSIC_VIDEO_TYPE_ATV"  # Official audio with the album cover as its picture.
+_PODCAST = "MUSIC_VIDEO_TYPE_PODCAST_EPISODE"
+_PLAYLIST_ID = re.compile(r"^[A-Za-z0-9_-]{10,64}$")
+_ART_SIZE = re.compile(r"=w\d+-h\d+")
+_SEARCH_RESULTS = 8
 _EMBED_CHECKS = 3
 
 
@@ -41,6 +52,7 @@ class Track:
     embeddable: bool | None = None
     age_restricted: bool = False
     image_url: str = ""  # Cover art; empty means the video's YouTube thumbnail.
+    explicit: bool = False  # Marked explicit by YouTube Music.
 
     @property
     def cover(self) -> str:
@@ -128,13 +140,13 @@ def _text(value) -> str:
     return "".join(str(run.get("text", "")) for run in runs if isinstance(run, dict)) if isinstance(runs, list) else ""
 
 
-def _video_renderers(node):
-    """Every ``videoRenderer`` in a youtube.com search response, in page order."""
+def _renderers(node, key: str):
+    """Every ``key`` object (e.g. a search result row) anywhere in a YouTube Music response, in page order."""
     stack = [node]
     while stack:
         item = stack.pop()
         if isinstance(item, dict):
-            renderer = item.get("videoRenderer")
+            renderer = item.get(key)
             if isinstance(renderer, dict):
                 yield renderer
             stack.extend(reversed(list(item.values())))
@@ -142,21 +154,87 @@ def _video_renderers(node):
             stack.extend(reversed(item))
 
 
-def search_results(payload: dict) -> list[Track]:
-    """Tracks from a keyless search response. Live streams (no length) are left out."""
+def _music_type(endpoint: dict) -> str | None:
+    return ((endpoint.get("watchEndpointMusicSupportedConfigs") or {}).get("watchEndpointMusicConfig") or {}).get(
+        "musicVideoType")
+
+
+def _cover(thumbnails) -> str:
+    """The album art, at a size that looks sharp on the Now Playing card."""
+    last = thumbnails[-1] if isinstance(thumbnails, list) and thumbnails and isinstance(thumbnails[-1], dict) else {}
+    url = str(last.get("url", ""))
+    return _ART_SIZE.sub("=w400-h400", url) if url.startswith("https://") else ""
+
+
+def _explicit(renderer: dict) -> bool:
+    badges = renderer.get("badges") if isinstance(renderer.get("badges"), list) else []
+    return any(((badge.get("musicInlineBadgeRenderer") or {}).get("icon") or {}).get("iconType")
+               == "MUSIC_EXPLICIT_BADGE" for badge in badges if isinstance(badge, dict))
+
+
+def _column(renderer: dict, index: int) -> dict:
+    columns = renderer.get("flexColumns")
+    if not isinstance(columns, list) or len(columns) <= index or not isinstance(columns[index], dict):
+        return {}
+    return (columns[index].get("musicResponsiveListItemFlexColumnRenderer") or {}).get("text") or {}
+
+
+def _watch_endpoint(renderer: dict) -> dict:
+    runs = _column(renderer, 0).get("runs")
+    run = runs[0] if isinstance(runs, list) and runs and isinstance(runs[0], dict) else {}
+    return (run.get("navigationEndpoint") or {}).get("watchEndpoint") or {}
+
+
+def music_search_results(payload: dict) -> list[Track]:
+    """Songs from a YouTube Music search: art tracks with a known length (artist, album art, explicit badge)."""
     tracks = []
-    for renderer in _video_renderers(payload):
-        video_id = str(renderer.get("videoId", ""))
-        duration = parse_clock(_text(renderer.get("lengthText")))
-        if not _VIDEO_ID.match(video_id) or duration is None:
+    for renderer in _renderers(payload, "musicResponsiveListItemRenderer"):
+        endpoint = _watch_endpoint(renderer)
+        video_id = str((renderer.get("playlistItemData") or {}).get("videoId") or endpoint.get("videoId") or "")
+        details = [part.strip() for part in _text(_column(renderer, 1)).split(" • ")]  # Artist • album • 3:44
+        duration = parse_clock(details[-1]) if details else None
+        if not _VIDEO_ID.match(video_id) or _music_type(endpoint) != _ART_TRACK or duration is None:
             continue
-        tracks.append(Track(
-            video_id=video_id,
-            title=_text(renderer.get("title")),
-            channel=_text(renderer.get("ownerText")) or _text(renderer.get("longBylineText")),
-            duration_s=duration,
-        ))
+        thumbs = (((renderer.get("thumbnail") or {}).get("musicThumbnailRenderer") or {}).get("thumbnail") or {}).get(
+            "thumbnails")
+        tracks.append(Track(video_id=video_id, title=_text(_column(renderer, 0)),
+                            channel=details[0] if len(details) > 1 else "", duration_s=duration,
+                            image_url=_cover(thumbs), explicit=_explicit(renderer)))
     return tracks
+
+
+def up_next_results(payload: dict, official_audio_only: bool) -> list[Track]:
+    """Songs from YouTube Music's "up next" list (a song's radio, or a playlist). Podcasts and live streams
+    are left out; ``official_audio_only`` also leaves out music videos and uploads."""
+    tracks = []
+    for renderer in _renderers(payload, "playlistPanelVideoRenderer"):
+        video_id = str(renderer.get("videoId") or "")
+        kind = _music_type((renderer.get("navigationEndpoint") or {}).get("watchEndpoint") or {})
+        duration = parse_clock(_text(renderer.get("lengthText")))
+        if not _VIDEO_ID.match(video_id) or duration is None or kind == _PODCAST:
+            continue
+        if official_audio_only and kind != _ART_TRACK:
+            continue
+        byline = [part.strip() for part in _text(renderer.get("longBylineText")).split(" • ")]  # Artist • album • year
+        tracks.append(Track(video_id=video_id, title=_text(renderer.get("title")), channel=byline[0],
+                            duration_s=duration, image_url=_cover((renderer.get("thumbnail") or {}).get("thumbnails")),
+                            explicit=_explicit(renderer)))
+    return tracks
+
+
+def playlist_id_from(text: str) -> str | None:
+    """The playlist in a youtube.com or music.youtube.com link (``list=``), or None."""
+    text = text.strip()
+    if "://" not in text:
+        text = "https://" + text
+    try:
+        url = urllib.parse.urlsplit(text)
+    except ValueError:
+        return None
+    if (url.hostname or "").lower() not in _HOSTS:
+        return None
+    candidate = urllib.parse.parse_qs(url.query).get("list", [""])[0]
+    return candidate if _PLAYLIST_ID.match(candidate) else None
 
 
 _EXPLICIT = re.compile(
@@ -167,8 +245,8 @@ _LENGTH = re.compile(rb'"lengthSeconds"\s*:\s*"(\d+)"')
 
 
 def is_explicit(track: Track) -> bool:
-    """YouTube has no explicit flag: titles marked "(Explicit)", "[Dirty]", "Explicit Version" and the like."""
-    return bool(_EXPLICIT.search(track.title))
+    """YouTube Music's explicit badge, or (for links) titles marked "(Explicit)", "[Dirty]", "Explicit Version"…"""
+    return track.explicit or bool(_EXPLICIT.search(track.title))
 
 
 def _score(track: Track, request: SearchRequest, prefer_clean: bool = False) -> int:
@@ -179,18 +257,17 @@ def _score(track: Track, request: SearchRequest, prefer_clean: bool = False) -> 
     score = 2 if request.song.lower() in haystack else 0
     if request.artist and request.artist.lower() in haystack:
         score += 2
-    if "official" in haystack or track.channel.lower().endswith("- topic"):
-        score += 1
     return score
 
 
 class YouTubeClient:
     api_base = "https://www.googleapis.com/youtube/v3"
     oembed_url = "https://www.youtube.com/oembed"
-    keyless_search_url = "https://www.youtube.com/youtubei/v1/search?prettyPrint=false"
+    music_search_url = "https://music.youtube.com/youtubei/v1/search?prettyPrint=false"
+    music_next_url = "https://music.youtube.com/youtubei/v1/next?prettyPrint=false"
 
     def __init__(self, api_key: str = "", transport: Transport = urllib_transport, prefer_clean: bool = False) -> None:
-        """``prefer_clean``: skip results marked explicit, and pick "clean" / "radio edit" versions first."""
+        """``api_key``: optional, for links. ``prefer_clean``: skip explicit songs, and pick clean versions first."""
         self._api_key = api_key.strip()
         self._transport = transport
         self.prefer_clean = prefer_clean
@@ -227,48 +304,58 @@ class YouTubeClient:
         return sorted(candidates, key=lambda t: -_score(t, request, self.prefer_clean))
 
     def search(self, request: SearchRequest) -> Track:
-        if not self._api_key:
-            return self._search_keyless(request)
-        payload = self._get(
-            f"{self.api_base}/search",
-            {
-                "part": "snippet",
-                "type": "video",
-                "videoEmbeddable": "true",
-                "videoCategoryId": "10",  # Music
-                "maxResults": "5",
-                "q": request.query,
-            },
-        )
-        ids = [
-            item["id"]["videoId"]
-            for item in payload.get("items", [])
-            if isinstance(item, dict) and isinstance(item.get("id"), dict) and item["id"].get("videoId")
-        ]
-        candidates = self._rank([t for t in self.videos(ids) if t.embeddable is not False and not t.age_restricted],
-                                request)
-        if not candidates:
-            raise TrackLookupError(f'No playable result for "{request.query}".')
-        return candidates[0]
-
-    def _search_keyless(self, request: SearchRequest) -> Track:
-        body = json.dumps({"context": {"client": _WEB_CLIENT}, "query": request.query, "params": _VIDEOS_ONLY})
-        try:
-            status, raw = self._transport(
-                "POST", self.keyless_search_url, {"Content-Type": "application/json"}, body.encode()
-            )
-        except TransportError as error:
-            raise TrackLookupError("Could not reach YouTube.") from error
-        candidates = search_results(self._decode(status, raw))[:5]
-        ranked = self._rank(candidates, request)
-        for track in ranked[:_EMBED_CHECKS]:
+        """The best-matching song on YouTube Music that can be embedded."""
+        found = self._music_search(request.query)
+        if self.prefer_clean and found and found[0].explicit:
+            # The clean version is its own song, often further down: ask for it, and look there first.
+            seen = {track.video_id for track in found}
+            found = [t for t in self._music_search(f"{request.query} clean") if t.video_id not in seen] + found
+        for track in self._rank(found, request)[:_EMBED_CHECKS]:
             try:
-                details = self.oembed(track.video_id)
+                self.oembed(track.video_id)
             except TrackLookupError:
                 continue  # Can't be embedded (or vanished): try the next one.
-            return Track(track.video_id, track.title or details.title, track.channel or details.channel,
-                         track.duration_s, embeddable=True)
-        raise TrackLookupError(f'No playable result for "{request.query}".')
+            return replace(track, embeddable=True)
+        raise TrackLookupError(f'No song on YouTube Music for "{request.query}".')
+
+    def radio(self, video_id: str) -> list[Track]:
+        """Songs like this one, from YouTube Music's radio for it: official audio, without the song itself."""
+        payload = self._up_next({"videoId": video_id, "playlistId": f"RDAMVM{video_id}"})
+        tracks = [t for t in up_next_results(payload, official_audio_only=True) if t.video_id != video_id]
+        return [t for t in tracks if not is_explicit(t)] if self.prefer_clean else tracks
+
+    def playlist(self, playlist_id: str) -> tuple[str, list[Track]]:
+        """A public YouTube or YouTube Music playlist: its name and songs (as they are: uploads included)."""
+        tracks = up_next_results(self._up_next({"playlistId": playlist_id}), official_audio_only=False)
+        if not tracks:
+            raise TrackLookupError("That playlist is private, empty, or has no songs Ignite can play.")
+        try:
+            name = self._oembed_title(f"https://www.youtube.com/playlist?list={playlist_id}")
+        except TrackLookupError:
+            name = ""
+        return name or "YouTube playlist", tracks
+
+    def _up_next(self, body: dict) -> dict:
+        payload = json.dumps({"context": {"client": _MUSIC_CLIENT}, "isAudioOnly": True, **body})
+        try:
+            status, raw = self._transport("POST", self.music_next_url, {
+                "Content-Type": "application/json", "Origin": "https://music.youtube.com"}, payload.encode())
+        except TransportError as error:
+            raise TrackLookupError("Could not reach YouTube Music.") from error
+        return self._decode(status, raw)
+
+    def _oembed_title(self, url: str) -> str:
+        status, body = self._send(f"{self.oembed_url}?{urllib.parse.urlencode({'url': url, 'format': 'json'})}")
+        return str(self._decode(status, body).get("title", ""))
+
+    def _music_search(self, query: str) -> list[Track]:
+        body = json.dumps({"context": {"client": _MUSIC_CLIENT}, "query": query, "params": _SONGS_ONLY})
+        try:
+            status, raw = self._transport("POST", self.music_search_url, {
+                "Content-Type": "application/json", "Origin": "https://music.youtube.com"}, body.encode())
+        except TransportError as error:
+            raise TrackLookupError("Could not reach YouTube Music.") from error
+        return music_search_results(self._decode(status, raw))[:_SEARCH_RESULTS]
 
     def videos(self, video_ids: list[str]) -> list[Track]:
         if not video_ids:

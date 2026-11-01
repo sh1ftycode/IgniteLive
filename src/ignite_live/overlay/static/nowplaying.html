@@ -2,56 +2,189 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta name="referrer" content="strict-origin-when-cross-origin">
 <title>Ignite · Now playing</title>
 <style>
 /*{{THEMES}}*/
 .wrap { height: 100%; padding: var(--gap); display: flex; align-items: center; }
-.card { width: 100%; display: flex; gap: 0.9em; align-items: center; }
-.cover { width: 4em; height: 4em; flex: none; border-radius: calc(var(--radius) / 2); object-fit: cover; }
-.cover[hidden] { display: none; }
+.card.np { width: 100%; display: flex; gap: 0.9em; align-items: center; }
+@media (orientation: portrait) {
+  .wrap { align-items: flex-start; }
+  .card.np { flex-direction: column; align-items: stretch; }
+  .art { width: 100% !important; }
+}
+/* The song plays here. YouTube requires its player to be visible, uncovered, and at least 200x200;
+   YouTube Music songs show just their album cover, so it reads as cover art. */
+.art { position: relative; flex: none; width: max(356px, 42%); aspect-ratio: 16 / 9; min-height: 200px;
+  border-radius: calc(var(--radius) / 2); overflow: hidden; background: #000; }
+.art iframe, .art #yt { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+.art img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.art .backdrop { object-fit: cover; filter: blur(24px) brightness(0.45); transform: scale(1.2); }
+.art.demo { background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 35%, #000), #000 70%); }
+.card.idle .art { display: none; }
 .body { flex: 1; min-width: 0; }
+.next { margin-top: 0.6em; color: var(--muted); font-size: 0.76em; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; }
+.next b { color: var(--text); }
+.next:empty { display: none; }
+.toast { margin-top: 0.6em; font-size: 0.76em; border-left: 3px solid var(--accent); padding-left: 0.6em;
+  opacity: 0; transition: opacity 240ms; }
+.toast.show { opacity: 1; }
 </style>
 </head>
 <body>
-<div class="wrap"><section class="card fade hide" id="card">
-  <img class="cover" id="cover" alt="" referrerpolicy="no-referrer" hidden>
+<div class="wrap"><section class="card np fade idle" id="card">
+  <div class="art" id="art">
+    <img class="backdrop" id="backdrop" alt="" referrerpolicy="no-referrer" hidden>
+    <img id="cover" alt="" referrerpolicy="no-referrer" hidden>
+    <div id="yt" hidden></div>
+  </div>
   <div class="body">
-    <div class="eyebrow" id="label">Now playing</div>
+    <div class="eyebrow" id="label">Song requests</div>
     <div class="title" id="title"></div>
     <div class="meta" id="meta"></div>
     <div class="bar"><i id="bar"></i></div>
     <div class="times"><span id="pos"></span><span id="dur"></span></div>
+    <div class="next" id="next"></div>
+    <div class="toast" id="toast"></div>
   </div>
 </section></div>
 <script>
 /*{{COMMON}}*/
 const $ = (id) => document.getElementById(id);
-let currentId = null;
-ST.on("state", (state) => {
-  const current = state.queue.current;
-  $("label").textContent = ST.t("overlay.now_playing", "Now playing");
-  $("card").classList.toggle("hide", !current); // Hides itself when nothing plays.
-  if (!current) { currentId = null; return; }
-  if (current.id !== currentId) {
-    $("bar").style.width = "0";
-    $("pos").textContent = $("dur").textContent = "";
-    $("card").classList.remove("swap");
-    void $("card").offsetWidth; // Restart the theme's "new song" animation.
-    $("card").classList.add("swap");
+// "audio": this copy plays the music. Ignite picks one open Now Playing overlay for that, so a
+// song is never heard twice; the others show the cover and follow its progress.
+let audio = false, player = null, ready = false, latest = null, loaded = null, currentId = null;
+let lastProgress = null, toastTimer = 0, youtubeLoading = false;
+
+function cover(current) {
+  return current.image || (/^[\w-]{11}$/.test(current.video_id) ? `https://i.ytimg.com/vi/${current.video_id}/hqdefault.jpg` : "");
+}
+
+function showProgress(position, duration) {
+  $("bar").style.width = duration ? `${Math.min(100, (position / duration) * 100)}%` : "0";
+  $("pos").textContent = ST.clock(position);
+  $("dur").textContent = duration ? ST.clock(duration) : "";
+}
+
+function render(state) {
+  const queue = state.queue, current = queue.current;
+  $("card").classList.toggle("idle", !current);
+  if (!current) {
+    currentId = null;
+    $("label").textContent = ST.t("overlay.song_requests", "Song requests");
+    $("title").textContent = ST.t("overlay.nothing_playing", "Nothing playing");
+    $("meta").replaceChildren(...ST.tBold("overlay.request_hint", "Type {command} in chat"));
+    showProgress(0, 0);
+    $("pos").textContent = "";
+  } else {
+    if (current.id !== currentId) {
+      showProgress(0, 0);
+      $("pos").textContent = "";
+      $("card").classList.remove("swap");
+      void $("card").offsetWidth; // Restart the theme's "new song" animation.
+      $("card").classList.add("swap");
+    }
+    currentId = current.id;
+    $("label").textContent = ST.t("overlay.now_playing", "Now playing");
+    $("title").textContent = current.title || current.video_id;
+    $("meta").replaceChildren(current.channel ? current.channel + " · " : "", "requested by ",
+      ST.el("b", null, current.requested_by));
   }
-  currentId = current.id;
-  $("cover").hidden = !current.image;
-  if (current.image) $("cover").src = current.image;
-  $("title").textContent = current.title || current.video_id;
-  $("meta").replaceChildren(current.channel ? current.channel + " · " : "", "requested by ",
-    ST.el("b", null, current.requested_by));
+  const next = queue.upcoming[0];
+  $("next").replaceChildren(...(next
+    ? [ST.t("overlay.next", "Next: "), ST.el("b", null, next.title || next.video_id), " · " + next.requested_by] : []));
+  renderArt(current);
+}
+
+function renderArt(current) {
+  const art = current ? cover(current) : "";
+  $("yt").hidden = !audio;
+  for (const id of ["cover", "backdrop"]) {
+    $(id).hidden = audio || !art;
+    if (!audio && art && $(id).getAttribute("src") !== art) $(id).src = art;
+  }
+  $("art").classList.toggle("demo", ST.demo && !art);
+}
+
+function loadYouTube() {
+  if (youtubeLoading) return;
+  youtubeLoading = true;
+  const api = document.createElement("script");
+  api.src = "https://www.youtube.com/iframe_api";
+  document.head.append(api);
+}
+
+function apply(state) {
+  latest = state;
+  render(state);
+  if (ST.demo || !audio) return;
+  loadYouTube();
+  if (!ready) return;
+  player.setVolume(state.volume);
+  const current = state.queue.current;
+  if (!current) {
+    if (loaded !== null) player.stopVideo();
+    loaded = null;
+  } else if (current.id !== loaded) {
+    loaded = current.id;
+    // Taking over from a copy that closed: carry on where it was.
+    const start = lastProgress && lastProgress.item_id === current.id ? lastProgress.position : 0;
+    const song = { videoId: current.video_id, startSeconds: start };
+    if (state.paused) player.cueVideoById(song); // Panic mode: ready, but not playing.
+    else player.loadVideoById(song);
+  } else if (state.paused) {
+    player.pauseVideo();
+  } else if (player.getPlayerState() === YT.PlayerState.PAUSED || player.getPlayerState() === YT.PlayerState.CUED) {
+    player.playVideo(); // Resumed after panic.
+  }
+}
+
+ST.on("state", apply);
+ST.on("role", (message) => {
+  const on = message.audio === true && !ST.demo;
+  if (on === audio) return;
+  audio = on;
+  if (!audio && ready) { player.stopVideo(); loaded = null; }
+  if (latest) apply(latest);
+  else if (audio) loadYouTube();
 });
 ST.on("progress", (p) => {
-  if (p.item_id !== currentId) return;
-  $("bar").style.width = p.duration ? `${Math.min(100, (p.position / p.duration) * 100)}%` : "0";
-  $("pos").textContent = ST.clock(p.position);
-  $("dur").textContent = p.duration ? ST.clock(p.duration) : "";
+  lastProgress = p;
+  if (!audio && p.item_id === currentId) showProgress(p.position, p.duration);
 });
+ST.on("toast", (message) => {
+  $("toast").textContent = message.text;
+  $("toast").classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => $("toast").classList.remove("show"), 5000);
+});
+
+// The copy that plays reports progress, so the other copies and the visualizer can follow along.
+setInterval(() => {
+  if (!audio || !ready || loaded === null) return;
+  const position = player.getCurrentTime() || 0, duration = player.getDuration() || 0;
+  showProgress(position, duration);
+  ST.send({ type: "progress", item_id: loaded, position, duration,
+            playing: player.getPlayerState() === YT.PlayerState.PLAYING });
+}, 500);
+
+window.onYouTubeIframeAPIReady = () => {
+  player = new YT.Player("yt", {
+    width: "100%", height: "100%",
+    playerVars: { autoplay: 1, controls: 0, rel: 0, playsinline: 1, origin: location.origin },
+    events: {
+      onReady: () => { ready = true; if (latest) apply(latest); },
+      onStateChange: (event) => {
+        if (!audio) return;
+        if (event.data === YT.PlayerState.ENDED) ST.send({ type: "ended", item_id: loaded });
+        else if (event.data === YT.PlayerState.PLAYING) ST.send({ type: "playing", item_id: loaded });
+      },
+      // 2 bad id, 5 HTML5 error, 100 removed/private, 101/150 embedding disabled.
+      onError: (event) => { if (audio) ST.send({ type: "error", item_id: loaded, code: event.data }); },
+    },
+  });
+};
 </script>
 </body>
 </html>

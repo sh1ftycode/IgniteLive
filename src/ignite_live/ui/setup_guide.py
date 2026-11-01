@@ -40,7 +40,7 @@ from ignite_live.setup import tuning
 from ignite_live.setup.hardware import VENDOR_NAMES, Hardware
 from ignite_live.ui.icons import glyph
 from ignite_live.ui.pages.stream import disclosure, note
-from ignite_live.ui.theme import COLORS
+from ignite_live.ui.theme import colors
 from ignite_live.viewers.points import clean_config as clean_points
 
 STEPS = ("Welcome", "Your PC", "Connect OBS", "Tune OBS", "TikTok", "Overlays", "Extras", "Done")
@@ -200,7 +200,7 @@ class SetupGuide(QDialog):
             done.add("Tune OBS")
         if c.settings.tiktok_username and c.active_key is not None:
             done.add("TikTok")
-        if "player" in c.overlay.open_pages():
+        if "nowplaying" in c.overlay.open_pages():
             done.add("Overlays")
         return done
 
@@ -209,7 +209,7 @@ class SetupGuide(QDialog):
         for row, step in enumerate(STEPS):
             item = self.steps.item(row)
             # Only steps that can be finished get a mark; the rest keep the space, so names line up.
-            mark = ("check", COLORS["ok"]) if step in done else ("circle", COLORS["faint"] if step in FINISH_LATER
+            mark = ("check", colors().healthy) if step in done else ("circle", colors().text_disabled if step in FINISH_LATER
                                                                   else "transparent")
             item.setIcon(glyph(*mark))
             item.setData(Qt.ItemDataRole.UserRole, step in done)
@@ -467,7 +467,7 @@ class SetupGuide(QDialog):
 
     def _key_changed(self, key) -> None:
         self.key_status.setText(
-            f"<span style='color: {COLORS['ok']}'><b>A stream key is ready.</b></span> Send it to OBS, and OBS "
+            f"<span style='color: {colors().healthy}'><b>A stream key is ready.</b></span> Send it to OBS, and OBS "
             "can go live." if key is not None else "No stream key yet."
         )
         self._marks()
@@ -491,7 +491,7 @@ class SetupGuide(QDialog):
         layout.addWidget(self.add_overlays, 0, Qt.AlignmentFlag.AlignLeft)
         self.overlay_result = body("")
         layout.addWidget(self.overlay_result)
-        layout.addWidget(note("For the music player, open its properties in OBS and tick <b>Control audio via "
+        layout.addWidget(note("For Now Playing (it plays the music), open its properties in OBS and tick <b>Control audio via "
                               "OBS</b>, so the music reaches your stream."))
 
     def _tick_overlays(self) -> None:
@@ -514,7 +514,7 @@ class SetupGuide(QDialog):
     def _notice(self, level: str, text: str) -> None:
         """While on the Overlays step, OBS's answer shows there instead of only in the status bar."""
         if STEPS[self.stack.currentIndex()] == "Overlays" and self.overlay_result.text() == "Adding to OBS…":
-            color = COLORS["error"] if level == "error" else COLORS["ok"]
+            color = colors().live if level == "error" else colors().healthy
             self.overlay_result.setText(f"<span style='color: {color}'>{_escape(text)}</span>")
             self._marks()
 
@@ -570,7 +570,7 @@ class SetupGuide(QDialog):
         for step in FINISH_LATER:
             row = QHBoxLayout()
             mark = QLabel()
-            mark.setPixmap((glyph("check", COLORS["ok"]) if step in done else glyph("circle", COLORS["faint"]))
+            mark.setPixmap((glyph("check", colors().healthy) if step in done else glyph("circle", colors().text_disabled))
                            .pixmap(16, 16))
             row.addWidget(mark)
             row.addWidget(QLabel(f"<b>{step}</b>" + ("" if step in done else

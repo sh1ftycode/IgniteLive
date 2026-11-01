@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
 from ignite_live.controller import TEST_GAME_SECONDS, Controller
 from ignite_live.games.base import GAMES, IMAGE_NAME
 from ignite_live.games.manager import parse_games
-from ignite_live.ui.pages.stream import note
+from ignite_live.ui.pages.stream import note, scrolling
 
 
 def _spin(value: int, low: int, high: int, suffix: str = "", special: str = "") -> QSpinBox:
@@ -49,7 +49,7 @@ class GamesPage(QWidget):
     def __init__(self, controller: Controller) -> None:
         super().__init__()
         self.controller = controller
-        layout = QVBoxLayout(self)
+        layout = scrolling(self)
         status = QHBoxLayout()
         self.status = QLabel()
         self.status.setStyleSheet("font-weight: 600")

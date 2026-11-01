@@ -13,11 +13,15 @@ Only titles and artists are used; playback happens through YouTube.
 from __future__ import annotations
 
 import json
+import logging
 import re
 import urllib.parse
 from dataclasses import dataclass
 
 from ignite_live.core.http import Transport, TransportError, urllib_transport
+from ignite_live.music.youtube import Track
+
+log = logging.getLogger(__name__)
 
 EMBED_URL = "https://open.spotify.com/embed/playlist/{id}"
 _ID = re.compile(r"^[A-Za-z0-9]{22}$")
@@ -38,6 +42,7 @@ class PlaylistSong:
     title: str
     artist: str
     duration_ms: int = 0
+    track: Track | None = None  # Already on YouTube (a YouTube playlist): played as is, no search.
 
     @property
     def request(self) -> str:
@@ -123,13 +128,15 @@ def fetch_public_playlist(link: str, transport: Transport = urllib_transport) ->
     """Blocking: run it off the GUI thread."""
     playlist_id = playlist_id_from(link)
     if playlist_id is None:
-        raise SpotifyError("Paste a Spotify playlist link (open.spotify.com/playlist/…).")
+        raise SpotifyError("Paste a public Spotify, YouTube or YouTube Music playlist link.")
     try:
         status, body = transport("GET", EMBED_URL.format(id=playlist_id), dict(_HEADERS), None)
     except TransportError as error:
-        raise SpotifyError("Could not reach Spotify.") from error
+        log.warning("Spotify playlist %s: %s", playlist_id, error.__cause__ or error)  # The detail, for the log.
+        raise SpotifyError(f"Could not reach Spotify: {error}.") from error
     if status == 404:
         raise SpotifyError("That playlist is private, empty, or doesn't exist.")
     if status != 200:
+        log.warning("Spotify playlist %s: HTTP %s", playlist_id, status)
         raise SpotifyError(f"Spotify returned HTTP {status}.")
     return parse_embed_page(body.decode("utf-8", errors="replace"), playlist_id)

@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
 from ignite_live.controller import Controller, command_config
 from ignite_live.music.commands import CommandKind
 from ignite_live.ui.actions import AppActions, action_button
-from ignite_live.ui.pages.stream import buttons, note
+from ignite_live.ui.pages.stream import buttons, note, scrolling
 
 COMMANDS = (
     (CommandKind.REQUEST, " song - artist", "Request a song, or paste a YouTube link"),
@@ -55,14 +55,18 @@ def length(seconds: int | None) -> str:
     return f"{seconds // 60}:{seconds % 60:02d}" if seconds else ""
 
 
-def read_only_table(headers: list[str]) -> QTableWidget:
+def read_only_table(headers: list[str], min_rows: int = 3) -> QTableWidget:
+    """A select-only table. It keeps room for ``min_rows`` rows, so a small window scrolls the page
+    rather than squashing the table to nothing."""
     table = QTableWidget(0, len(headers))
     table.setHorizontalHeaderLabels(headers)
     table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
     table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
     table.setAlternatingRowColors(True)
     table.verticalHeader().setVisible(False)
-    table.verticalHeader().setDefaultSectionSize(table.fontMetrics().height() + 8)
+    row = table.fontMetrics().height() + 8
+    table.verticalHeader().setDefaultSectionSize(row)
+    table.setMinimumHeight(table.horizontalHeader().sizeHint().height() + min_rows * row + 2 * table.frameWidth())
     return table
 
 
@@ -70,7 +74,7 @@ class MusicPage(QWidget):
     def __init__(self, controller: Controller, actions: AppActions) -> None:
         super().__init__()
         self.controller = controller
-        grid = QGridLayout(self)
+        grid = scrolling(self, QGridLayout)
         grid.setColumnStretch(0, 3)
         grid.setColumnStretch(1, 2)
 
@@ -127,13 +131,13 @@ class MusicPage(QWidget):
         layout.addWidget(note("Songs you add skip cooldowns and per-viewer limits."))
         grid.addWidget(queue, 1, 0)
 
-        # Background playlist.
-        playlist = QGroupBox("Background playlist")
+        # Background music: a playlist, or autoplay.
+        playlist = QGroupBox("Background music")
         form = QFormLayout(playlist)
         self.playlist_link = QLineEdit(controller.settings.music_playlist_url)
-        self.playlist_link.setPlaceholderText("https://open.spotify.com/playlist/…")
+        self.playlist_link.setPlaceholderText("Spotify, YouTube or YouTube Music playlist link")
         self.playlist_link.returnPressed.connect(self._load_playlist)
-        form.addRow("&Spotify link:", self.playlist_link)
+        form.addRow("&Playlist:", self.playlist_link)
         self.shuffle = QCheckBox("Shuffle")
         self.shuffle.setChecked(controller.settings.music_playlist_shuffle)
         form.addRow("", self.shuffle)
@@ -143,9 +147,21 @@ class MusicPage(QWidget):
         self.load_playlist = QPushButton("Load")
         self.load_playlist.clicked.connect(self._load_playlist)
         form.addRow(buttons(action_button(actions.stop_playlist, "Stop"), self.load_playlist))
-        form.addRow(note("Plays when nobody has requested anything; viewer requests go first. Reads Spotify's "
-                         "public playlist page (no Spotify account), so only public playlists and about the first "
-                         "50 songs. Each song is looked up on YouTube right before it plays."))
+        form.addRow(note("Plays when nobody has requested anything; viewer requests go first. Public playlists "
+                         "only. Spotify: about the first 50 songs, each looked up on YouTube Music right before it "
+                         "plays. YouTube: its songs play as they are."))
+        self.radio = QCheckBox("Autoplay songs like chat's requests")
+        self.radio.setChecked(controller.settings.music_radio)
+        self.radio.setToolTip("With nothing queued and no playlist on, plays similar songs (YouTube Music radio) "
+                              "to what chat requested most recently, so it stays in the same genre")
+        self.radio.toggled.connect(lambda _on: self._save_radio())
+        form.addRow("Autoplay:", self.radio)
+        self.radio_start = QLineEdit(controller.settings.music_radio_start)
+        self.radio_start.setPlaceholderText("A song or artist, until chat requests something")
+        self.radio_start.editingFinished.connect(self._save_radio)
+        form.addRow("&Start from:", self.radio_start)
+        self.radio_state = note("")
+        form.addRow(self.radio_state)
         grid.addWidget(playlist, 0, 1)
 
         # Chat commands.
@@ -167,10 +183,13 @@ class MusicPage(QWidget):
         controller.settings_changed.connect(self._commands)
         controller.queue_changed.connect(self._queue)
         controller.playlist_changed.connect(self._playlist)
+        controller.radio_changed.connect(self.radio_state.setText)
+        controller.settings_changed.connect(self._radio_settings)
         controller.busy_changed.connect(self._busy)
         controller.settings_changed.connect(lambda s: self.volume.setValue(s.volume) if not self.volume.isSliderDown() else None)
         self._queue(controller.queue_snapshot)
         self._playlist(controller.playlist_info)
+        self.radio_state.setText(controller.radio_status)
 
     def _commands(self, settings) -> None:
         rows = command_rows(settings)
@@ -191,6 +210,16 @@ class MusicPage(QWidget):
             item_id = self.queue.item(row, 0).data(Qt.ItemDataRole.UserRole)
             if item_id is not None:
                 self.controller.remove_song(item_id)
+
+    def _save_radio(self) -> None:
+        self.controller.set_radio(self.radio.isChecked(), self.radio_start.text())
+
+    def _radio_settings(self, settings) -> None:
+        self.radio.blockSignals(True)
+        self.radio.setChecked(settings.music_radio)
+        self.radio.blockSignals(False)
+        if not self.radio_start.hasFocus():
+            self.radio_start.setText(settings.music_radio_start)
 
     def _load_playlist(self) -> None:
         link = self.playlist_link.text().strip()

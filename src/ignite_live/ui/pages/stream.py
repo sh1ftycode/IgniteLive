@@ -11,10 +11,12 @@ import time
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QStandardItemModel
 from PySide6.QtWidgets import (
+    QBoxLayout,
     QCheckBox,
     QComboBox,
     QFormLayout,
     QFrame,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -33,7 +35,7 @@ from ignite_live.integrations.obs_studio import Studio
 from ignite_live.integrations.obs_targets import StreamTarget
 from ignite_live.integrations.streamlabs import AccountInfo
 from ignite_live.ui.actions import AppActions, action_button
-from ignite_live.ui.theme import COLORS
+from ignite_live.ui.theme import LABEL_PX, RADIUS, colors, set_live, set_props, theme_changed, tint
 
 CONTENT_WIDTH = 760  # The page's column; wider screens get margins instead of stretched fields.
 
@@ -57,6 +59,20 @@ def note(text: str) -> QLabel:
     label.setWordWrap(True)
     label.setEnabled(False)  # Drawn in the style's secondary text colour.
     return label
+
+
+def scrolling(page: QWidget, layout_type: type[QBoxLayout] | type[QGridLayout] = QVBoxLayout):
+    """A ``layout_type`` for ``page``'s content, inside a scroll area: in a small window the page
+    scrolls rather than squashing its tables or cutting off its buttons."""
+    outer = QVBoxLayout(page)
+    outer.setContentsMargins(0, 0, 0, 0)
+    scroll = QScrollArea()
+    scroll.setWidgetResizable(True)
+    scroll.setFrameShape(QFrame.Shape.NoFrame)
+    body = QWidget()
+    scroll.setWidget(body)
+    outer.addWidget(scroll)
+    return layout_type(body)
 
 
 def disclosure(title: str, content: QWidget) -> QWidget:
@@ -84,9 +100,9 @@ def disclosure(title: str, content: QWidget) -> QWidget:
 
 
 def chip(text: str, color: str) -> str:
-    """Stylesheet for a small rounded status label."""
-    return (f"QLabel {{ color: {color}; border: 1px solid {color}; border-radius: 10px; padding: 2px 10px; "
-            f"font-weight: 600; }}")
+    """Stylesheet for a small status pill: a faint tint of ``color`` with ``color`` text."""
+    return (f"QLabel {{ color: {color}; background: {tint(color, 0.14)}; border-radius: {RADIUS}px; padding: 2px 8px; "
+            f"font-size: {LABEL_PX}px; font-weight: 600; }}")
 
 
 class StreamPage(QWidget):
@@ -106,8 +122,8 @@ class StreamPage(QWidget):
         column.setMaximumWidth(CONTENT_WIDTH)
         centre.addWidget(column)
         page = QVBoxLayout(column)
-        page.setContentsMargins(8, 12, 8, 12)
-        page.setSpacing(10)
+        page.setContentsMargins(16, 16, 16, 16)
+        page.setSpacing(8)
 
         # Header: what to do, and where things stand.
         top = QHBoxLayout()
@@ -148,7 +164,7 @@ class StreamPage(QWidget):
         self.key_state = QLabel("No key yet")
         form.addRow("Key:", self.key_state)
         get_key = action_button(actions.get_key)
-        get_key.setObjectName("primary")
+        set_props(get_key, primary=True)
         form.addRow(buttons(action_button(actions.new_key, "Generate New Key"), get_key))
 
         more = QWidget()
@@ -210,9 +226,10 @@ class StreamPage(QWidget):
         self.target_hint = note("")
         form.addRow(self.target_hint)
         start = action_button(actions.toggle_stream)
-        start.setObjectName("primary")
+        set_live(start, controller.obs_streaming)  # Orange when ready, red with a pulsing dot while live.
+        controller.obs_streaming_changed.connect(lambda live: set_live(start, live))
         end = action_button(actions.end_live, "End LIVE…")
-        end.setObjectName("danger")
+        set_props(end, danger=True)
         row = QHBoxLayout()
         row.addWidget(end)
         row.addStretch(1)
@@ -232,6 +249,7 @@ class StreamPage(QWidget):
         controller.targets_changed.connect(self._targets)
         controller.settings_changed.connect(lambda _: self._targets(controller.targets))
         controller.studio_changed.connect(self._studio)
+        theme_changed().connect(self._restyle)
         self._targets(controller.targets)
         self._account(controller.account)
         self._key(controller.active_key)
@@ -262,13 +280,16 @@ class StreamPage(QWidget):
     def _show_state(self) -> None:
         key = self.controller.active_key
         if self.controller.studio.streaming:
-            text, color = "LIVE", COLORS["error"]
+            text, color = "LIVE", colors().live
         elif key is not None:
-            text, color = "Key ready", COLORS["ok"]
+            text, color = "Key ready", colors().healthy
         else:
-            text, color = "No key yet", COLORS["muted"]
+            text, color = "No key yet", colors().text_muted
         self.state.setText(text)
         self.state.setStyleSheet(chip(text, color))
+
+    def _restyle(self, _palette=None) -> None:
+        self._show_state()  # The chip's colours follow the mode.
 
     def _studio(self, _studio: Studio) -> None:
         self._show_state()

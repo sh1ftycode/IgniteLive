@@ -54,9 +54,11 @@ from ignite_live.actions.rules import (
     to_dict,
 )
 from ignite_live.controller import Controller, action_engine_config
-from ignite_live.core.events import PLATFORMS
+from ignite_live.core.events import PLATFORMS, ConnectionState
 from ignite_live.ui.pages.music import read_only_table
-from ignite_live.ui.pages.stream import note
+from ignite_live.ui.pages.stream import note, scrolling
+from ignite_live.ui.theme import state_color
+from ignite_live.ui.flow_layout import FlowLayout
 
 TEXT_HINTS = {
     "alert": "Alert text, e.g. {user} sent {gift}!",
@@ -292,7 +294,7 @@ class RuleDialog(QDialog):
             self._add_row(action)
 
         self.error = QLabel()
-        self.error.setStyleSheet("color: #e5484d")
+        self.error.setStyleSheet(f"color: {state_color(ConnectionState.ERROR, self.error).name()};")
         self.error.setWordWrap(True)
         layout.addWidget(self.error)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
@@ -385,7 +387,7 @@ class ActionsPage(QWidget):
     def __init__(self, controller: Controller) -> None:
         super().__init__()
         self.controller = controller
-        layout = QVBoxLayout(self)
+        layout = scrolling(self)
         layout.addWidget(note(
             "Rules react to your LIVE: a gift shows an alert and plays a sound, every 1,000 likes switches a scene, "
             "!hype from a follower reads a message aloud. Alerts and sounds play in the <b>Alerts</b> overlay "
@@ -400,7 +402,7 @@ class ActionsPage(QWidget):
         self.table.itemChanged.connect(self._toggled)
         self.table.itemSelectionChanged.connect(self._selection_changed)
         layout.addWidget(self.table, 1)
-        buttons = QHBoxLayout()
+        buttons = FlowLayout()  # Wraps in a narrow window rather than cutting off the buttons.
         self.buttons = {}
         for key, text, slot in (("add", "Add Rule…", self._add), ("edit", "Edit…", self._edit),
                                 ("copy", "Duplicate", self._duplicate), ("delete", "Delete", self._delete),
@@ -410,7 +412,6 @@ class ActionsPage(QWidget):
             buttons.addWidget(button)
             self.buttons[key] = button
         self.buttons["test"].setToolTip("Run this rule's actions now with sample values (ignores cooldowns)")
-        buttons.addStretch(1)
         auto_clip = QPushButton("Add Auto-Clip Rules")
         auto_clip.setToolTip("Save a clip on big gifts (1,000+ coins) and chat spikes. Edit or delete them like any rule.")
         auto_clip.clicked.connect(self._add_auto_clip)

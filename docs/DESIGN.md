@@ -222,13 +222,13 @@ src/ignite_live/
     session.py           glues chat → commands → lookup → queue → overlay
   overlay/
     server.py            aiohttp: token-guarded pages + WebSocket
-    static/player.html   visible YouTube player + now-playing card (landscape/portrait)
+    static/nowplaying.html  now-playing card that plays the music (visible YouTube player as the cover)
   server/                backend: app.py (API), store.py (SQLite + Fernet), CLI
   ui/
     theme.py             design tokens + stylesheet
     widgets.py           Card, Page, field, row, status dot
     main_window.py       nav rail, live status list, notice bar
-    obs_panel.py         OBS dock: health, scenes, audio mixer, recording and tools
+    flow_layout.py       button rows that wrap in a narrow window
     pages/               dashboard, stream, chat, music, settings
 Dockerfile, deploy/      server image; compose with Caddy for HTTPS
 packaging/               PyInstaller spec, build script, Inno Setup installer, icon
@@ -246,8 +246,11 @@ tests/                   all network faked; one headless smoke test of the windo
    endpoint.
 4. The queue enforces max length, max songs per user, the banned list, and
    duplicates. It emits `QueueChanged`.
-5. The overlay server pushes the queue over WebSocket. `player.html` plays it with
-   the IFrame API and reports `ended`, `error(code)`, and progress back.
+5. The overlay server pushes the queue over WebSocket. `nowplaying.html` plays it with
+   the IFrame API and reports `ended`, `error(code)`, and progress back. With
+   several Now Playing copies open, the server picks one (the oldest) to play; the
+   others show the cover and follow its progress. `/overlay/player`, the old
+   player page, now serves Now Playing so existing OBS sources keep working.
 6. If the player reports error 101/150 (embedding disabled), the song is
    auto-skipped and a toast says "@user: that video can't be embedded".
 
@@ -620,12 +623,19 @@ Plugin outputs send no events, so their live state is polled every 5 s.
 
 ### Design system
 
-The Ignite look ("midnight"): a deep indigo surface (`#0c0e18`/`#12152a`),
-a violet accent (`#7c6cff`) with a cyan second accent (`#22c7e8`), and
-amber/green status colors. The app adds a stylesheet built from the same tokens
-(`ui/theme.py`): card group boxes, underlined tabs, rounded fields. Proposal: lift it into `ui/theme.py` as named
-tokens and reuse the **same tokens in overlay CSS**, so the app and the
-on-stream overlays look like one product.
+The app comes in a **dark** and a **light** mode (`ui/theme.py`: two named
+palettes, `DARK` and `LIGHT`, one stylesheet built from either, on Fusion).
+Dark: window `#0E1015`, panels `#161920`, inputs `#1E222B`, dividers `#262B36`;
+text `#E8EAF0` / `#8B92A5`. Light: window `#E9ECF1`, white panels, inputs
+`#F0F2F5`, dividers `#DCE0E7`; text `#161A22` / `#5E6577`. Both: one
+ember-orange accent (`#FF7A3D`) for the main action, selection and progress;
+red for live and danger, green healthy, yellow warning (darker shades in light
+mode, so they read on white). Colour only where it means something:
+docks are separated by background, not boxes; tabs are flat with an orange
+underline; only Start Streaming and Panic are filled. Buttons take `primary` /
+`live` / `danger` Qt properties. Code that paints its own colours reads
+`colors()` and listens to `theme_changed()`. The overlays
+keep their own 14 themes (`overlay/static/themes.css`), unaffected by the app theme.
 
 - Navigation: a left rail with **Dashboard · Chat · Music · Stream · Settings**.
 - A persistent status strip shows four pills (TikTok chat, Streamlabs, OBS,
@@ -659,9 +669,11 @@ on-stream overlays look like one product.
   players to be at least **200×200 px**, **not covered by overlays**, and not
   played from a **background player** (Developer Policies III.I.9). They
   also forbid separating the audio from the video (III.I.7). A hidden,
-  audio-only player in OBS would break these rules. So the "player" overlay
-  shows the video at ≥200×200 with nothing on top, and the now-playing and queue
-  widgets sit *beside* it, not over it.
+  audio-only player in OBS would break these rules. So the Now Playing overlay
+  shows the video at ≥200×200 with nothing on top, with the song details
+  *beside* it, not over it. Searches use YouTube Music's song catalog, whose
+  official audio tracks show just the album cover, so the player reads as
+  cover art.
 - **Copyright is not solvable in software.** Playing commercial music on a
   TikTok LIVE can get the stream muted or restricted no matter how it is
   played. Mitigations: an allowlist or "my playlist only" mode, a banned list,

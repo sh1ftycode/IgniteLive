@@ -9,7 +9,7 @@ from __future__ import annotations
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QIcon, QImage, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap
 
-from ignite_live.ui.theme import COLORS
+from ignite_live.ui.theme import LOGO_BASE, LOGO_EDGE, LOGO_TILE, LOGO_TIP, colors
 
 SCALE = 2  # Glyphs are drawn at twice their size, for high-DPI screens.
 
@@ -47,13 +47,13 @@ def paint_logo(painter: QPainter, rect: QRectF) -> None:
     s = rect.width()
     painter.save()
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.setPen(QPen(QColor(COLORS["line_strong"]), max(1.0, s / 128)))  # An edge on dark backgrounds.
-    painter.setBrush(QColor(COLORS["surface"]))
+    painter.setPen(QPen(QColor(LOGO_EDGE), max(1.0, s / 128)))  # An edge on dark backgrounds.
+    painter.setBrush(QColor(LOGO_TILE))
     painter.drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), s * 0.22, s * 0.22)
     painter.setPen(Qt.PenStyle.NoPen)
     fire = QLinearGradient(rect.x(), rect.y() + s * 0.11, rect.x(), rect.y() + s * 0.89)
-    fire.setColorAt(0, QColor(COLORS["accent_2"]))
-    fire.setColorAt(1, QColor(COLORS["accent"]))
+    fire.setColorAt(0, QColor(LOGO_TIP))
+    fire.setColorAt(1, QColor(LOGO_BASE))
     painter.setBrush(fire)
     painter.drawPath(_shape(FLAME, rect).subtracted(_shape(CORE, rect)))
     painter.restore()
@@ -125,5 +125,5 @@ def glyph_pixmap(name: str, color: str, size: int = 16) -> QPixmap:
     return pixmap
 
 
-def glyph(name: str, color: str = COLORS["muted"], size: int = 16) -> QIcon:
-    return QIcon(glyph_pixmap(name, color, size))
+def glyph(name: str, color: str | None = None, size: int = 16) -> QIcon:
+    return QIcon(glyph_pixmap(name, color or colors().text_muted, size))

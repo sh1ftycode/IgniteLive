@@ -17,10 +17,9 @@ from PySide6.QtWidgets import (
 from ignite_live.controller import Controller
 from ignite_live.live.checklist import FAIL, INFO, OK, WARN, Check, counts
 from ignite_live.ui.icons import glyph_pixmap
-from ignite_live.ui.theme import COLORS
+from ignite_live.ui.theme import colors
 
-MARKS = {OK: ("check", COLORS["ok"]), INFO: ("info", COLORS["muted"]), WARN: ("warn", COLORS["warn"]),
-         FAIL: ("cross", COLORS["error"])}
+MARKS = {OK: ("check", "healthy"), INFO: ("info", "text_muted"), WARN: ("warn", "warning"), FAIL: ("cross", "live")}
 
 
 def run_fix(window, controller: Controller, fix: str) -> None:
@@ -88,7 +87,8 @@ class ChecklistDialog(QDialog):
                 item.widget().deleteLater()
         order = {FAIL: 0, WARN: 1, INFO: 2, OK: 3}
         for row, check in enumerate(sorted(checks, key=lambda c: order[c.status])):
-            mark, color = MARKS[check.status]
+            mark, role = MARKS[check.status]
+            color = getattr(colors(), role)
             icon = QLabel()
             icon.setPixmap(glyph_pixmap(mark, color, 18))
             self.grid.addWidget(icon, row, 0)
