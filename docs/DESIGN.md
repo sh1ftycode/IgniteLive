@@ -206,6 +206,7 @@ src/ignite_live/
     events.py            ChatComment, ChatGift, ChatFollow, ChatLike, ChatShare, ViewerCount, ConnectionState
     http.py              injectable blocking HTTP transport
     keychain.py          OS keychain wrapper for tokens, keys, passwords
+    palettes.py          color palettes for every app mode (Qt-free; also used for CSS variables)
     key_cache.py         48h stream-key cache on this device (when no server)
     runtime.py           asyncio thread + Qt bridge
     settings.py          JSON settings (non-secret), synced subset
@@ -215,6 +216,7 @@ src/ignite_live/
     tiktok_chat.py       the only module that imports TikTokLive; reconnect/backoff
     obs.py               obs-websocket v5 client
     backend.py           desktop client for the Ignite server
+    relay.py             opt-in remote control: outbound WebSocket to the server's /v1/relay
   music/
     commands.py          !sr/!play, !skip, !revoke, !song, !queue; roles, cooldowns
     queue.py             size/per-user/duration limits, dedupe, bans, skip rules

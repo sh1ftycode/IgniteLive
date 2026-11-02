@@ -134,7 +134,9 @@ class Settings:
     tab_order: list[str] = field(default_factory=list)  # Page keys in the order the tabs were dragged into.
     closed_tabs: list[str] = field(default_factory=list)  # Reopened from the View menu.
     close_to_tray: bool = True  # Closing the window keeps Ignite running in the system tray (when there is one).
-    auto_update: bool = True  # Check GitHub releases, download updates, and install them on quit (or on request).
+    auto_update: bool = True
+    # Let the web dashboard on your Ignite server (backend_url) control this app. Off until you turn it on.
+    remote_control: bool = False  # Check GitHub releases, download updates, and install them on quit (or on request).
     tray_hint_shown: bool = False  # "Still running in the tray" is said once.
     stream_title: str = ""
     volume: int = 60

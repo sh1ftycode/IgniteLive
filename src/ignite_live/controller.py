@@ -14,7 +14,7 @@ import os
 import secrets
 import time
 from urllib.parse import urlsplit
-from dataclasses import fields, replace
+from dataclasses import asdict, fields, replace
 from pathlib import Path
 
 from PySide6.QtCore import QObject, QTimer, Signal
@@ -41,6 +41,7 @@ from ignite_live.core.runtime import Runtime
 from ignite_live.core.settings import COMMAND_DEFAULTS, PLATFORM_FIELDS, Settings
 from ignite_live.core.templates import Texts, render
 from ignite_live.integrations.backend import BackendClient, BackendError, CachedKey
+from ignite_live.integrations.relay import RelayClient
 from ignite_live.integrations.discord_bridge import DiscordBridge, DiscordError, Forwarding, escape
 from ignite_live.integrations import obs_targets
 from ignite_live.integrations.obs import ObsClient, ObsError
@@ -98,6 +99,7 @@ SOURCES = {
     "backend": "Backend",
     "discord": "Discord",
     "tts": "Text to speech",
+    "remote": "Remote control",
 }
 CHAT_HINTS = {
     "tiktok": "Not connected. Add your username in the Chat panel.",
@@ -278,6 +280,10 @@ class Controller(QObject):
         self._retired_chats: dict[asyncio.Task, object] = {}  # Replaced chats still closing.
         self._discord: DiscordBridge | None = None
         self._discord_task: asyncio.Task | None = None
+        # Remote control from the web dashboard, through the Ignite server (integrations/relay.py).
+        self._relay: RelayClient | None = None
+        self._relay_task: asyncio.Task | None = None
+        self._relay_target: tuple[str, str | None] | None = None  # (server URL, token) it connected with.
         self._tasks: set[asyncio.Task] = set()
 
         self.sounds_dir = self.settings_path.parent / "sounds"
@@ -354,6 +360,16 @@ class Controller(QObject):
         self.tts_skip_requested.connect(self.skip_tts)
         self.action_speech.connect(self._speak_action)
         self.panic_requested.connect(self.panic)
+        # What the web dashboard shows, sent through the relay when remote control is on.
+        self.status_changed.connect(lambda _change: self._relay_publish("status", self._statuses_payload()))
+        self.chat_event.connect(lambda event: (lambda line: line and self._relay_publish("chat", line))(chat_payload(event)))
+        self.queue_changed.connect(lambda snapshot: self._relay_publish("queue", snapshot))
+        self.studio_changed.connect(lambda studio: self._relay_publish("studio", self._studio_payload(studio)))
+        self.obs_streaming_changed.connect(lambda live: self._relay_publish("live", live))
+        self.panic_changed.connect(lambda on: self._relay_publish("panic", on))
+        self.playlist_changed.connect(lambda info: self._relay_publish("playlist", info))
+        self.tts_mute_changed.connect(lambda muted: self._relay_publish("tts_muted", muted))
+        self.notice.connect(lambda level, text: self._relay_publish("notice", {"level": level, "text": text}))
 
     # Lifecycle.
 
@@ -387,6 +403,7 @@ class Controller(QObject):
         self._obs_task = asyncio.create_task(self._obs_loop())
         self._viewers_task = asyncio.create_task(self._viewers_loop())
         self._spawn_task(self._games_loop())
+        self._restart_relay()
         for platform, field_name in PLATFORM_FIELDS.items():
             if getattr(self.settings, field_name) and platform not in self._chat_tasks:  # Not connected meanwhile.
                 self._start_chat(platform, getattr(self.settings, field_name))
@@ -401,6 +418,9 @@ class Controller(QObject):
                 await asyncio.wait_for(self._discord.flush(), 3)
             except asyncio.TimeoutError:
                 pass
+        if self._relay_task is not None:
+            self._relay_task.cancel()
+            await asyncio.wait([self._relay_task], timeout=2)
         discord_task = self._discord_task
         self._stop_discord()
         if discord_task is not None:  # Let it close its HTTP session.
@@ -2112,8 +2132,134 @@ class Controller(QObject):
 
     # Backend.
 
+    # Remote control (the web dashboard on your Ignite server). The app connects out; see integrations/relay.py.
+
+    def _restart_relay(self) -> None:
+        """On the event loop: (re)connect to the server's relay, or stop, to match the settings."""
+        token = keychain.load(keychain.BACKEND_TOKEN)
+        wanted = (self.settings.backend_url, token) if self.settings.remote_control else None
+        running = self._relay_task is not None and not self._relay_task.done()
+        if running and wanted == self._relay_target:
+            return  # Same server and token: keep the connection it has.
+        self._relay_target = wanted
+        if self._relay_task is not None:
+            self._relay_task.cancel()
+        self._relay = self._relay_task = None
+        if not self.settings.remote_control:
+            self._status("remote", ConnectionState.OFFLINE, "Off. Turn it on in File → Preferences → Server.")
+            return
+        if not self.settings.backend_url or not token:
+            self._status("remote", ConnectionState.DEGRADED, "Needs a server URL and device token (Preferences → Server).")
+            return
+
+        def on_status(state: ConnectionState, detail: str) -> None:
+            if self._relay is relay:
+                self._status("remote", state, detail)
+
+        try:
+            relay = RelayClient(self.settings.backend_url, token, self._remote_command, on_status)
+        except ValueError as error:
+            self._status("remote", ConnectionState.ERROR, str(error))
+            return
+        for kind, data in self._relay_snapshot().items():
+            relay.publish(kind, data)
+        self._relay = relay
+        self._relay_task = asyncio.create_task(relay.run())
+
+    def _relay_snapshot(self) -> dict:
+        return {
+            "live": self.obs_streaming,
+            "panic": self.panicking,
+            "status": self._statuses_payload(),
+            "studio": self._studio_payload(self.studio),
+            "queue": self.queue_snapshot,
+            "playlist": self.playlist_info,
+        }
+
+    def _relay_publish(self, kind: str, data) -> None:
+        """From any thread: hand an update to the relay (if remote control is on)."""
+        if self.settings.remote_control and self.runtime.loop.is_running():
+            self.runtime.loop.call_soon_threadsafe(self._relay_publish_now, kind, data)
+
+    def _relay_publish_now(self, kind: str, data) -> None:
+        if self._relay is not None:
+            self._relay.publish(kind, data)
+
+    def _statuses_payload(self) -> dict:
+        return {source: {"name": SOURCES.get(source, source), "state": change.state.value, "detail": change.detail}
+                for source, change in self.statuses.items()}
+
+    @staticmethod
+    def _studio_payload(studio: Studio) -> dict:
+        vertical = studio.vertical
+        return {
+            "connected": studio.connected, "streaming": studio.streaming, "recording": studio.recording,
+            "record_paused": studio.record_paused, "record_duration_ms": studio.record_duration_ms,
+            "replay": studio.replay, "scene": studio.scene, "scenes": list(studio.scenes),
+            "vertical": {"scene": vertical.scene, "scenes": list(vertical.scenes)} if vertical else None,
+            "health": asdict(studio.health),
+        }
+
+    async def _remote_command(self, name: str, args: dict) -> str:
+        """A command from the web dashboard (already checked against relay.COMMANDS). Runs like the button would."""
+        studio = self.studio
+        ui = self.runtime.to_ui
+        if name in ("toggle_stream", "toggle_record", "save_replay", "switch_scene") and not studio.connected:
+            raise ValueError("OBS isn't connected to Ignite right now.")
+        if name == "toggle_stream":
+            start = not self.obs_streaming
+            ui(self.set_obs_streaming, start)
+            return "Starting the stream…" if start else "Stopping the stream…"
+        if name == "panic":
+            ui(self.panic)
+            return "Panic mode on."
+        if name == "resume":
+            ui(self.resume)
+            return "Panic mode off."
+        if name == "toggle_record":
+            ui(self.toggle_recording)
+            return "Stopping the recording…" if studio.recording else "Starting a recording…"
+        if name == "save_replay":
+            ui(self.save_replay)
+            return "Saving a clip…"
+        if name == "switch_scene":
+            scene = str(args.get("name", ""))
+            vertical = studio.vertical
+            if scene in studio.scenes:
+                ui(self.switch_scene, scene, False)
+            elif vertical is not None and scene in vertical.scenes:
+                ui(self.switch_scene, scene, True)
+            else:
+                raise ValueError(f"OBS has no scene called “{scene[:60]}”.")
+            return f"Switching to {scene}."
+        if name == "skip_song":
+            ui(self.skip_song)
+            return "Skipped."
+        if name == "remove_song":
+            item = args.get("item_id")
+            if not isinstance(item, int) or isinstance(item, bool):
+                raise ValueError("Pick a song in the queue.")
+            ui(self.remove_song, item)
+            return "Removed from the queue."
+        if name == "request_song":
+            text = " ".join(str(args.get("text", "")).split())[:200]
+            if not text:
+                raise ValueError("Type a song and artist, or paste a YouTube link.")
+            ui(self.request_song, text)
+            return f"Requested {text}."
+        if name == "skip_tts":
+            ui(self.skip_tts)
+            return "Skipped."
+        if name == "mute_tts":
+            muted = args.get("muted") is True
+            ui(self.set_tts_muted, muted)
+            return "Text to speech muted." if muted else "Text to speech on."
+        raise ValueError("Ignite doesn't take that command remotely.")
+
     def check_backend(self, pull_settings: bool = False) -> None:
         token = keychain.load(keychain.BACKEND_TOKEN)
+        if self.runtime.loop.is_running():
+            self.runtime.loop.call_soon_threadsafe(self._restart_relay)  # The server settings may have changed.
         if not self.settings.backend_url or not token:
             self._status("backend", ConnectionState.OFFLINE, "Not set up: keys are saved on this device only")
             return

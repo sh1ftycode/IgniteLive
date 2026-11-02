@@ -358,8 +358,17 @@ class PreferencesDialog(QDialog):
         form.addRow("Server &URL:", self.backend_url)
         self.backend_token = _secret(keychain.BACKEND_TOKEN)
         form.addRow("Device &token:", self.backend_token)
+        self.remote_control = QCheckBox("Allow remote control from this server's web dashboard")
+        self.remote_control.setChecked(s.remote_control)
+        form.addRow("", self.remote_control)
+        form.addRow(note("Lets you run Ignite from a browser or phone when you're signed in to the server: go live, "
+                         "Panic, scenes, recording, clips, music and text to speech. Ignite connects out to the "
+                         "server, so nothing on this PC is opened to the internet. Stream keys, tokens and "
+                         "passwords are never sent."))
         form.addRow(note("Optional. Keeps your stream key for 48 hours when the app is closed, syncs settings "
-                         "between computers, and runs song search. Get a token with: ignite-server add-user NAME"))
+                         "between computers, runs song search, and with remote control on, lets you run Ignite from "
+                         "a browser. On an Ignite Web server, get both values from Connect a PC; on a plain Ignite "
+                         "server, from: ignite-server add-user NAME"))
 
         form = _tab(self.tabs, "Song requests")
         self.request_role = _choice({r: ROLE_NAMES[r] for r in ROLES}, s.request_role)
@@ -800,6 +809,7 @@ class PreferencesDialog(QDialog):
             obs_chat_scene=self.obs_chat_scene.isChecked(),
             obs_screenshot_dir=self.obs_screenshots.text().strip(),
             backend_url=self.backend_url.text().strip().rstrip("/"),
+            remote_control=self.remote_control.isChecked(),
             overlay_port=self.port.value(),
             request_role=self.request_role.currentData(),
             skip_role=self.skip_role.currentData(),

@@ -174,7 +174,15 @@ good-looking live setup. Ignite puts all of that into one program.
   Open Log Folder), rotated at 2 MB, never to a terminal or console window. Set
   `IGNITE_DEBUG=1` to also see it in the terminal.
 - **Server (optional):** keeps your stream key for 48 hours even when the app
-  is closed, syncs settings between computers, and runs song search.
+  is closed, syncs settings between computers, and runs song search. Use
+  `https://` for a server on the internet; plain `http://` only works for this
+  PC and your local network. If the server doesn't keep stream keys, Ignite
+  keeps yours in this PC's keychain instead.
+- **Remote control (optional, off by default):** Preferences → Server → *Allow
+  remote control from this server's web dashboard*. Ignite connects out to the
+  server, so nothing is port-forwarded; the server's dashboard can then start
+  and stop the stream, switch scenes, hit Panic and run the music queue. The
+  status bar shows **Remote** while it's connected.
 
 > Streamlabs key generation uses undocumented routes and may break without
 > notice. Manual keys always work.

@@ -79,9 +79,10 @@ STATUS_NAMES = {
     "backend": "Server",
     "discord": "Discord",
     "tts": "TTS",
+    "remote": "Remote",
 }
 # Shown in the status bar only while in use, so unused extras don't crowd it.
-OPTIONAL_STATUS = {"twitch", "youtube", "tts"}
+OPTIONAL_STATUS = {"twitch", "youtube", "tts", "remote"}
 INFO_SECONDS = 8
 ERROR_SECONDS = 20
 MIN_WIDTH, MIN_HEIGHT = 720, 480
