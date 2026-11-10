@@ -46,9 +46,30 @@ good-looking live setup. Ignite puts all of that into one program.
   plus **Twitch** and **YouTube** live chat, merged into one feed with a badge
   for each platform. No Twitch or YouTube login or key: both are read the way
   their own websites show chat. Bits, subs, Super Chats and memberships count as
-  gifts. Pop the chat out picture-in-picture (a small always-on-top window you
-  can lock in place so it ignores clicks), and optionally forward it to a
-  Discord channel through a webhook (File → Preferences → Discord).
+  gifts. Optionally forward it to a Discord channel through a webhook (File →
+  Preferences → Discord).
+- **Pop-out chat over your game:** Chat → Pop Out Chat (Ctrl+Shift+C) is a
+  small always-on-top window with a see-through background: set how solid it
+  is from 0 % (only the chat floats over the game) to 100 % in its ☰ menu.
+  Text keeps an edge and numbers sit on small pills, so they read over
+  anything. It also has the stats row, a **Viewers** tab, and the music
+  buttons, each of which can be turned off there. Lock it in place so it
+  can't be moved, scrolled or closed by a stray click (the music buttons
+  still work). Games must run windowed or borderless: nothing can draw over
+  exclusive fullscreen.
+- **Viewers, followers, likes:** the Chat panel and the pop-out show whether
+  you're live, the totals, and a chip per platform: watching now, followers
+  (YouTube: subscribers), and likes. TikTok's come with its chat; YouTube's
+  from the stream's page (subscribers rounded, as YouTube shows them);
+  Twitch's from [DecAPI](https://decapi.me), a public service that is sent
+  your channel name (Preferences → Chat platforms turns that off).
+- **Who's watching:** the **Viewers** tab lists who is here and from which
+  platform. No platform publishes its full viewer list, so it's what each one
+  reveals: TikTok viewers as they join, plus everyone who chats, likes, gifts,
+  follows or shares; Twitch's chat member list (up to about 1,000 names,
+  never logged-out viewers); on YouTube only people who chat. Viewers leave
+  the list 10 minutes after they were last seen (Twitch: when they leave
+  chat), so it's usually shorter than the viewer count.
 - **Text to speech:** reads chat aloud, by default as "From {platform}, {user}
   says {message}". Voices: Microsoft Edge's natural voices (default; free, no
   account, about 300 voices), TikTok's own voices (Jessie, C-3PO, Stitch,
@@ -69,6 +90,18 @@ good-looking live setup. Ignite puts all of that into one program.
   needed. When nobody has requested anything, a public Spotify, YouTube or
   YouTube Music playlist can fill the gaps, or **autoplay** plays songs like
   what chat requested (YouTube Music radio), so it stays in the room's genre.
+  **Previous, play/pause and next** are on the Music tab, in the Music menu
+  (Ctrl+Left, Ctrl+Space, Ctrl+Right) and on the pop-out chat, with the song's
+  time and the volume. Previous starts the song over; pressed again in its
+  first seconds, it goes back a song.
+- **Your YouTube Music account (experimental):** Music tab → YouTube Music →
+  **Connect…** lets your own playlists and Liked Music be the background
+  music. YouTube Music has no sign-in for other apps, so you paste the cookie
+  of a signed-in music.youtube.com tab (the dialog shows how). Treat it like a
+  password: Ignite keeps it in this PC's keychain only, sends it to
+  music.youtube.com only, and only reads your playlists; Disconnect removes
+  it. Songs still play through the YouTube player, so your own uploads don't
+  play. Unofficial: it can break when YouTube changes its site.
 - **Actions:** rules that react to your LIVE. Pick a trigger (a gift, optionally
   by name or coin value; a follow; every N likes; a share; a chat command; a
   viewer milestone) and what happens: show an alert, play a sound, read a

@@ -25,15 +25,20 @@ from ignite_live.actions.rules import SOUND_NAME, Action, Rule, parse_rules
 from ignite_live.core import keychain, profiles, seasons, settings as settings_store
 from ignite_live.core.events import (
     PLATFORMS,
+    ChannelStats,
     ChatComment,
     ChatEvent,
+    ChatFollow,
     ChatGift,
+    ChatJoin,
+    ChatLeave,
     ChatLike,
     ChatShare,
     ChatUser,
     ConnectionState,
     LiveStatus,
     StatusChange,
+    ViewerCount,
 )
 from ignite_live.core.images import allowed_image_url
 from ignite_live.core.key_cache import LocalKeyCache
@@ -49,6 +54,8 @@ from ignite_live.integrations.obs_studio import HealthMonitor, Studio
 from ignite_live.integrations.obs_targets import StreamTarget
 from ignite_live.live import analytics, checklist
 from ignite_live.live.analytics import StreamRecorder
+from ignite_live.live.audience import Audience
+from ignite_live.music.ytmusic_account import AccountError, YouTubeMusicAccount
 from ignite_live.integrations.streamlabs import (
     AccountInfo,
     ProviderError,
@@ -127,10 +134,12 @@ VIEWERS_FLUSH_SECONDS = 10.0  # Viewer stats and points are written this often.
 LEADERBOARD_PUSH_SECONDS = 1.5  # Overlays get leaderboard updates at most this often.
 GAME_PUSH_SECONDS = 0.25  # And game updates at most this often.
 TEST_GAME_SECONDS = 30  # A game's Test button runs it this long with simulated players.
+AUDIENCE_PUSH_SECONDS = 1.5  # The viewer list and the stats row are redrawn at most this often.
+RESTART_AFTER_SECONDS = 4.0  # Previous starts the song over when it's this far in; earlier, it goes back a song.
 _SAFE_ERRORS = (
     profiles.ProfileError,
     ProviderError, ObsError, BackendError, DiscordError, SpotifyError, TrackLookupError,
-    QueueRejected, ValueError,
+    QueueRejected, AccountError, ValueError,
 )
 
 
@@ -241,6 +250,10 @@ class Controller(QObject):
     panic_requested = Signal()  # A moderator's !panic, from the loop thread
     tts_mute_changed = Signal(bool)
     action_speech = Signal(str)  # A text-to-speech action, from the loop thread to the speaker on the GUI thread.
+    audience_changed = Signal(object)  # Audience.snapshot(): who's here, as far as the platforms say
+    stats_changed = Signal(object)  # Audience.stats_snapshot(): viewers, followers and likes per platform
+    playback_changed = Signal(object)  # playback_state(): paused, position, duration…
+    ytmusic_changed = Signal(object)  # The connected YouTube Music account (see self.ytmusic), or None
 
     def __init__(self, runtime: Runtime, settings_path: Path | None = None) -> None:
         super().__init__()
@@ -262,6 +275,17 @@ class Controller(QObject):
         # Who is live right now. TikTok and YouTube chat only exist during a stream, so connected = live;
         # Twitch chat is open even offline, so its client reports LiveStatus separately.
         self.live: dict[str, bool] = dict.fromkeys(PLATFORMS, False)
+        # Who's here and each platform's numbers (live/audience.py). Changed on the loop thread only; the GUI
+        # reads the snapshots, which are replaced (never edited) when something changes.
+        self.audience = Audience()
+        self.audience_snapshot: list[dict] = []
+        self.stats_snapshot: dict = self.audience.stats_snapshot()
+        self._audience_pending = False
+        self.music_paused = False  # The Pause button (panic pauses separately).
+        # A connected YouTube Music account: {"name", "playlists": [AccountPlaylist], "error"}; None: not connected.
+        self.ytmusic: dict | None = None
+        self._ytmusic_account: YouTubeMusicAccount | None = None
+        self._ytmusic_read = False  # Whether the keychain has been asked for a saved cookie yet.
         self.account: AccountInfo | None = None
         self.active_key: CachedKey | None = None
         self.obs_streaming = False
@@ -341,6 +365,8 @@ class Controller(QObject):
         self.overlay.on_clients_changed = self._overlay_clients_changed
         self.overlay.on_toast = lambda text: self.notice.emit("info", text)
         self.overlay.on_choose_theme = lambda theme: self.runtime.to_ui(self.set_overlay_theme, theme)
+        self.overlay.on_progress = lambda _progress: self._playback_changed()
+        self.overlay.on_player_changed = lambda _open: self._playback_changed()
         # "Seasonal" overlays move on to the next season or holiday when the date gets there.
         self._overlay_season = seasons.resolve(self.settings.overlay_theme)
         self._season_timer = QTimer(self, interval=30 * 60 * 1000)
@@ -364,6 +390,8 @@ class Controller(QObject):
         self.status_changed.connect(lambda _change: self._relay_publish("status", self._statuses_payload()))
         self.chat_event.connect(lambda event: (lambda line: line and self._relay_publish("chat", line))(chat_payload(event)))
         self.queue_changed.connect(lambda snapshot: self._relay_publish("queue", snapshot))
+        self.queue_changed.connect(lambda _snapshot: self._playback_changed())
+        self.panic_changed.connect(lambda _on: self._playback_changed())
         self.studio_changed.connect(lambda studio: self._relay_publish("studio", self._studio_payload(studio)))
         self.obs_streaming_changed.connect(lambda live: self._relay_publish("live", live))
         self.panic_changed.connect(lambda on: self._relay_publish("panic", on))
@@ -382,6 +410,7 @@ class Controller(QObject):
         self.check_backend(pull_settings=True)
         if self.settings.music_playlist_url:
             self.load_playlist(self.settings.music_playlist_url, self.settings.music_playlist_shuffle, quiet=True)
+        self.refresh_ytmusic(quiet=True)
         self.apply_tts()
 
     def shutdown(self) -> None:
@@ -522,7 +551,7 @@ class Controller(QObject):
         if platform == "twitch":
             from ignite_live.integrations.twitch_chat import TwitchChat
 
-            return TwitchChat(name, self._on_chat_event, on_status)
+            return TwitchChat(name, self._on_chat_event, on_status, stats=self.settings.twitch_stats)
         from ignite_live.integrations.youtube_chat import YouTubeChat
 
         return YouTubeChat(name, self._on_chat_event, on_status)
@@ -537,6 +566,8 @@ class Controller(QObject):
                 return
             was_connected = self.statuses[platform].state is ConnectionState.CONNECTED
             self._status(change.source, change.state, change.detail)
+            if change.state is not ConnectionState.CONNECTED and was_connected:
+                self._platform_gone(platform)
             # Twitch chat connects while offline too; its "went live" comes from LiveStatus instead.
             if platform != "twitch" and change.state is ConnectionState.CONNECTED and not was_connected:
                 self._announce_live(platform, name)
@@ -562,6 +593,40 @@ class Controller(QObject):
             task.add_done_callback(lambda done: self._retired_chats.pop(done, None))
             self._spawn_task(self._close_chat(chat, task))
         self._status(platform, ConnectionState.OFFLINE, "Not connected")
+        self._platform_gone(platform)
+
+    # Who's here, and each platform's numbers (loop thread).
+
+    def _platform_gone(self, platform: str) -> None:
+        """Chat there stopped (disconnected, or the stream ended): its viewers and counts no longer hold."""
+        if self.audience.clear(platform) | self.audience.offline(platform):
+            self._audience_changed()
+
+    def _audience_event(self, event: ChatEvent) -> None:
+        if isinstance(event, ChatJoin):
+            changed = self.audience.seen(event.user, joined=True)
+        elif isinstance(event, ChatLeave):
+            changed = self.audience.left(event.user)
+        else:
+            changed = self.audience.update(event)
+        if changed:
+            self._audience_changed()
+
+    def _audience_changed(self) -> None:
+        """Hand the GUI fresh snapshots, at most every AUDIENCE_PUSH_SECONDS (joins and likes come in bursts)."""
+        if self._audience_pending:
+            return
+        self._audience_pending = True
+
+        def push() -> None:
+            self._audience_pending = False
+            self.audience.prune()
+            self.audience_snapshot = self.audience.snapshot()
+            self.stats_snapshot = self.audience.stats_snapshot()
+            self.audience_changed.emit(self.audience_snapshot)
+            self.stats_changed.emit(self.stats_snapshot)
+
+        asyncio.get_running_loop().call_later(AUDIENCE_PUSH_SECONDS, push)
 
     @staticmethod
     async def _close_chat(chat, task: asyncio.Task) -> None:
@@ -573,11 +638,26 @@ class Controller(QObject):
             await asyncio.wait([task], timeout=2)
 
     def _on_chat_event(self, event: ChatEvent) -> None:
+        if isinstance(event, (ChatJoin, ChatLeave, ChannelStats)):
+            self._audience_event(event)  # Only the viewer list and the stats row: not chat, rules, or reports.
+            return
+        if isinstance(event, ViewerCount):
+            self._audience_event(ChannelStats(event.platform, viewers=event.count))
+        elif isinstance(event, (ChatComment, ChatGift, ChatFollow, ChatLike, ChatShare)):
+            changed = self.audience.seen(event.user)
+            followers = self.audience.stats.get(event.user.platform, {}).get("followers")
+            if isinstance(event, ChatFollow) and followers is not None and not self.simulating:
+                # Count it right away; the platform's own number replaces it at the next check.
+                changed |= self.audience.update(ChannelStats(event.user.platform, followers=followers + 1))
+            if changed:
+                self._audience_changed()
         if isinstance(event, LiveStatus):
             went_live = event.live and not self.live.get(event.platform)
             self.live[event.platform] = event.live
             if went_live:
                 self._announce_live(event.platform, getattr(self.settings, PLATFORM_FIELDS[event.platform]))
+            elif not event.live:
+                self._audience_event(ChannelStats(event.platform, viewers=0))
         if isinstance(event, ChatComment) and self.moderation.blocked_user(event.user):
             self.chat_event.emit(event)  # Still in your own chat panel (text to speech skips them); nowhere else.
             return
@@ -856,6 +936,8 @@ class Controller(QObject):
             ticks += 1
             if ticks % 6 == 0:  # About once a minute.
                 self.points.tick(live=self.obs_streaming or any(self.live.values()))
+            if self.audience.prune():  # Viewers not seen for a while leave the list.
+                self._audience_changed()
             try:
                 await asyncio.to_thread(self.viewers.flush)
                 changes = self.leaderboards.refresh_alltime(announce=not first)
@@ -2309,6 +2391,130 @@ class Controller(QObject):
     def skip_song(self) -> None:
         self.runtime.loop.call_soon_threadsafe(self.music.queue.advance)
 
+    # Playback buttons (Music tab, Music menu, the pop-out chat). The music itself plays in the Now Playing
+    # overlay; these tell it what to do.
+
+    def set_music_paused(self, paused: bool) -> None:
+        if paused == self.music_paused:
+            return
+        self.music_paused = paused
+        self.runtime.submit(self.overlay.set_paused(paused), on_error=self._error)
+        self._playback_changed()
+
+    def toggle_music_pause(self) -> None:
+        self.set_music_paused(not self.music_paused)
+
+    def previous_song(self) -> None:
+        """Start the song over; pressed in its first seconds (or with nothing playing), go back a song."""
+
+        def back() -> None:
+            queue = self.music.queue
+            current, progress = queue.current, self.overlay.progress or {}
+            position = progress.get("position", 0.0) if current and progress.get("item_id") == current.id else 0.0
+            if current is not None and (position > RESTART_AFTER_SECONDS or not queue.history):
+                self._spawn_task(self.overlay.seek(current.id, 0))
+            else:
+                queue.previous()
+
+        self.runtime.loop.call_soon_threadsafe(back)
+
+    def playback_state(self) -> dict:
+        """For the playback buttons. ``player``: whether a Now Playing overlay is open to play anything."""
+        current = self.queue_snapshot.get("current")
+        progress = self.overlay.progress or {}
+        mine = bool(current) and progress.get("item_id") == current["id"]
+        panic = bool(self.panic_state and self.panic_state.get("music"))
+        return {
+            "paused": self.music_paused or panic,
+            "panic": panic,
+            "player": self.overlay.has_player,
+            "current": current,
+            "has_previous": bool(self.queue_snapshot.get("has_previous")),
+            "position": float(progress.get("position", 0.0)) if mine else 0.0,
+            "duration": float(progress.get("duration", 0.0)) if mine else 0.0,
+            "playing": bool(mine and progress.get("playing")),
+        }
+
+    def _playback_changed(self) -> None:
+        """From any thread (the overlay reports progress on the loop thread)."""
+        self.playback_changed.emit(self.playback_state())
+
+    # YouTube Music account: your own playlists and Liked Music as background music (music/ytmusic_account.py).
+
+    def _ytmusic(self) -> YouTubeMusicAccount | None:
+        """The connected account, read from the keychain the first time. Blocking: call it off the GUI thread."""
+        if self._ytmusic_account is None and not self._ytmusic_read:
+            self._ytmusic_read = True
+            cookie = keychain.load_long(keychain.YTMUSIC_COOKIE)
+            if cookie:
+                try:
+                    self._ytmusic_account = YouTubeMusicAccount(cookie)
+                except AccountError:
+                    pass  # Not a usable cookie any more: treated as not connected.
+        return self._ytmusic_account
+
+    def _ytmusic_loaded(self, account: YouTubeMusicAccount | None, name: str = "", playlists: tuple = (),
+                        error: str = "") -> None:
+        self._ytmusic_account = account
+        self.ytmusic = {"name": name, "playlists": list(playlists), "error": error} if account or error else None
+        self.ytmusic_changed.emit(self.ytmusic)
+
+    def connect_ytmusic(self, cookie: str) -> None:
+        """Check a pasted music.youtube.com cookie by reading the library, then keep it in the keychain."""
+
+        def connect():
+            account = YouTubeMusicAccount(cookie)
+            playlists = account.playlists()  # Raises unless YouTube Music treats the cookie as signed in.
+            saved = keychain.save_long(keychain.YTMUSIC_COOKIE, account.cookie)
+            return account, account.name(), playlists, saved
+
+        def connected(result) -> None:
+            account, name, playlists, saved = result
+            self._ytmusic_read = True
+            self._ytmusic_loaded(account, name, playlists)
+            who = f" as {name}" if name else ""
+            self.notice.emit("info", f"YouTube Music connected{who}: {len(playlists)} playlists. Pick one on the "
+                                     "Music tab to use it as background music.")
+            if not saved:
+                self.notice.emit("error", "No OS keychain found (or the cookie is too long for it), so you'll "
+                                          "need to connect YouTube Music again next time.")
+
+        self._run("ytmusic", connect, on_success=connected)
+
+    def refresh_ytmusic(self, quiet: bool = False) -> None:
+        """Read the connected account's playlists again (also at startup, quietly, if one was saved)."""
+
+        def refresh():
+            account = self._ytmusic()
+            if account is None:
+                return None
+            try:
+                return account, account.name(), account.playlists(), ""
+            except AccountError as error:
+                return account, "", (), str(error)
+
+        def done(result) -> None:
+            if result is None:
+                if not quiet:
+                    self.notice.emit("error", "YouTube Music isn't connected.")
+                return
+            account, name, playlists, error = result
+            if not error:
+                self._ytmusic_loaded(account, name, playlists)
+                return
+            # Keep the account: it may be a network hiccup, and a saved playlist link can still be tried.
+            self._ytmusic_loaded(account, error=error)
+            if not quiet:
+                self.notice.emit("error", error)
+
+        self._run("ytmusic", refresh, on_success=done)
+
+    def disconnect_ytmusic(self) -> None:
+        keychain.forget_long(keychain.YTMUSIC_COOKIE)
+        self._ytmusic_read = True
+        self._ytmusic_loaded(None)
+        self.notice.emit("info", "YouTube Music disconnected: its cookie was removed from this PC's keychain.")
+
     def remove_song(self, item_id: int) -> None:
         self.runtime.loop.call_soon_threadsafe(self.music.queue.remove, item_id)
 
@@ -2338,7 +2544,9 @@ class Controller(QObject):
         playlist_id = playlist_id_from(link)
         if playlist_id is None:
             return fetch_public_playlist(link)  # Refuses anything that isn't a Spotify playlist either.
-        name, tracks = YouTubeClient(prefer_clean=self.settings.refuse_explicit).playlist(playlist_id)
+        account = self._ytmusic()  # Signed in, the account's private playlists and Liked Music load too.
+        name, tracks = YouTubeClient(prefer_clean=self.settings.refuse_explicit,
+                                     account_headers=account.headers if account else None).playlist(playlist_id)
         songs = tuple(PlaylistSong(t.title, t.channel, (t.duration_s or 0) * 1000, track=t) for t in tracks)
         return Playlist(playlist_id, name, songs)
 
@@ -2425,6 +2633,9 @@ class Controller(QObject):
                     self.runtime.loop.call_soon_threadsafe(self._start_chat, platform, name)
                 else:
                     self.disconnect_chat(platform)
+        if new.twitch_stats != old.twitch_stats and new.twitch_channel == old.twitch_channel \
+                and self.chat_connected("twitch"):
+            self.runtime.loop.call_soon_threadsafe(self._start_chat, "twitch", new.twitch_channel)  # Reads them or not.
         if any(getattr(new, n) != getattr(old, n) for n in ("texts", "command_prefix", "command_names")):
             self.runtime.submit(self._push_overlay_texts())
         if overlay_style_of(new) != overlay_style_of(old):

@@ -5,13 +5,12 @@ from __future__ import annotations
 import time
 from collections import deque
 
-from PySide6.QtCore import QByteArray, QEvent, QObject, Qt
-from PySide6.QtGui import QBrush, QCloseEvent
+from PySide6.QtCore import QByteArray, QEvent, QObject, QRectF, Qt
+from PySide6.QtGui import QBrush, QCloseEvent, QColor, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QDockWidget,
-    QFrame,
     QGridLayout,
     QHBoxLayout,
     QHeaderView,
@@ -19,10 +18,14 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMenu,
     QSizeGrip,
+    QSlider,
+    QStackedWidget,
     QTableWidgetItem,
+    QTabWidget,
     QToolButton,
     QVBoxLayout,
     QWidget,
+    QWidgetAction,
 )
 
 from ignite_live.controller import SOURCES, Controller
@@ -30,13 +33,15 @@ from ignite_live.core import settings as settings_store
 from ignite_live.core.events import ChatEvent, ConnectionState, LiveStatus, StatusChange, ViewerCount
 from ignite_live.ui.actions import AppActions
 from ignite_live.ui.chat_feed import ChatFeed
+from ignite_live.ui.live_widgets import AudienceList, MusicBar, StatsBar
 from ignite_live.ui.pages.music import read_only_table
 from ignite_live.ui.icons import glyph
-from ignite_live.ui.theme import STATE_TEXT, colors, state_color, tabular, theme_changed
+from ignite_live.ui.theme import RADIUS, STATE_TEXT, colors, state_color, theme_changed, tint, tint_color
 
 HISTORY = 200  # Chat events replayed into a newly opened pop-out.
 MAX_ACTIVITY = 500
 FILTERS = (("comments", "Comments"), ("gifts", "Gifts"), ("follows", "Follows"))
+NOT_CHAT_LINES = (ViewerCount, LiveStatus)  # Shown in the stats row, not in the feed.
 
 
 def filter_checks(feed: ChatFeed) -> QHBoxLayout:
@@ -59,24 +64,14 @@ PLATFORM_ROWS = (
 ACTIVE = (ConnectionState.CONNECTING, ConnectionState.CONNECTED, ConnectionState.DEGRADED)
 
 
-def live_summary(controller: Controller, viewers: int | None) -> str:
-    """"LIVE on TikTok (1,234 watching), Twitch" or "Not live"."""
-    live = []
-    for platform, name, _hint, _field in PLATFORM_ROWS:
-        if controller.live.get(platform):
-            watching = f" ({viewers:,} watching)" if platform == "tiktok" and viewers is not None else ""
-            live.append(name + watching)
-    return "LIVE on " + ", ".join(live) if live else "Not live"
-
-
 class ChatPanel(QWidget):
-    """A row per platform (name, status light, connect), filters, and the combined feed."""
+    """A row per platform (name, status light, connect), the stats row, and tabs: the combined feed with
+    its filters, and who's here."""
 
     def __init__(self, controller: Controller, actions: AppActions) -> None:
         super().__init__()
         self.controller = controller
         self.history: deque[ChatEvent] = deque(maxlen=HISTORY)
-        self.viewers: int | None = None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
 
@@ -105,29 +100,43 @@ class ChatPanel(QWidget):
         layout.addLayout(grid)
 
         top = QHBoxLayout()
-        self.live = QLabel("Not live")
-        self.live.setFont(tabular(self.live.font()))  # The viewer count changes; its digits stay put.
-        self.live.setWordWrap(True)
-        top.addWidget(self.live, 1)
+        top.addStretch(1)
         for action in (actions.connect_chat, actions.disconnect_chat, actions.popout_chat):
             button = QToolButton()
             button.setDefaultAction(action)
             top.addWidget(button)
         layout.addLayout(top)
+        self.stats = StatsBar(controller)  # Live or not, and viewers, followers and likes per platform.
+        layout.addWidget(self.stats)
         self.state = QLabel("")
         self.state.setWordWrap(True)
         self.state.hide()
         layout.addWidget(self.state)
         self.feed = ChatFeed()
-        layout.addLayout(filter_checks(self.feed))
-        layout.addWidget(self.feed, 1)
+        chat = QWidget()
+        chat_layout = QVBoxLayout(chat)
+        chat_layout.setContentsMargins(0, 4, 0, 0)
+        chat_layout.addLayout(filter_checks(self.feed))
+        chat_layout.addWidget(self.feed, 1)
+        self.audience = AudienceList(controller)
+        self.views = QTabWidget()
+        self.views.setDocumentMode(True)
+        self.views.addTab(chat, "Chat")
+        self.views.addTab(self.audience, "Viewers")
+        self.views.setTabToolTip(1, "Who's here right now, and the platform they're watching from")
+        layout.addWidget(self.views, 1)
 
         actions.connect_chat.triggered.connect(self._connect_all)
         controller.chat_event.connect(self._event)
         controller.status_changed.connect(self._status)
         controller.settings_changed.connect(self._settings)
+        controller.audience_changed.connect(self._audience)
+        self._audience(controller.audience_snapshot)
         for platform, *_ in PLATFORM_ROWS:
             self._status(controller.statuses[platform])
+
+    def _audience(self, people: list) -> None:
+        self.views.setTabText(1, f"Viewers ({len(people):,})" if people else "Viewers")
 
     def _connect(self, platform: str) -> None:
         self.controller.connect_platform(platform, self.names[platform].text())
@@ -152,10 +161,7 @@ class ChatPanel(QWidget):
                 self.names[platform].setText(getattr(settings, field_name))
 
     def _event(self, event: ChatEvent) -> None:
-        if isinstance(event, (ViewerCount, LiveStatus)):
-            if isinstance(event, ViewerCount):
-                self.viewers = event.count
-            self._show_live()
+        if isinstance(event, NOT_CHAT_LINES):
             return
         self.history.append(event)
         self.feed.add_event(event)
@@ -163,8 +169,6 @@ class ChatPanel(QWidget):
     def _status(self, change: StatusChange) -> None:
         if change.source not in self.names:
             return
-        if change.source == "tiktok" and change.state is not ConnectionState.CONNECTED:
-            self.viewers = None
         light = self.lights[change.source]
         light.setStyleSheet(f"color: {state_color(change.state, light).name()};")
         light.setToolTip(f"{STATE_TEXT[change.state]}: {change.detail}" if change.detail else STATE_TEXT[change.state])
@@ -173,109 +177,193 @@ class ChatPanel(QWidget):
                     if self.controller.statuses[p].state in (ConnectionState.ERROR, ConnectionState.DEGRADED)]
         self.state.setText("\n".join(problems))
         self.state.setVisible(bool(problems))
-        self._show_live()
-
-    def _show_live(self) -> None:
-        summary = live_summary(self.controller, self.viewers)
-        self.live.setText(summary)
-        error = state_color(ConnectionState.ERROR, self.live).name()  # Red "LIVE", readable in any theme.
-        self.live.setStyleSheet(f"color: {error}; font-weight: bold;" if summary != "Not live" else "")
 
 
 class ChatPopout(QWidget):
-    """Picture-in-picture chat: a small frameless window that stays on top of OBS or a game.
+    """Picture-in-picture chat: a small frameless, see-through window that stays on top of OBS or a game.
 
-    Drag it by its top bar and resize it from the corner. Locked, it stays put and ignores
-    the mouse (no moving, resizing, scrolling or closing) except for the lock button itself.
+    The window's background is as solid as the streamer sets it (0 to 100 %, in its menu), so the game shows
+    through; chat, the stats row, the viewer list and the music buttons stay fully drawn on top, each
+    readable without a panel behind it (text with an edge, numbers on small backed pills).
+
+    Drag it by its top bar and resize it from the corner. Locked, it stays put and can't be moved, resized,
+    scrolled or closed; only the lock button and the music buttons still take clicks.
     """
 
     def __init__(self, controller: Controller, history: list[ChatEvent]) -> None:
         flags = Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint
         super().__init__(None, flags)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)  # paintEvent draws what background there is.
         self.controller = controller
-        self.viewers: int | None = None
         self.locked = False
+        s = controller.settings
+        self.opacity = max(0, min(100, s.chat_popout_opacity))
         self.setWindowTitle("Ignite Chat")
-        self.setMinimumSize(240, 220)
-        self.resize(360, 560)
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 0, 0, 0)
-        frame = QFrame()
-        frame.setFrameShape(QFrame.Shape.StyledPanel)  # A visible edge, since there's no title bar.
-        frame.setObjectName("popoutFrame")
-        outer.addWidget(frame)
-        layout = QVBoxLayout(frame)
-        layout.setContentsMargins(8, 4, 8, 4)
+        self.setMinimumSize(260, 240)
+        self.resize(380, 600)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 4)
         layout.setSpacing(4)
 
-        self.header = QWidget()  # The drag handle.
+        self.header = QWidget()  # The drag handle: a solid bar, so its buttons read over anything.
+        self.header.setObjectName("popoutHeader")
         self.header.setCursor(Qt.CursorShape.SizeAllCursor)
         top = QHBoxLayout(self.header)
-        top.setContentsMargins(0, 0, 0, 0)
-        self.live = QLabel("Not live")
-        self.filters = QToolButton()
-        self.filters.setText("Show")
-        self.filters.setToolTip("Choose what the chat shows")
-        self.filters.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        top.setContentsMargins(4, 2, 4, 2)
+        top.setSpacing(2)
+        self.show_chat = self._view_button("Chat", "Chat from every connected platform")
+        self.show_viewers = self._view_button("Viewers", "Who's here right now, and the platform they're watching from")
+        self.show_chat.setChecked(True)
+        self.options = QToolButton()
+        self.options.setToolTip("What this window shows, and how see-through it is")
+        self.options.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.lock = QToolButton()
         self.lock.setCheckable(True)
-        self.lock.setCursor(Qt.CursorShape.ArrowCursor)
         self.lock.toggled.connect(self.set_locked)
         self.close_button = QToolButton()
-        self.close_button.setIcon(glyph("close"))
         self.close_button.setToolTip("Close the pop-out chat")
         self.close_button.clicked.connect(self.close)
-        top.addWidget(self.live, 1)
-        for button in (self.filters, self.lock, self.close_button):
+        top.addWidget(self.show_chat)
+        top.addWidget(self.show_viewers)
+        top.addStretch(1)
+        for button in (self.options, self.lock, self.close_button):
             button.setAutoRaise(True)
+            button.setCursor(Qt.CursorShape.ArrowCursor)
             top.addWidget(button)
         layout.addWidget(self.header)
         self.header.installEventFilter(self)
-        self.live.installEventFilter(self)
 
-        self.feed = ChatFeed()
-        menu = QMenu(self.filters)
+        self.stats = StatsBar(controller, see_through=True)
+        self.stats.setVisible(s.chat_popout_stats)
+        self.stats.installEventFilter(self)  # Dragging the numbers moves the window too.
+        layout.addWidget(self.stats)
+
+        self.feed = ChatFeed(see_through=True)
+        self.audience = AudienceList(controller, see_through=True)
+        self.stack = QStackedWidget()
+        self.stack.addWidget(self.feed)
+        self.stack.addWidget(self.audience)
+        layout.addWidget(self.stack, 1)
+        self.show_chat.clicked.connect(lambda: self.stack.setCurrentWidget(self.feed))
+        self.show_viewers.clicked.connect(lambda: self.stack.setCurrentWidget(self.audience))
+
+        self.music = MusicBar(controller, see_through=True)
+        self.music.setVisible(s.chat_popout_music)
+        bottom = QHBoxLayout()
+        bottom.setSpacing(2)
+        bottom.addWidget(self.music, 1)
+        self.grip = QSizeGrip(self)
+        bottom.addWidget(self.grip, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom)
+        layout.addLayout(bottom)
+
+        self.options.setMenu(self._menu())
+        for event in history:
+            self.feed.add_event(event)
+        self.feed.jump_to_latest()
+        controller.chat_event.connect(self._event)
+        controller.audience_changed.connect(self._audience)
+        self._audience(controller.audience_snapshot)
+        if s.chat_popout_geometry:
+            self.restoreGeometry(QByteArray.fromBase64(s.chat_popout_geometry.encode()))
+        self.lock.setChecked(s.chat_popout_locked)
+        theme_changed().connect(self._restyle)
+        self._restyle()
+
+    def _view_button(self, text: str, tip: str) -> QToolButton:
+        button = QToolButton()
+        button.setText(text)
+        button.setToolTip(tip)
+        button.setCheckable(True)
+        button.setAutoExclusive(True)
+        button.setAutoRaise(True)
+        button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        button.setCursor(Qt.CursorShape.ArrowCursor)
+        return button
+
+    def _menu(self) -> QMenu:
+        """What the chat shows, which extra rows are on, and the background slider."""
+        menu = QMenu(self.options)
         for kind, name in FILTERS:
             action = menu.addAction(name)
             action.setCheckable(True)
             action.setChecked(self.feed.filters[kind])
             action.toggled.connect(lambda shown, k=kind: self.feed.set_filter(k, shown))
-        self.filters.setMenu(menu)
-        layout.addWidget(self.feed, 1)
-        self.grip = QSizeGrip(frame)
-        layout.addWidget(self.grip, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom)
+        menu.addSeparator()
+        for text, widget in (("Viewer and follower counts", self.stats), ("Music buttons", self.music)):
+            action = menu.addAction(text)
+            action.setCheckable(True)
+            action.setChecked(not widget.isHidden())
+            action.toggled.connect(widget.setVisible)
+        menu.addSeparator()
+        row = QWidget()
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(12, 4, 12, 4)
+        row_layout.addWidget(QLabel("Background:"))
+        self.opacity_slider = QSlider(Qt.Orientation.Horizontal)
+        self.opacity_slider.setRange(0, 100)
+        self.opacity_slider.setPageStep(10)
+        self.opacity_slider.setMinimumWidth(120)
+        self.opacity_slider.setValue(self.opacity)
+        self.opacity_slider.setToolTip("0 %: only the chat itself floats over your game. 100 %: a solid panel.")
+        self.opacity_value = QLabel()
+        self.opacity_value.setMinimumWidth(self.opacity_value.fontMetrics().horizontalAdvance("100 %"))
+        self.opacity_slider.valueChanged.connect(self.set_opacity)
+        row_layout.addWidget(self.opacity_slider, 1)
+        row_layout.addWidget(self.opacity_value)
+        slider = QWidgetAction(menu)
+        slider.setDefaultWidget(row)
+        menu.addAction(slider)
+        self.set_opacity(self.opacity)
+        return menu
 
-        for event in history:
-            self.feed.add_event(event)
-        self.feed.jump_to_latest()
-        controller.chat_event.connect(self._event)
-        controller.status_changed.connect(self._status)
-        self._status(controller.statuses["tiktok"])
-        geometry = controller.settings.chat_popout_geometry
-        if geometry:
-            self.restoreGeometry(QByteArray.fromBase64(geometry.encode()))
-        self.lock.setChecked(controller.settings.chat_popout_locked)
-        self.set_locked(self.lock.isChecked())
-        theme_changed().connect(self._restyle)
+    def set_opacity(self, percent: int) -> None:
+        """How solid the window's background is; everything drawn on it stays as it is."""
+        self.opacity = max(0, min(100, int(percent)))
+        self.opacity_value.setText(f"{self.opacity} %")
+        self.update()
+
+    def paintEvent(self, _event) -> None:  # noqa: N802 - Qt override
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p = colors()
+        # All but invisible, yet not nothing: where a window is fully transparent, Windows hands clicks to
+        # whatever is behind it, and the chat couldn't be dragged, resized or scrolled at 0 %.
+        painter.fillRect(self.rect(), QColor(0, 0, 0, 1))
+        solid = self.opacity / 100
+        painter.setBrush(tint_color(p.panel, solid))
+        # The edge shows where to grab the window; locked in place and fully clear, it goes too.
+        painter.setPen(QPen(tint_color(p.divider, solid if self.locked else max(solid, 0.6)), 1))
+        painter.drawRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), RADIUS + 2, RADIUS + 2)
 
     def set_locked(self, locked: bool) -> None:
         self.locked = locked
         self.lock.setIcon(glyph("lock" if locked else "unlock", colors().accent_text if locked else None))
         self.lock.setToolTip("Unlock to move, resize, scroll or close the chat" if locked
-                             else "Lock the chat in place: it ignores every click except this button")
-        # The feed and everything on it (links, the "new messages" pill, the scroll bar) stop taking the mouse.
-        self.feed.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, locked)
-        for widget in (self.filters, self.close_button, self.grip):
+                             else "Lock the chat in place: it can't be moved, resized, scrolled or closed "
+                                  "(the music buttons still work)")
+        # The lists and everything on them (the "new messages" pill, the scroll bars) stop taking the mouse.
+        for widget in (self.feed, self.audience):
+            widget.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, locked)
+        for widget in (self.options, self.close_button, self.grip):
             widget.setVisible(not locked)
         self.header.setCursor(Qt.CursorShape.ArrowCursor if locked else Qt.CursorShape.SizeAllCursor)
         if locked:
             self.feed.jump_to_latest()  # Locked, it can't be scrolled back down: follow new messages.
+        self.update()  # The edge is drawn differently.
 
     def _restyle(self, _palette=None) -> None:
-        """Icons are drawn in the mode's colours: redraw them when it changes."""
+        """Icons and the bar are drawn in the mode's colours: redraw them when it changes."""
+        p = colors()
+        self.header.setStyleSheet(f"QWidget#popoutHeader {{ background: {tint(p.panel, 0.86)};"
+                                  f" border-radius: {RADIUS}px; }}")
         self.close_button.setIcon(glyph("close"))
+        self.options.setIcon(glyph("menu"))
+        self.show_chat.setIcon(glyph("chat"))
+        self.show_viewers.setIcon(glyph("people"))
         self.set_locked(self.locked)
-        self._status(self.controller.statuses["tiktok"])
+
+    def _audience(self, people: list) -> None:
+        self.show_viewers.setText(f"Viewers {len(people):,}" if people else "Viewers")
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:  # noqa: N802 - Qt override
         if (event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton
@@ -285,24 +373,16 @@ class ChatPopout(QWidget):
         return super().eventFilter(watched, event)
 
     def _event(self, event: ChatEvent) -> None:
-        if isinstance(event, (ViewerCount, LiveStatus)):
-            if isinstance(event, ViewerCount):
-                self.viewers = event.count
-            self._status(self.controller.statuses["tiktok"])
-        else:
+        if not isinstance(event, NOT_CHAT_LINES):
             self.feed.add_event(event)
-
-    def _status(self, change: StatusChange) -> None:
-        if change.source in ("tiktok", "twitch", "youtube"):
-            summary = live_summary(self.controller, self.viewers)
-            self.live.setText(summary)
-            error = state_color(ConnectionState.ERROR, self.live).name()
-            self.live.setStyleSheet(f"color: {error}; font-weight: bold;" if summary != "Not live" else "")
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt override
         s = self.controller.settings
         s.chat_popout_geometry = bytes(self.saveGeometry().toBase64()).decode()
         s.chat_popout_locked = self.locked
+        s.chat_popout_opacity = self.opacity
+        s.chat_popout_stats = not self.stats.isHidden()
+        s.chat_popout_music = not self.music.isHidden()
         settings_store.save(s, self.controller.settings_path)
         super().closeEvent(event)
 

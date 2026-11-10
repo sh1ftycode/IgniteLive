@@ -247,7 +247,7 @@ class MainWindow(QMainWindow):
             obs.addSeparator() if item is None else obs.addAction(item)
 
         music = bar.addMenu("&Music")
-        for item in (a.skip, a.clear_queue, None, a.stop_playlist):
+        for item in (a.play_pause, a.previous_song, a.skip, None, a.clear_queue, None, a.stop_playlist):
             music.addSeparator() if item is None else music.addAction(item)
 
         view = bar.addMenu("&View")
