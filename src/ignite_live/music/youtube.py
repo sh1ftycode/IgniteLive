@@ -22,6 +22,7 @@ import json
 import re
 import urllib.parse
 from dataclasses import dataclass, replace
+from typing import Callable
 
 from ignite_live.core.http import Transport, TransportError, urllib_transport
 
@@ -34,6 +35,8 @@ _SONGS_ONLY = "EgWKAQIIAWoMEA4QChADEAQQCRAF"  # YouTube Music's "Songs" search f
 _ART_TRACK = "MUSIC_VIDEO_TYPE_ATV"  # Official audio with the album cover as its picture.
 _PODCAST = "MUSIC_VIDEO_TYPE_PODCAST_EPISODE"
 _PLAYLIST_ID = re.compile(r"^[A-Za-z0-9_-]{10,64}$")
+# Playlists every YouTube Music account has, with short fixed IDs. Private: they need a connected account.
+ACCOUNT_PLAYLISTS = {"LM": "Liked Music"}
 _ART_SIZE = re.compile(r"=w\d+-h\d+")
 _SEARCH_RESULTS = 8
 _EMBED_CHECKS = 3
@@ -234,7 +237,7 @@ def playlist_id_from(text: str) -> str | None:
     if (url.hostname or "").lower() not in _HOSTS:
         return None
     candidate = urllib.parse.parse_qs(url.query).get("list", [""])[0]
-    return candidate if _PLAYLIST_ID.match(candidate) else None
+    return candidate if _PLAYLIST_ID.match(candidate) or candidate in ACCOUNT_PLAYLISTS else None
 
 
 _EXPLICIT = re.compile(
@@ -266,11 +269,18 @@ class YouTubeClient:
     music_search_url = "https://music.youtube.com/youtubei/v1/search?prettyPrint=false"
     music_next_url = "https://music.youtube.com/youtubei/v1/next?prettyPrint=false"
 
-    def __init__(self, api_key: str = "", transport: Transport = urllib_transport, prefer_clean: bool = False) -> None:
-        """``api_key``: optional, for links. ``prefer_clean``: skip explicit songs, and pick clean versions first."""
+    def __init__(self, api_key: str = "", transport: Transport = urllib_transport, prefer_clean: bool = False,
+                 account_headers: Callable[[], dict[str, str]] | None = None) -> None:
+        """``api_key``: optional, for links. ``prefer_clean``: skip explicit songs, and pick clean versions first.
+
+        ``account_headers``: the signed-in headers of a connected YouTube Music account (music/ytmusic_account.py).
+        Only playlists are read with them, so the account's private playlists and Liked Music load; searches and
+        radio stay anonymous.
+        """
         self._api_key = api_key.strip()
         self._transport = transport
         self.prefer_clean = prefer_clean
+        self._account_headers = account_headers
 
     @property
     def can_search(self) -> bool:
@@ -326,22 +336,34 @@ class YouTubeClient:
 
     def playlist(self, playlist_id: str) -> tuple[str, list[Track]]:
         """A public YouTube or YouTube Music playlist: its name and songs (as they are: uploads included)."""
-        tracks = up_next_results(self._up_next({"playlistId": playlist_id}), official_audio_only=False)
+        signed_in = self._account_headers() if self._account_headers else None
+        tracks = up_next_results(self._up_next({"playlistId": playlist_id}, signed_in), official_audio_only=False)
         if not tracks:
-            raise TrackLookupError("That playlist is private, empty, or has no songs Ignite can play.")
+            if playlist_id in ACCOUNT_PLAYLISTS and signed_in is None:
+                raise TrackLookupError(f"{ACCOUNT_PLAYLISTS[playlist_id]} is private: connect your YouTube Music "
+                                       "account on the Music tab first.")
+            raise TrackLookupError("That playlist is private, empty, or has no songs Ignite can play."
+                                   + ("" if signed_in else " For your own private playlists, connect your "
+                                                           "YouTube Music account on the Music tab."))
+        if playlist_id in ACCOUNT_PLAYLISTS:
+            return ACCOUNT_PLAYLISTS[playlist_id], tracks
         try:
             name = self._oembed_title(f"https://www.youtube.com/playlist?list={playlist_id}")
         except TrackLookupError:
             name = ""
         return name or "YouTube playlist", tracks
 
-    def _up_next(self, body: dict) -> dict:
+    def _up_next(self, body: dict, headers: dict[str, str] | None = None) -> dict:
         payload = json.dumps({"context": {"client": _MUSIC_CLIENT}, "isAudioOnly": True, **body})
         try:
             status, raw = self._transport("POST", self.music_next_url, {
-                "Content-Type": "application/json", "Origin": "https://music.youtube.com"}, payload.encode())
+                "Content-Type": "application/json", "Origin": "https://music.youtube.com", **(headers or {})},
+                payload.encode())
         except TransportError as error:
             raise TrackLookupError("Could not reach YouTube Music.") from error
+        if status in (401, 403) and headers:
+            raise TrackLookupError("YouTube Music no longer accepts the connected account. Connect it again on "
+                                   "the Music tab.")
         return self._decode(status, raw)
 
     def _oembed_title(self, url: str) -> str:

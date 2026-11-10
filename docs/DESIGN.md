@@ -526,6 +526,55 @@ price. Rule-triggered requests are free. `!points` and `!give` (mods) work
 too, and every points command is only active while points are on. The
 streamer and simulated viewers never pay.
 
+### Who's watching, and each platform's numbers
+
+`live/audience.py` (pure logic) keeps two things, both changed on the loop
+thread only and handed to the GUI as snapshots at most every 1.5 s:
+
+- **Who's here.** No platform gives an anonymous reader its viewer list, so the
+  list is built from what each one says. TikTok: `JoinEvent`, plus everyone
+  who chats, gifts, likes, follows or shares (it never says who left). Twitch:
+  IRC's `twitch.tv/membership` capability: a NAMES list on joining, then
+  JOIN/PART (Twitch sends these for up to about 1,000 chatters, batched, and
+  never for logged-out viewers). YouTube: only people who chat. A viewer stays
+  listed while Twitch says they're in chat, or for 10 minutes after they were
+  last seen; at most 3,000 are kept. Joins, leaves and stats are new event
+  types (`ChatJoin`, `ChatLeave`, `ChannelStats`) that go to the audience only:
+  not to chat, rules, reports, points or text to speech.
+- **Numbers per platform:** viewers, followers, likes. TikTok: viewers from
+  `RoomUserSeqEvent` (as before), likes from `LikeEvent.total`, followers from
+  the room details (`fetch_room_info`, every 5 minutes; refused for
+  age-restricted streams, then simply left out). YouTube: the watch page, then
+  `youtubei/v1/updated_metadata` every 30 s (subscribers come rounded). Twitch:
+  its API gives counts only to registered apps, so they come from DecAPI's
+  plain-text endpoints once a minute (`Settings.twitch_stats`; it is sent the
+  channel name). Twitch and YouTube viewer counts are ordinary `ViewerCount`
+  events, so stream reports and viewer-milestone rules now see every platform.
+  A platform that disconnects or goes offline loses its viewers and likes; the
+  follower count stays.
+
+### Pop-out chat
+
+A frameless always-on-top window with `WA_TranslucentBackground`; `paintEvent`
+draws a rounded panel at the streamer's opacity (0 to 100 %,
+`Settings.chat_popout_opacity`) over an alpha-1 fill, because Windows passes
+clicks through fully transparent pixels and the window couldn't be dragged at
+0 %. Nothing in it relies on a panel behind it: list text is drawn with a
+contrasting edge on a faint per-row plate (`ChatDelegate.see_through`), and
+the header, stats chips and music bar carry their own backing. It can't cover
+a game in exclusive fullscreen (no ordinary window can).
+
+### Playback buttons
+
+The music plays in the Now Playing overlay, so the buttons are messages to it.
+Pause is the existing `paused` state flag, now the OR of panic's pause and the
+user's (`OverlayServer.set_paused`), so Resume after panic doesn't start music
+the streamer paused. Previous sends `seek` to the copy that plays; in a song's
+first 4 s it calls `SongQueue.previous()` instead, which re-queues the current
+song and brings back the last of up to 25 played ones under a new id (the
+player loads on an id change). The overlay's progress reports (twice a second)
+feed the app's own time display through `Controller.playback_changed`.
+
 ### Leaderboards
 
 Each stream has boards for gifters (coins), likers and chatters, counted as
@@ -799,6 +848,10 @@ than 48h, the app must detect the OBS connection failure and offer
 | **Text to speech** | Rules (filters, cooldowns, templates), the speaker queue (prefetch, order, skip, mute, failures) unit-tested with fakes; TikTok request/response against a fake server. Live: Edge voices fetched and played back to back through the real controller and Qt Multimedia, skip, and the "no session ID" error. The frozen build bundles the speech and FFmpeg plugins and edge-tts. | TikTok voices with a real session ID (none available here). System voices on Windows and macOS, and OBS picking up the audio. |
 | **Server** | Clean server-only install (no Qt/TikTokLive), auth, key store/reuse/retire, settings sync, live oEmbed. | `docker compose up` on a VPS (Docker wasn't available to build the image here). |
 | **Desktop app** | Headless launch of every page; manual key flow end to end; statuses for OBS offline, overlay waiting. | Day-to-day use on Windows and macOS. |
+| **Viewers and numbers** | Audience logic, Twitch membership lines, DecAPI text and TikTok room details unit-tested; YouTube's counts parsed from a real live page and a real `updated_metadata` answer; DecAPI's two endpoints answered live. Offscreen run of the real app: events from all three platforms through the controller into the stats row and Viewers tab, and a disconnect clearing them. | Every platform on a real stream: TikTok `JoinEvent` volume and `fetch_room_info`'s field names, Twitch membership on a channel with chatters, YouTube's poll over hours. |
+| **Pop-out chat** | Offscreen run at 0, 35 and 100 % in dark and light, composited over a busy picture: layout, text edges, lock, saved settings. | On a real desktop over a real game: translucency, click handling at 0 %, dragging, the lock. |
+| **Playback buttons** | Offscreen run with a pretend Now Playing socket: pause reaches the overlay and survives a skip, Previous seeks, then goes back a song, panic's pause stays separate. | The real YouTube player in OBS obeying `seek` and pause. |
+| **YouTube Music account** | Cookie parsing, the SAPISIDHASH header, library parsing and signed-in playlist loading against a fake transport; the cookie never appears in errors or reprs; long secrets split across keychain entries. | **Everything against a real account**: no signed-in session was available, so the library response's shape is from the `ytmusicapi` project's description of it, not from a live answer. |
 
 ## 7. Build plan
 

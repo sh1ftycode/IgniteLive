@@ -104,6 +104,51 @@ def _glyph_path(name: str) -> QPainterPath:
         path.lineTo(5.5, 5)
         path.arcTo(QRectF(5.5, 2.5, 5, 5), 180, -180)
         path.lineTo(10.5, 7.5 if name == "lock" else 5)
+    elif name == "play":
+        path.moveTo(5, 3.5)
+        path.lineTo(12.5, 8)
+        path.lineTo(5, 12.5)
+        path.closeSubpath()
+    elif name == "pause":
+        path.addRoundedRect(QRectF(4, 3.5, 2.5, 9), 0.8, 0.8)
+        path.addRoundedRect(QRectF(9.5, 3.5, 2.5, 9), 0.8, 0.8)
+    elif name in ("next", "previous"):
+        # A triangle pointing at a bar; "previous" is its mirror image.
+        x = (lambda value: value) if name == "next" else (lambda value: 16 - value)
+        path.moveTo(x(3.5), 3.5)
+        path.lineTo(x(10), 8)
+        path.lineTo(x(3.5), 12.5)
+        path.closeSubpath()
+        path.moveTo(x(12.5), 3.5)
+        path.lineTo(x(12.5), 12.5)
+    elif name == "eye":
+        path.moveTo(1.5, 8)
+        path.quadTo(8, 1.5, 14.5, 8)
+        path.quadTo(8, 14.5, 1.5, 8)
+        path.addEllipse(QRectF(6, 6, 4, 4))
+    elif name == "people":
+        path.addEllipse(QRectF(3.7, 3, 4.6, 4.6))
+        path.moveTo(1.8, 13.5)
+        path.cubicTo(1.8, 10.2, 4, 9.2, 6, 9.2)
+        path.cubicTo(8, 9.2, 10.2, 10.2, 10.2, 13.5)
+        path.addEllipse(QRectF(9.6, 4.2, 3.4, 3.4))
+        path.moveTo(11.8, 9.4)
+        path.cubicTo(13.4, 9.6, 14.4, 11, 14.4, 13.5)
+    elif name == "heart":
+        path.moveTo(8, 13.2)
+        path.cubicTo(2.5, 9.6, 1.6, 6.2, 3.6, 4.2)
+        path.cubicTo(5.2, 2.7, 7.2, 3.3, 8, 5)
+        path.cubicTo(8.8, 3.3, 10.8, 2.7, 12.4, 4.2)
+        path.cubicTo(14.4, 6.2, 13.5, 9.6, 8, 13.2)
+    elif name == "chat":
+        path.addRoundedRect(QRectF(2, 3, 12, 8), 2, 2)
+        path.moveTo(5, 11)
+        path.lineTo(5, 13.5)
+        path.lineTo(8, 11)
+    elif name == "menu":
+        for y in (4.5, 8, 11.5):
+            path.moveTo(3, y)
+            path.lineTo(13, y)
     else:
         raise ValueError(name)
     return path
