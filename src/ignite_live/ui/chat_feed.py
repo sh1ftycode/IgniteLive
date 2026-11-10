@@ -118,6 +118,9 @@ class ChatDelegate(QStyledItemDelegate):
         self.small_font = _font(base, 11 * self.scale)
         self.pad = round(10 * self.scale)
         self.avatar = round(32 * self.scale)
+        # Over a game (the see-through pop-out) there's no solid background to read against: every text gets
+        # a contrasting edge, secondary text is less faded, and pills get a backing of their own.
+        self.see_through = False
 
     # Colours follow the app palette, so the feed works with light and dark themes.
 
@@ -129,8 +132,37 @@ class ChatDelegate(QStyledItemDelegate):
 
     def _muted(self) -> QColor:
         color = self._text()
-        color.setAlpha(150)
+        color.setAlpha(225 if self.see_through else 150)
         return color
+
+    def _edge(self) -> QColor:
+        return QColor(0, 0, 0, 215) if self._dark() else QColor(255, 255, 255, 225)
+
+    def _draw_text(self, painter: QPainter, where: QPointF | QRect | QRectF, text: str,
+                   flags: Qt.AlignmentFlag | Qt.TextFlag | None = None) -> None:
+        """drawText at a baseline point or in a rectangle; see-through, with an edge around the letters."""
+        def draw(target) -> None:
+            if flags is None:
+                painter.drawText(target, text)
+            else:
+                painter.drawText(target, flags, text)
+
+        if self.see_through:
+            pen = painter.pen()
+            painter.setPen(self._edge())
+            for dx, dy in ((1, 1), (-1, 1), (1, -1), (-1, -1)):
+                draw(where + QPointF(dx, dy) if isinstance(where, QPointF) else where.translated(dx, dy))
+            painter.setPen(pen)
+        draw(where)
+
+    def _plate(self, painter: QPainter, rect: QRect) -> None:
+        """See-through: a faint backing behind one row, so it reads over a busy picture while the gaps
+        between rows stay clear."""
+        if self.see_through:
+            painter.setPen(Qt.PenStyle.NoPen)
+            # Dark text needs more of a light backing than light text needs of a dark one.
+            painter.setBrush(QColor(0, 0, 0, 80) if self._dark() else QColor(255, 255, 255, 165))
+            painter.drawRoundedRect(QRectF(rect).adjusted(4, 1, -4, -1), RADIUS, RADIUS)
 
 
     # Geometry.
@@ -190,6 +222,9 @@ class ChatDelegate(QStyledItemDelegate):
         w, h = metrics.horizontalAdvance(text) + round(12 * self.scale), metrics.height() + 2
         box = QRectF(x, center_y - h / 2, w, h)
         painter.setPen(Qt.PenStyle.NoPen)
+        if self.see_through:  # A backing of its own, since there's no panel behind it.
+            painter.setBrush(QColor(0, 0, 0, 170) if self._dark() else QColor(255, 255, 255, 200))
+            painter.drawRoundedRect(box, h / 2, h / 2)
         painter.setBrush(tint_color(color, 0.16 if self._dark() else 0.14))
         painter.drawRoundedRect(box, h / 2, h / 2)
         painter.setPen(QColor(color))
@@ -197,19 +232,20 @@ class ChatDelegate(QStyledItemDelegate):
         painter.drawText(box, Qt.AlignmentFlag.AlignCenter, text)
         return x + w + 4
 
-    def _name_line(self, painter: QPainter, x: float, y: float, max_w: float, user: ChatUser, color: QColor) -> float:
+    def _name_line(self, painter: QPainter, x: float, y: float, max_w: float, user: ChatUser, color: QColor,
+                   always_platform: bool = False) -> float:
         """Platform pill, nickname, and Host/Mod/Sub/follower badges; returns the line's height."""
         metrics = QFontMetrics(self.name_font)
         mid = y + metrics.height() / 2
         mixed = len(getattr(self.view, "platforms", ())) > 1
         p = colors()  # Each mode's colours are picked to read on its own background.
         platform_color = getattr(p, user.platform, None) if user.platform in PLATFORMS else None
-        if platform_color and (user.platform in ALWAYS_BADGED or mixed):
+        if platform_color and (always_platform or user.platform in ALWAYS_BADGED or mixed):
             x = self._badge(painter, x, mid, PLATFORMS[user.platform], platform_color)
         name = metrics.elidedText(user.nickname or user.unique_id, Qt.TextElideMode.ElideRight, int(max_w * 0.6))
         painter.setFont(self.name_font)
         painter.setPen(QColor(color))
-        painter.drawText(QPointF(x, y + metrics.ascent()), name)
+        self._draw_text(painter, QPointF(x, y + metrics.ascent()), name)
         bx = x + metrics.horizontalAdvance(name) + 6
         if user.is_host:
             bx = self._badge(painter, bx, mid, "HOST", p.accent_text)
@@ -222,6 +258,7 @@ class ChatDelegate(QStyledItemDelegate):
         return metrics.height()
 
     def _paint_comment(self, painter: QPainter, rect: QRect, event: ChatComment) -> None:
+        self._plate(painter, rect)
         top = rect.top() + round(7 * self.scale)
         x = rect.left() + self.pad
         self._paint_avatar(painter, x, top, self.avatar, event.user)
@@ -229,15 +266,15 @@ class ChatDelegate(QStyledItemDelegate):
         name_h = self._name_line(painter, tx, top, self._text_width(), event.user, self._muted())
         painter.setFont(self.text_font)
         painter.setPen(self._text())
-        painter.drawText(
-            QRect(int(tx), int(top + name_h + 2), self._text_width(), 100_000),
-            Qt.TextFlag.TextWordWrap,
-            event.text,
-        )
+        self._draw_text(painter, QRect(int(tx), int(top + name_h + 2), self._text_width(), 100_000), event.text,
+                        Qt.TextFlag.TextWordWrap)
 
     def _paint_gift(self, painter: QPainter, rect: QRect, event: ChatGift) -> None:
         card = QRectF(rect).adjusted(4, 2, -4, -2)
         painter.setPen(Qt.PenStyle.NoPen)
+        if self.see_through:
+            painter.setBrush(QColor(0, 0, 0, 110) if self._dark() else QColor(255, 255, 255, 140))
+            painter.drawRoundedRect(card, RADIUS, RADIUS)
         painter.setBrush(tint_color(colors().accent, GIFT_TINT if self._dark() else GIFT_TINT + 0.03))
         painter.drawRoundedRect(card, RADIUS, RADIUS)
 
@@ -254,7 +291,8 @@ class ChatDelegate(QStyledItemDelegate):
         count = event.amount if event.amount and event.count == 1 else f"×{event.count}"
         count_w = QFontMetrics(self.big_font).horizontalAdvance(count)
         painter.setPen(QColor(colors().accent_text))
-        painter.drawText(QRectF(right - count_w, card.top(), count_w, card.height()), Qt.AlignmentFlag.AlignVCenter, count)
+        self._draw_text(painter, QRectF(right - count_w, card.top(), count_w, card.height()), count,
+                        Qt.AlignmentFlag.AlignVCenter)
         right -= count_w + 8
         icon = image_cache().get(event.image_url) if event.image_url else None
         if icon is not None:
@@ -273,12 +311,11 @@ class ChatDelegate(QStyledItemDelegate):
         painter.setFont(self.small_font)
         painter.setPen(self._muted())
         metrics = QFontMetrics(self.small_font)
-        painter.drawText(
-            QPointF(tx, top - 1 + name_h + 2 + metrics.ascent()),
-            metrics.elidedText(detail, Qt.TextElideMode.ElideRight, int(right - tx)),
-        )
+        self._draw_text(painter, QPointF(tx, top - 1 + name_h + 2 + metrics.ascent()),
+                        metrics.elidedText(detail, Qt.TextElideMode.ElideRight, int(right - tx)))
 
     def _paint_follow(self, painter: QPainter, rect: QRect, event: ChatFollow) -> None:
+        self._plate(painter, rect)
         size = round(22 * self.scale)
         x = rect.left() + self.pad + (self.avatar - size) / 2
         top = rect.center().y() - size / 2
@@ -289,22 +326,34 @@ class ChatDelegate(QStyledItemDelegate):
         name = metrics.elidedText(event.user.nickname or event.user.unique_id, Qt.TextElideMode.ElideRight, 200)
         painter.setFont(self.name_font)
         painter.setPen(self._text())
-        painter.drawText(QPointF(tx, baseline), name)
+        self._draw_text(painter, QPointF(tx, baseline), name)
         painter.setFont(self.small_font)
         painter.setPen(self._muted())
-        painter.drawText(QPointF(tx + metrics.horizontalAdvance(name) + 6, baseline), "followed the host")
+        self._draw_text(painter, QPointF(tx + metrics.horizontalAdvance(name) + 6, baseline), "followed the host")
+
+
+def make_see_through(view: QListWidget) -> None:
+    """No background of its own: whatever is behind the window (a game) shows between the rows."""
+    view.setFrameShape(QListWidget.Shape.NoFrame)
+    view.setStyleSheet(f"QListWidget#{view.objectName()} {{ background: transparent; }}")
+    view.viewport().setAutoFillBackground(False)
+    delegate = view.itemDelegate()
+    if isinstance(delegate, ChatDelegate):
+        delegate.see_through = True
 
 
 class ChatFeed(QListWidget):
     """Scrolling chat with filters, a row cap, and a "new messages" pill."""
 
-    def __init__(self, compact: bool = False, max_rows: int = 1000) -> None:
+    def __init__(self, compact: bool = False, max_rows: int = 1000, see_through: bool = False) -> None:
         super().__init__()
         self.max_rows = max_rows
         self.filters = {"comments": True, "gifts": True, "follows": True}
         self.platforms: set[str] = set()  # Seen so far; with more than one, every name gets a platform pill.
         self.setObjectName("chatFeed")
         self.setItemDelegate(ChatDelegate(self, compact))
+        if see_through:
+            make_see_through(self)
         self.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -322,7 +371,10 @@ class ChatFeed(QListWidget):
         self.new_pill.clicked.connect(self.jump_to_latest)
         self.new_pill.hide()
         self.verticalScrollBar().valueChanged.connect(self._scrolled)
-        image_cache().loaded.connect(lambda _url: self.viewport().update())
+        image_cache().loaded.connect(self._image_loaded)  # A method: disconnected with the feed (the pop-out closes).
+
+    def _image_loaded(self, _url: str) -> None:
+        self.viewport().update()
 
     def add_event(self, event: ChatEvent) -> None:
         kind = kind_of(event)

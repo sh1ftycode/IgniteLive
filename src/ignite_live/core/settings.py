@@ -156,6 +156,12 @@ class Settings:
     music_radio_seeds: list[str] = field(default_factory=list)  # Video IDs chat requested, newest first.
     chat_popout_geometry: str = ""  # Qt saveGeometry(), base64
     chat_popout_locked: bool = False  # Picture-in-picture chat: locked in place, ignores clicks.
+    chat_popout_opacity: int = 55  # How solid its background is, 0 (clear) to 100; the text stays solid.
+    chat_popout_stats: bool = True  # Its viewer and follower counts.
+    chat_popout_music: bool = True  # Its music buttons.
+    # Twitch publishes viewer and follower counts only to signed-in apps; these come from DecAPI (decapi.me),
+    # a public service that is sent your channel name. Off: Twitch shows chat and chatters only.
+    twitch_stats: bool = True
     # Discord bridge (the webhook URL itself is a secret: it lives in the keychain).
     discord_enabled: bool = False
     discord_comments: bool = True

@@ -32,6 +32,7 @@ from TikTokLive.events import (
     ConnectEvent,
     FollowEvent,
     GiftEvent,
+    JoinEvent,
     LikeEvent,
     LiveEndEvent,
     RoomUserSeqEvent,
@@ -40,10 +41,12 @@ from TikTokLive.events import (
 
 from ignite_live.core.backoff import MAX_BACKOFF_SECONDS, backoff_delay  # noqa: F401 (re-exported)
 from ignite_live.core.events import (
+    ChannelStats,
     ChatComment,
     ChatEvent,
     ChatFollow,
     ChatGift,
+    ChatJoin,
     ChatLike,
     ChatShare,
     ChatUser,
@@ -56,6 +59,32 @@ log = logging.getLogger(__name__)
 
 SOURCE = "tiktok"
 OFFLINE_POLL_SECONDS = 60.0
+ROOM_INFO_SECONDS = 300.0  # The follower count is read from the room's details this often.
+
+
+def _count(value: Any) -> int | None:
+    """A non-negative count from a payload field, or None when it's missing or not a number."""
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        return None
+    return number if number >= 0 else None
+
+
+def room_stats(info: Any) -> ChannelStats | None:
+    """Followers and likes from TikTok's room details (undocumented: every field is optional)."""
+    if not isinstance(info, dict):
+        return None
+    owner = info.get("owner") if isinstance(info.get("owner"), dict) else {}
+    follow = owner.get("follow_info") if isinstance(owner.get("follow_info"), dict) else {}
+    stats = info.get("stats") if isinstance(info.get("stats"), dict) else {}
+    followers = _count(follow.get("follower_count"))
+    likes = _count(stats.get("like_count"))
+    if likes is None:
+        likes = _count(info.get("like_count"))
+    if followers is None and likes is None:
+        return None
+    return ChannelStats(SOURCE, followers=followers, likes=likes)
 
 
 def rate_limit_delay(error: SignatureRateLimitError, now: float) -> float:
@@ -123,6 +152,8 @@ class TikTokChat:
         self._connected_at_ms = 0
         self._client: Any = None
         self._stopping = False
+        self._room_task: asyncio.Task | None = None
+        self._likes = -1  # The stream's like total as last reported, so it's sent on only when it changes.
 
     def _status(self, state: ConnectionState, detail: str = "") -> None:
         self._on_status(StatusChange(SOURCE, state, detail))
@@ -180,12 +211,34 @@ class TikTokChat:
                 attempt += 1
                 delay = backoff_delay(attempt)
                 self._status(ConnectionState.DEGRADED, f"Chat connection lost. Retrying in {int(delay)}s.")
+            self._stop_room_info()
             await self._quietly_disconnect(client)
             if self._stopping:
                 break
             await self._sleep(delay)
+        self._stop_room_info()
         self._client = None
         self._status(ConnectionState.OFFLINE)
+
+    def _stop_room_info(self) -> None:
+        if self._room_task is not None:
+            self._room_task.cancel()  # Our own task (plain HTTP), safe to cancel: not the library's connection.
+            self._room_task = None
+
+    async def _watch_room_info(self, client: Any) -> None:
+        """Follower count (and the like total so far) from the room's details. Optional: TikTok refuses it
+        for age-restricted streams, and then the numbers are simply left out."""
+        while not self._stopping and self._client is client:
+            try:
+                stats = room_stats(await client.web.fetch_room_info())
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:  # Unofficial API: any failure just means no follower count.
+                log.info("TikTok room details unavailable: %s", type(error).__name__)
+                return
+            if stats is not None and self._client is client:
+                self._on_event(stats)
+            await asyncio.sleep(ROOM_INFO_SECONDS)
 
     @staticmethod
     async def _quietly_disconnect(client: Any) -> None:
@@ -202,6 +255,7 @@ class TikTokChat:
         client.add_listener(FollowEvent, self._handle_follow)
         client.add_listener(LikeEvent, self._handle_like)
         client.add_listener(ShareEvent, self._handle_share)
+        client.add_listener(JoinEvent, self._handle_join)
         client.add_listener(RoomUserSeqEvent, self._handle_viewers)
         client.add_listener(LiveEndEvent, self._handle_live_end)
 
@@ -211,6 +265,10 @@ class TikTokChat:
             return
         self._connected_at_ms = int(self._clock() * 1000)
         self._status(ConnectionState.CONNECTED, f"Reading chat for {self.unique_id}")
+        self._likes = -1
+        self._stop_room_info()
+        if getattr(self._client, "web", None) is not None:
+            self._room_task = asyncio.get_running_loop().create_task(self._watch_room_info(self._client))
 
     async def _handle_comment(self, event: Any) -> None:
         created = int(getattr(getattr(event, "common", None), "create_time", 0) or 0)
@@ -244,9 +302,20 @@ class TikTokChat:
         count = int(getattr(event, "count", 0) or 0)
         if count > 0:
             self._on_event(ChatLike(_user(event.user), count))
+        total = _count(getattr(event, "total", None))
+        if total and total != self._likes:  # The stream's running total, for the stats row.
+            self._likes = total
+            self._on_event(ChannelStats(SOURCE, likes=total))
 
     async def _handle_share(self, event: Any) -> None:
         self._on_event(ChatShare(_user(event.user)))
+
+    async def _handle_join(self, event: Any) -> None:
+        raw = getattr(event, "user", None)
+        if raw is not None:
+            user = _user(raw, getattr(event, "user_identity", None))
+            if user.unique_id:
+                self._on_event(ChatJoin(user))
 
     async def _handle_viewers(self, event: Any) -> None:
         self._on_event(ViewerCount(int(getattr(event, "total", 0) or 0)))

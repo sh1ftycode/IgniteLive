@@ -8,6 +8,16 @@ Docs: https://dev.twitch.tv/docs/chat/irc/
 Twitch chat stays open while a channel is offline, so joining it says nothing
 about being live. That comes from the channel's public page, which marks a
 running stream with ``"isLiveBroadcast":true`` (checked once a minute).
+
+Who's in chat comes from IRC's membership capability (``twitch.tv/membership``):
+a NAMES list on joining, then JOIN and PART lines. Twitch only sends those for
+channels with up to about 1,000 chatters, batches them (they can lag by a
+minute or so), and never lists viewers who are logged out or have chat closed.
+
+Viewer and follower counts aren't in chat, and Twitch's own API gives them
+only to registered apps. With ``stats`` on they come from DecAPI
+(https://decapi.me), a free public service made for chat bots; it is sent the
+channel name and nothing else.
 """
 
 from __future__ import annotations
@@ -23,13 +33,17 @@ import aiohttp
 
 from ignite_live.core.backoff import backoff_delay
 from ignite_live.core.events import (
+    ChannelStats,
     ChatComment,
     ChatEvent,
     ChatGift,
+    ChatJoin,
+    ChatLeave,
     ChatUser,
     ConnectionState,
     LiveStatus,
     StatusChange,
+    ViewerCount,
 )
 
 log = logging.getLogger(__name__)
@@ -37,7 +51,9 @@ log = logging.getLogger(__name__)
 SOURCE = "twitch"
 URL = "wss://irc-ws.chat.twitch.tv:443"
 CHANNEL_PAGE = "https://www.twitch.tv/{channel}"
+STATS_URL = "https://decapi.me/twitch/{kind}/{channel}"  # kind: "viewercount" or "followcount"; plain text.
 LIVE_POLL_SECONDS = 60.0
+FOLLOWERS_EVERY = 5  # The follower count is read on every fifth live check.
 JOIN_TIMEOUT_S = 15.0
 PAGE_HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -101,6 +117,31 @@ def user_from(tags: dict[str, str], nick: str) -> ChatUser:
     )
 
 
+def plain_count(text: str) -> int | None:
+    """DecAPI answers with just a number ("1,234" or "1234"); anything else ("x is offline", an error) is None."""
+    digits = text.strip().replace(",", "")
+    return int(digits) if digits.isdigit() and len(digits) <= 12 else None
+
+
+def _member(login: str) -> ChatUser | None:
+    login = login.strip().lower().lstrip("@+%~&")
+    if not _CHANNEL.match(login) or login.startswith("justinfan"):  # Anonymous readers, like this app.
+        return None
+    return ChatUser(unique_id=login, nickname=login, platform=SOURCE)
+
+
+def members_from(line: str) -> list[ChatEvent]:
+    """Who's in chat, from the membership lines: 353 (the NAMES list), JOIN and PART."""
+    _tags, nick, command, _params, text = parse_line(line)
+    if command == "353":
+        return [ChatJoin(user) for user in map(_member, text.split()) if user is not None]
+    if command in ("JOIN", "PART"):
+        user = _member(nick)
+        if user is not None:
+            return [ChatJoin(user) if command == "JOIN" else ChatLeave(user)]
+    return []
+
+
 def events_from(line: str, now_ms: int) -> list[ChatEvent]:
     """Chat events in one IRC line (most lines have none)."""
     tags, nick, command, _params, text = parse_line(line)
@@ -145,6 +186,8 @@ class TwitchChat:
         sleep: Callable[[float], object] = asyncio.sleep,
         clock: Callable[[], float] = time.time,
         page_url: str = CHANNEL_PAGE,
+        stats: bool = True,
+        stats_url: str = STATS_URL,
     ) -> None:
         self.channel = channel_from(channel)
         if not self.channel:
@@ -153,6 +196,10 @@ class TwitchChat:
         self._on_status = on_status
         self._url = url
         self._page_url = page_url
+        self._stats = stats  # Viewer and follower counts from DecAPI (see the module docstring).
+        self._stats_url = stats_url
+        self._viewers: int | None = None
+        self._followers: int | None = None
         self._sleep = sleep
         self._joined = False
         self.live: bool | None = None  # Unknown until the channel page has been checked.
@@ -170,6 +217,7 @@ class TwitchChat:
 
     async def _watch_live(self, session: aiohttp.ClientSession) -> None:
         """Check the channel page once a minute and report changes."""
+        checks = 0
         while not self._stopping:
             try:
                 async with session.get(self._page_url.format(channel=self.channel), headers=PAGE_HEADERS,
@@ -183,7 +231,33 @@ class TwitchChat:
                 self._on_event(LiveStatus(SOURCE, live))
                 if self._joined:
                     self._connected_status()
+            if self._stats:
+                await self._read_stats(session, followers=checks % FOLLOWERS_EVERY == 0)
+            checks += 1
             await asyncio.sleep(LIVE_POLL_SECONDS)
+
+    async def _stat(self, session: aiohttp.ClientSession, kind: str) -> int | None:
+        try:
+            async with session.get(self._stats_url.format(kind=kind, channel=self.channel),
+                                   timeout=aiohttp.ClientTimeout(total=15)) as response:
+                return plain_count(await response.text()) if response.status == 200 else None
+        except (aiohttp.ClientError, asyncio.TimeoutError, OSError, UnicodeDecodeError) as error:
+            log.info("Twitch %s unavailable: %s", kind, error)
+            return None
+
+    async def _read_stats(self, session: aiohttp.ClientSession, followers: bool) -> None:
+        """Viewers while live (0 when offline), and now and then the follower count."""
+        viewers = None
+        if self.live is not None:  # Unknown until the channel page has answered once.
+            viewers = await self._stat(session, "viewercount") if self.live else 0
+        if viewers is not None and viewers != self._viewers:
+            self._viewers = viewers
+            self._on_event(ViewerCount(viewers, SOURCE))
+        if followers or self._followers is None:
+            count = await self._stat(session, "followcount")
+            if count is not None and count != self._followers:
+                self._followers = count
+                self._on_event(ChannelStats(SOURCE, followers=count))
 
     async def stop(self) -> None:
         self._stopping = True
@@ -229,7 +303,7 @@ class TwitchChat:
         async with session.ws_connect(self._url, heartbeat=None, timeout=aiohttp.ClientWSTimeout(ws_close=5)) as ws:
             self._ws = ws
             try:
-                await ws.send_str("CAP REQ :twitch.tv/tags twitch.tv/commands")
+                await ws.send_str("CAP REQ :twitch.tv/tags twitch.tv/commands twitch.tv/membership")
                 await ws.send_str("PASS SCHMOOPIIE")  # Ignored for anonymous users, but expected.
                 await ws.send_str(f"NICK justinfan{random.randint(10_000, 99_999)}")
                 await ws.send_str(f"JOIN #{self.channel}")
@@ -261,7 +335,8 @@ class TwitchChat:
                             self._status(ConnectionState.ERROR, f"Twitch: {text or 'channel unavailable'}")
                             self._failed = True
                             return joined
-                        for event in events_from(line, int(self._clock() * 1000)):
+                        for event in members_from(line) if command in ("353", "JOIN", "PART") else \
+                                events_from(line, int(self._clock() * 1000)):
                             self._on_event(event)
             finally:
                 self._ws = None

@@ -101,4 +101,33 @@ class LiveStatus:
     live: bool
 
 
-ChatEvent = ChatComment | ChatGift | ChatFollow | ChatLike | ChatShare | ViewerCount | LiveStatus
+@dataclass(frozen=True)
+class ChatJoin:
+    """A viewer arrived: TikTok's "joined", or a name in Twitch's chat member list. Not a chat line."""
+
+    user: ChatUser
+
+
+@dataclass(frozen=True)
+class ChatLeave:
+    """A viewer left (only Twitch says so)."""
+
+    user: ChatUser
+
+
+@dataclass(frozen=True)
+class ChannelStats:
+    """Numbers a platform publishes about the channel. ``None`` means "no news": the last value stays.
+
+    ``viewers`` is who's watching now, ``followers`` the channel's followers (YouTube: subscribers),
+    ``likes`` the stream's likes so far.
+    """
+
+    platform: str
+    viewers: int | None = None
+    followers: int | None = None
+    likes: int | None = None
+
+
+ChatEvent = (ChatComment | ChatGift | ChatFollow | ChatLike | ChatShare | ViewerCount | LiveStatus | ChatJoin
+             | ChatLeave | ChannelStats)

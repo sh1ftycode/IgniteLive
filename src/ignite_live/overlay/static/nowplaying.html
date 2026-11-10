@@ -149,6 +149,11 @@ ST.on("role", (message) => {
   if (latest) apply(latest);
   else if (audio) loadYouTube();
 });
+// The app's Previous button: start the song over (or jump within it).
+ST.on("seek", (message) => {
+  if (!audio || !ready || loaded === null || message.item_id !== loaded) return;
+  player.seekTo(Math.max(0, Number(message.position) || 0), true);
+});
 ST.on("progress", (p) => {
   lastProgress = p;
   if (!audio && p.item_id === currentId) showProgress(p.position, p.duration);

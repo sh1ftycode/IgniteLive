@@ -334,7 +334,6 @@ QDockWidget {{ titlebar-close-icon: url({img}/dock_close.svg); titlebar-normal-i
 QDockWidget::close-button, QDockWidget::float-button {{ border: none; background: transparent; border-radius: 4px;
                                                        padding: 2px; }}
 QDockWidget::close-button:hover, QDockWidget::float-button:hover {{ background: {RAISED}; }}
-QFrame#popoutFrame {{ background: {PANEL}; border: 1px solid {DIVIDER}; }}
 
 QGroupBox {{ border: none; border-top: 1px solid {DIVIDER}; margin-top: 24px; padding-top: 8px;
              font-size: {LABEL_PX}px; font-weight: 600; }}

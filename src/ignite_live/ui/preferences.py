@@ -351,6 +351,14 @@ class PreferencesDialog(QDialog):
                          "overlay, song requests, text to speech, and Discord. No logins or keys are needed: "
                          "Twitch and YouTube chat are read the same way their own websites show them. "
                          "YouTube chat connects while you're live and checks again every minute."))
+        self.twitch_stats = QCheckBox("Show Twitch viewer and follower counts (from DecAPI)")
+        self.twitch_stats.setChecked(s.twitch_stats)
+        self.twitch_stats.setToolTip("Twitch gives these numbers only to signed-in apps. DecAPI (decapi.me) is a free "
+                                     "public service for chat bots; Ignite sends it your channel name once a minute")
+        form.addRow("Twitch counts:", self.twitch_stats)
+        form.addRow(note("Viewer, follower and like counts come from each platform's public pages. Who's watching is "
+                         "only what the platforms reveal: TikTok announces viewers as they join, Twitch lists who "
+                         "is in chat (up to about 1,000 names), and YouTube only shows who chats."))
 
         form = _tab(self.tabs, "Server")
         self.backend_url = QLineEdit(s.backend_url)
@@ -799,6 +807,7 @@ class PreferencesDialog(QDialog):
             self.controller.settings,
             tiktok_username=self.tiktok.text().strip().lstrip("@"),
             twitch_channel=self.twitch.text().strip(),
+            twitch_stats=self.twitch_stats.isChecked(),
             youtube_channel=self.youtube.text().strip(),
             obs_url=self.obs_url.text().strip() or "ws://127.0.0.1:4455",
             obs_record_while_live=self.obs_record.isChecked(),
