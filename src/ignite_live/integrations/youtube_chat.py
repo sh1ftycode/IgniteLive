@@ -6,6 +6,11 @@ video (``/@handle/live``), open its chat page for a continuation token, then
 poll ``youtubei/v1/live_chat/get_live_chat`` at the interval YouTube asks for.
 These endpoints are undocumented and may change; links and errors fail
 gracefully into "retrying" rather than crashing.
+
+Viewer, like and subscriber counts are read the same way: the watch page says
+them once, and ``youtubei/v1/updated_metadata`` (what the page itself polls)
+keeps the viewer count fresh. YouTube rounds subscribers ("15.8M"), and it
+never says *who* is watching: only people who chat can be listed.
 """
 
 from __future__ import annotations
@@ -20,7 +25,16 @@ from typing import Any, Callable
 import aiohttp
 
 from ignite_live.core.backoff import backoff_delay
-from ignite_live.core.events import ChatComment, ChatEvent, ChatGift, ChatUser, ConnectionState, StatusChange
+from ignite_live.core.events import (
+    ChannelStats,
+    ChatComment,
+    ChatEvent,
+    ChatGift,
+    ChatUser,
+    ConnectionState,
+    StatusChange,
+    ViewerCount,
+)
 from ignite_live.music.youtube import video_id_from
 
 log = logging.getLogger(__name__)
@@ -28,6 +42,11 @@ log = logging.getLogger(__name__)
 SOURCE = "youtube"
 BASE = "https://www.youtube.com"
 OFFLINE_POLL_SECONDS = 60.0
+STATS_POLL_SECONDS = 30.0
+_WATCHING = re.compile(r'"originalViewCount":"(\d{1,12})"')
+_LIKES = re.compile(r'"likeCount":"(\d{1,12})"')
+_SUBSCRIBERS = re.compile(r'"subscriberCountText":\{.{0,300}?"simpleText":"([\d.,]+)\s?([KMB]?) subscribers?"', re.S)
+_SCALE = {"": 1, "K": 1_000, "M": 1_000_000, "B": 1_000_000_000}
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) "
                   "Chrome/130.0 Safari/537.36",
@@ -196,6 +215,24 @@ def live_video(html: str) -> str | None:
     return match.group(1) if match and '"isLiveNow":true' in html else None
 
 
+def subscribers_from(text: str) -> int | None:
+    """"15.8M subscribers" -> 15_800_000 (as rounded as YouTube shows it)."""
+    match = _SUBSCRIBERS.search(text)
+    if not match:
+        return None
+    try:
+        return round(float(match.group(1).replace(",", "")) * _SCALE[match.group(2)])
+    except ValueError:
+        return None
+
+
+def page_stats(text: str) -> tuple[int | None, int | None, int | None]:
+    """(watching now, likes, subscribers) from a watch page or an ``updated_metadata`` answer; None: not there."""
+    watching, likes = _WATCHING.search(text), _LIKES.search(text)
+    return (int(watching.group(1)) if watching else None, int(likes.group(1)) if likes else None,
+            subscribers_from(text))
+
+
 class YouTubeChat:
     """Keeps one channel's live chat connected until ``stop()``. Same interface as TikTokChat."""
 
@@ -263,7 +300,7 @@ class YouTubeChat:
 
     async def _watch(self) -> float:
         """Find the live video and read its chat until it ends; returns the wait before looking again."""
-        video_id = self.video_id
+        video_id, html = self.video_id, ""
         if video_id is None:
             status, html = await self._get(f"{BASE}{self.path}/live")
             if status == 404:
@@ -272,6 +309,7 @@ class YouTubeChat:
             if video_id is None:
                 self._status(ConnectionState.DEGRADED, f"{self.name} is not live. Checking again in 60s.")
                 return OFFLINE_POLL_SECONDS
+        watch_page = html  # A channel's /live page is the live video's watch page: it has the counts.
         status, html = await self._get(f"{BASE}/live_chat?is_popout=1&v={video_id}")
         found = chat_page(html) if status == 200 else None
         if found is None:
@@ -279,26 +317,67 @@ class YouTubeChat:
             return OFFLINE_POLL_SECONDS
         continuation, version = found
         self._status(ConnectionState.CONNECTED, f"Reading chat for {self.name}")
-        backlog = True  # The first response replays recent messages: skip them, so old commands don't rerun.
+        stats = asyncio.create_task(self._watch_stats(video_id, version, watch_page))
+        try:
+            backlog = True  # The first response replays recent messages: skip them, so old commands don't rerun.
+            while not self._stopping:
+                payload = await self._post(
+                    f"{BASE}/youtubei/v1/live_chat/get_live_chat?prettyPrint=false",
+                    {"context": {"client": {"clientName": "WEB", "clientVersion": version, "hl": "en"}},
+                     "continuation": continuation},
+                )
+                chat = ((payload.get("continuationContents") or {}).get("liveChatContinuation")) or {}
+                events = events_from(chat.get("actions") or [], int(self._clock() * 1000))
+                if not backlog:
+                    for event in events:
+                        self._on_event(event)
+                backlog = False
+                following = continuation_from(chat.get("continuations") or [])
+                if following is None:
+                    self._status(ConnectionState.DEGRADED, f"{self.name}'s stream ended. Waiting for the next one.")
+                    return OFFLINE_POLL_SECONDS
+                continuation, wait = following
+                await self._wait(wait)
+            return 0.0
+        finally:
+            stats.cancel()
+            await asyncio.gather(stats, return_exceptions=True)
+
+    async def _watch_stats(self, video_id: str, version: str, watch_page: str) -> None:
+        """Viewers, likes and subscribers while the chat is being read. Optional: a failure only leaves the
+        numbers out (or stale), it never disturbs the chat."""
+        seen: dict[str, int] = {}
+
+        def report(text: str) -> None:
+            viewers, likes, subscribers = page_stats(text)
+            if viewers is not None and viewers != seen.get("viewers"):
+                seen["viewers"] = viewers
+                self._on_event(ViewerCount(viewers, SOURCE))
+            changed = {key: value for key, value in (("likes", likes), ("followers", subscribers))
+                       if value is not None and value != seen.get(key)}
+            if changed:
+                seen.update(changed)
+                self._on_event(ChannelStats(SOURCE, **changed))
+
+        first = True
         while not self._stopping:
-            payload = await self._post(
-                f"{BASE}/youtubei/v1/live_chat/get_live_chat?prettyPrint=false",
-                {"context": {"client": {"clientName": "WEB", "clientVersion": version, "hl": "en"}},
-                 "continuation": continuation},
-            )
-            chat = ((payload.get("continuationContents") or {}).get("liveChatContinuation")) or {}
-            events = events_from(chat.get("actions") or [], int(self._clock() * 1000))
-            if not backlog:
-                for event in events:
-                    self._on_event(event)
-            backlog = False
-            following = continuation_from(chat.get("continuations") or [])
-            if following is None:
-                self._status(ConnectionState.DEGRADED, f"{self.name}'s stream ended. Waiting for the next one.")
-                return OFFLINE_POLL_SECONDS
-            continuation, wait = following
-            await self._wait(wait)
-        return 0.0
+            try:
+                if first and not watch_page:  # Connected by video link: its watch page wasn't read yet.
+                    _status, watch_page = await self._get(f"{BASE}/watch?v={video_id}")
+                if first:
+                    report(watch_page)
+                else:
+                    async with self._session.post(
+                        f"{BASE}/youtubei/v1/updated_metadata?prettyPrint=false",
+                        json={"context": {"client": {"clientName": "WEB", "clientVersion": version, "hl": "en"}},
+                              "videoId": video_id},
+                    ) as response:
+                        if response.status == 200:
+                            report(await response.text())
+            except (aiohttp.ClientError, asyncio.TimeoutError, OSError, UnicodeDecodeError) as error:
+                log.info("YouTube viewer count unavailable: %s", error)
+            first = False
+            await asyncio.sleep(STATS_POLL_SECONDS)
 
     async def _get(self, url: str) -> tuple[int, str]:
         async with self._session.get(url) as response:

@@ -120,6 +120,11 @@ class AppActions:
                           tip="Mute text to speech, clear alerts, pause music and rules, switch to your BRB scene")
 
         # Music
+        self.play_pause = make("&Pause Music", theme="media-playback-pause", fallback=SP.SP_MediaPause,
+                               shortcut="Ctrl+Space", tip="Pause or play the song requests")
+        self.previous_song = make("P&revious Song", theme="media-skip-backward", fallback=SP.SP_MediaSkipBackward,
+                                  shortcut="Ctrl+Left",
+                                  tip="Start the song over; again right away, go back to the song before it")
         self.skip = make("S&kip Song", theme="media-skip-forward", fallback=SP.SP_MediaSkipForward, shortcut="Ctrl+Right")
         self.clear_queue = make("&Clear Queue", theme="edit-clear", fallback=SP.SP_DialogResetButton)
         self.stop_playlist = make("Stop &Playlist", theme="media-playback-stop", fallback=SP.SP_MediaStop)
@@ -149,6 +154,11 @@ class AppActions:
         self.panic.triggered.connect(lambda: controller.resume() if controller.panicking else controller.panic())
         controller.panic_changed.connect(self._panic_changed)
         self.skip.triggered.connect(controller.skip_song)
+        self.play_pause.triggered.connect(controller.toggle_music_pause)
+        self.previous_song.triggered.connect(controller.previous_song)
+        controller.playback_changed.connect(self._playback_changed)
+        self._playback: tuple | None = None
+        self._playback_changed(controller.playback_state())
         self.clear_queue.triggered.connect(controller.clear_queue)
         self.stop_playlist.triggered.connect(controller.stop_playlist)
 
@@ -168,6 +178,18 @@ class AppActions:
         self.panic.setText("&Resume" if on else "&Panic")
         self.panic.setToolTip("Undo what the panic button changed" if on else
                               "Mute text to speech, clear alerts, pause music and rules, switch to your BRB scene")
+
+    def _playback_changed(self, state: dict) -> None:
+        """Progress arrives twice a second: touch the actions only when what they show changes."""
+        shown = (bool(state.get("paused")), bool(state.get("panic")),
+                 bool(state.get("current")) or bool(state.get("has_previous")))
+        if shown == self._playback:
+            return
+        self._playback = shown
+        paused, panic, can_go_back = shown
+        self.play_pause.setText("&Play Music" if paused else "&Pause Music")
+        self.play_pause.setEnabled(not panic)  # Panic paused it: Resume starts it again.
+        self.previous_song.setEnabled(can_go_back)
 
     def _busy_changed(self, name: str, busy: bool) -> None:
         if name in ("key", "streamlabs"):

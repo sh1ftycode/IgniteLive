@@ -11,6 +11,9 @@ from ignite_live.core.templates import Texts
 from ignite_live.music.youtube import Track, is_explicit
 
 
+MAX_HISTORY = 25
+
+
 class QueueRejected(Exception):
     """Why a request was refused, worded for the requester. ``key`` is the template (which rule refused it)."""
 
@@ -48,6 +51,7 @@ class SongQueue:
         self.rules = rules or QueueRules()
         self.current: QueueItem | None = None
         self.upcoming: list[QueueItem] = []
+        self.history: list[QueueItem] = []  # Songs that played, oldest first, for the Previous button.
         self.on_change = on_change
         self._ids = itertools.count(1)
 
@@ -89,7 +93,24 @@ class SongQueue:
 
     def advance(self) -> QueueItem | None:
         """Move to the next song (called when the player finishes or skips)."""
+        if self.current is not None:
+            self.history = [*self.history, self.current][-MAX_HISTORY:]
         self.current = self.upcoming.pop(0) if self.upcoming else None
+        self._changed()
+        return self.current
+
+    def previous(self) -> QueueItem | None:
+        """Go back to the song before this one; the one that was playing plays next again.
+
+        Returns None (and changes nothing) when no earlier song is remembered.
+        """
+        if not self.history:
+            return None
+        if self.current is not None:
+            self.upcoming.insert(0, self.current)
+        earlier = self.history.pop()
+        # A new id: the player loads a song when the id changes, and reports on songs by id.
+        self.current = QueueItem(next(self._ids), earlier.track, earlier.requested_by)
         self._changed()
         return self.current
 
@@ -143,6 +164,7 @@ class SongQueue:
         return {
             "current": item(self.current) if self.current else None,
             "upcoming": [item(entry) for entry in self.upcoming],
+            "has_previous": bool(self.history),
         }
 
     def _all(self) -> list[QueueItem]:

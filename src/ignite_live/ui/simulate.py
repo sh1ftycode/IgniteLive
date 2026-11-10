@@ -26,6 +26,7 @@ from ignite_live.core.events import (
     ChatComment,
     ChatFollow,
     ChatGift,
+    ChatJoin,
     ChatLike,
     ChatShare,
     ChatUser,
@@ -85,6 +86,7 @@ class SimulateDialog(QDialog):
         rows = [
             ("Gift", [self.gift, self.gift_count, self.coins], self._gift),
             ("Follow", [], lambda: self._send(ChatFollow(self._user()))),
+            ("Joins (viewer list)", [], lambda: self._send(ChatJoin(self._user()))),
             ("Likes", [self.likes], lambda: self._send(ChatLike(self._user(), self.likes.value()))),
             ("Share", [], lambda: self._send(ChatShare(self._user()))),
             ("Comment", [self.comment], self._comment),

@@ -17,6 +17,11 @@ SIGN_API_KEY = "euler-sign-api-key"
 STREAM_KEY = "stream-key"
 TIKTOK_SESSION = "tiktok-session-id"  # Only for TikTok's text-to-speech voices.
 DISCORD_WEBHOOK = "discord-webhook-url"
+YTMUSIC_COOKIE = "youtube-music-cookie"  # Your own YouTube Music session, for your library's playlists.
+
+# Windows Credential Manager holds about 1,280 characters per entry: longer secrets are stored in parts.
+PART_CHARS = 1000
+MAX_PARTS = 24
 
 
 def backend_name() -> str:
@@ -52,3 +57,32 @@ def forget(name: str) -> None:
             keyring.delete_password(service, name)
         except KeyringError:
             pass
+
+
+def save_long(name: str, value: str) -> bool:
+    """Like save(), for secrets too long for one entry (a browser cookie): ``name`` holds the number of
+    parts, ``name-0``, ``name-1``… hold the text."""
+    parts = [value[at:at + PART_CHARS] for at in range(0, len(value), PART_CHARS)]
+    if not parts or len(parts) > MAX_PARTS:
+        return False
+    forget_long(name)
+    if not all(save(f"{name}-{index}", part) for index, part in enumerate(parts)):
+        forget_long(name)
+        return False
+    return save(name, str(len(parts)))
+
+
+def load_long(name: str) -> str | None:
+    count = load(name)
+    if count is None or not count.isdigit() or not 0 < int(count) <= MAX_PARTS:
+        return None
+    parts = [load(f"{name}-{index}") for index in range(int(count))]
+    return "".join(parts) if all(part is not None for part in parts) else None
+
+
+def forget_long(name: str) -> None:
+    count = load(name)
+    for index in range(int(count) if count and count.isdigit() else 0):
+        if index < MAX_PARTS:
+            forget(f"{name}-{index}")
+    forget(name)

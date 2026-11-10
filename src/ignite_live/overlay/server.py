@@ -115,6 +115,11 @@ class OverlayServer:
         self.on_clients_changed: Callable[[int], None] | None = None
         self.on_toast: Callable[[str], None] | None = None
         self.on_choose_theme: Callable[[str], None] | None = None  # "Use this theme" in the gallery.
+        # The app's own music buttons: where the song is (twice a second), and whether anything can play it.
+        self.on_progress: Callable[[dict], None] | None = None
+        self.on_player_changed: Callable[[bool], None] | None = None
+        self._panic_paused = False  # The music is paused while either is set.
+        self._user_paused = False
         self._sockets: set[web.WebSocketResponse] = set()
         self._previews: set[web.WebSocketResponse] = set()  # Gallery and &demo=1 pages: not counted as overlays.
         self._pages: dict[web.WebSocketResponse, str] = {}  # Which overlay each socket is (for the checklist).
@@ -229,8 +234,32 @@ class OverlayServer:
 
     async def set_panic(self, quiet_alerts: bool, paused: bool) -> None:
         """Panic mode: the Alerts overlay drops what's showing and waiting; the music pauses."""
-        self._state = {**self._state, "quiet": quiet_alerts, "paused": paused}
+        self._panic_paused = paused
+        self._state = {**self._state, "quiet": quiet_alerts, "paused": paused or self._user_paused}
         await self._broadcast(self._state)
+
+    async def set_paused(self, paused: bool) -> None:
+        """The Pause button. Kept apart from panic's pause, so Resume doesn't start music you paused."""
+        self._user_paused = paused
+        self._state = {**self._state, "paused": paused or self._panic_paused}
+        await self._broadcast(self._state)
+
+    @property
+    def user_paused(self) -> bool:
+        return self._user_paused
+
+    @property
+    def has_player(self) -> bool:
+        """Whether a Now Playing overlay is open to play the music."""
+        return self._audio is not None
+
+    @property
+    def progress(self) -> dict | None:
+        return self._progress
+
+    async def seek(self, item_id: int, position: float) -> None:
+        """Jump within the current song (0: start it over). Only the copy that plays acts on it."""
+        await self._broadcast({"type": "seek", "item_id": item_id, "position": max(0.0, float(position))})
 
     async def set_volume(self, volume: int) -> None:
         self._state = {**self._state, "volume": max(0, min(100, volume))}
@@ -347,6 +376,8 @@ class OverlayServer:
                 elif data.get("type") == "progress":
                     # From the copy that plays; other Now Playing copies and the visualizer follow it.
                     self._progress = _progress(data)
+                    if self.on_progress:
+                        self.on_progress(self._progress)
                     await self._broadcast(self._progress, skip=ws)
         finally:
             self._sockets.discard(ws)
@@ -365,7 +396,10 @@ class OverlayServer:
         leader = self._players[0] if self._players else None
         if leader is self._audio:
             return
+        had_player = self._audio is not None
         self._audio = leader
+        if (leader is not None) != had_player and self.on_player_changed:
+            self.on_player_changed(leader is not None)
         if leader is not None:
             try:
                 await leader.send_json({"type": "role", "audio": True})
