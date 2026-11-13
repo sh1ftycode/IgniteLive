@@ -9,6 +9,11 @@ dashboard sends back, but only the ones listed in COMMANDS.
 What it sends: live state, connection states, OBS health and scene names, the
 music queue, chat lines (the same sanitised form the chat overlay gets), and
 notices. Never stream keys, tokens, passwords, or file paths.
+
+Music: while no Now Playing overlay is open, a dashboard tab that allows it
+plays the songs instead ("music" says whether one is needed). That tab reports
+back like the overlay does: "player" messages (ended, error, playing,
+progress), checked by PLAYER_EVENTS.
 """
 
 from __future__ import annotations
@@ -23,6 +28,7 @@ import aiohttp
 
 from ignite_live import __version__
 from ignite_live.core.events import ConnectionState
+from ignite_live.core.http import tls_session
 
 log = logging.getLogger(__name__)
 
@@ -42,9 +48,30 @@ COMMANDS: dict[str, tuple[str, ...]] = {
     "mute_tts": ("muted",),
 }
 # The latest of each is kept and re-sent after a reconnect; chat lines and notices are sent once, as they happen.
-STATE_KINDS = ("live", "panic", "status", "studio", "queue", "playlist", "tts_muted")
+STATE_KINDS = ("live", "panic", "status", "studio", "queue", "playlist", "tts_muted", "music")
+# What a dashboard tab that plays the music may report.
+PLAYER_EVENTS = ("ended", "error", "playing", "progress")
 MAX_PENDING = 200  # Chat lines and notices held while disconnected (the oldest go first).
 MAX_MESSAGE = 64 * 1024
+
+
+def player_report(data: object) -> dict | None:
+    """A dashboard player's report, reduced to well-formed fields (None: not a report)."""
+    if not isinstance(data, dict) or data.get("event") not in PLAYER_EVENTS:
+        return None
+    item = data.get("item_id")
+    if not isinstance(item, int) or isinstance(item, bool):
+        return None
+    report: dict = {"type": data["event"], "item_id": item}
+    if data["event"] == "error":
+        code = data.get("code")
+        report["code"] = code if isinstance(code, int) and not isinstance(code, bool) else 0
+    if data["event"] == "progress":
+        for key in ("position", "duration"):
+            value = data.get(key)
+            report[key] = float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0 else 0.0
+        report["playing"] = data.get("playing") is True
+    return report
 
 
 def relay_url(base_url: str) -> str:
@@ -61,10 +88,11 @@ class RelayClient:
         device_token: str,
         on_command: Callable[[str, dict], Awaitable[str]],
         on_status: Callable[[ConnectionState, str], None],
-        session_factory: Callable[[], aiohttp.ClientSession] = aiohttp.ClientSession,
+        session_factory: Callable[[], aiohttp.ClientSession] = tls_session,
+        on_player: Callable[[dict], Awaitable[None]] | None = None,
     ) -> None:
         """``on_command(name, args)`` runs an allowed command and returns a short result for the dashboard
-        (raise ValueError for a refusal)."""
+        (raise ValueError for a refusal). ``on_player(report)`` gets a dashboard player's report (player_report)."""
         from ignite_live.integrations.backend import server_url_allowed
 
         if not server_url_allowed(base_url):
@@ -74,6 +102,7 @@ class RelayClient:
         self._on_command = on_command
         self._on_status = on_status
         self._session_factory = session_factory
+        self._on_player = on_player
         self._state: dict[str, object] = {}
         self._pending: list[dict] = []
         self._ws: aiohttp.ClientWebSocketResponse | None = None
@@ -145,6 +174,13 @@ class RelayClient:
                 continue
             if isinstance(data, dict) and data.get("type") == "command":
                 await self._command(data)
+            elif isinstance(data, dict) and data.get("type") == "player" and self._on_player is not None:
+                report = player_report(data)
+                if report is not None:
+                    try:
+                        await self._on_player(report)
+                    except Exception:  # noqa: BLE001 - a bad report mustn't drop the connection
+                        log.exception("Remote control: player report failed")
 
     async def _command(self, data: dict) -> None:
         name, request_id = str(data.get("name", "")), data.get("id")

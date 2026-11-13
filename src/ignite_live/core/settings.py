@@ -139,6 +139,8 @@ class Settings:
     remote_control: bool = False  # Check GitHub releases, download updates, and install them on quit (or on request).
     tray_hint_shown: bool = False  # "Still running in the tray" is said once.
     stream_title: str = ""
+    # Experimental: change the title or category while live, by restarting the LIVE with a new key.
+    experimental_relaunch: bool = False
     volume: int = 60
     request_role: str = "everyone"
     skip_role: str = "mods"

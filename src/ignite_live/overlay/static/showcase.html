@@ -68,7 +68,8 @@ ST.on("chat", (m) => {
   (m.badges || []).forEach((b) => who.append(ST.el("span", "badge", b)));
   const value = m.amount ? ` · ${m.amount}` : m.diamonds ? ` · ${m.diamonds} diamonds` : "";
   const text = m.kind === "gift" ? `sent ${m.gift}${m.count !== 1 ? ` ×${m.count}` : ""}${value}`
-    : m.kind === "follow" ? ST.t("overlay.chat_follow", "followed", { platform: m.platform_name }) : m.text;
+    : m.kind === "follow" ? ST.t("overlay.chat_follow", "followed", { platform: m.platform_name })
+    : m.kind === "join" ? ST.t("overlay.chat_join", "joined", { platform: m.platform_name }) : m.text;
   body.append(who, ST.el("div", "text", text));
   line.append(ST.avatar(m.name, ""), body);
   const chat = $("chat");

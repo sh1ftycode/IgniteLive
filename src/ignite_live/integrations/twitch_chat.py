@@ -45,6 +45,7 @@ from ignite_live.core.events import (
     StatusChange,
     ViewerCount,
 )
+from ignite_live.core.http import tls_session
 
 log = logging.getLogger(__name__)
 
@@ -134,7 +135,7 @@ def members_from(line: str) -> list[ChatEvent]:
     """Who's in chat, from the membership lines: 353 (the NAMES list), JOIN and PART."""
     _tags, nick, command, _params, text = parse_line(line)
     if command == "353":
-        return [ChatJoin(user) for user in map(_member, text.split()) if user is not None]
+        return [ChatJoin(user, listed=True) for user in map(_member, text.split()) if user is not None]
     if command in ("JOIN", "PART"):
         user = _member(nick)
         if user is not None:
@@ -266,7 +267,7 @@ class TwitchChat:
 
     async def run(self) -> None:
         attempt = 0
-        async with aiohttp.ClientSession() as session:
+        async with tls_session() as session:
             watcher = asyncio.create_task(self._watch_live(session))
             try:
                 await self._connect_loop(session, attempt)

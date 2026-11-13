@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ignite_live.core.events import ChatComment, ChatEvent, ChatFollow, ChatGift, ChatUser
+from ignite_live.core.events import ChatComment, ChatEvent, ChatFollow, ChatGift, ChatJoin, ChatUser
 from ignite_live.core.images import allowed_image_url
 
 
@@ -31,8 +31,12 @@ def chat_payload(event: ChatEvent) -> dict | None:
             "amount": event.amount[:20],
             "message": event.message[:300],
             "image": event.image_url if allowed_image_url(event.image_url) else "",
+            # A combo tick: the chat overlay floods it and fades it fast; the alerts overlay waits for the total.
+            "streaking": event.streaking,
             **_user(event.user),
         }
     if isinstance(event, ChatFollow):
         return {"kind": "follow", **_user(event.user)}
+    if isinstance(event, ChatJoin) and not event.listed:
+        return {"kind": "join", **_user(event.user)}
     return None

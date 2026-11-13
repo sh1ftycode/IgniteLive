@@ -12,10 +12,13 @@
 <script>
 /*{{COMMON}}*/
 // Options: &max=1..30 lines (default 8), &fade=seconds before a line disappears (default 45, 0 = never),
-// &gifts=0 / &follows=0 to hide those, &platforms=all / 0 for platform badges (see common.js).
+// &eventfade=seconds for gift and "joined" lines, which flood in and fade sooner (default 6, 0 = like &fade),
+// &gifts=0 / &follows=0 / &joins=0 to hide those, &platforms=all / 0 for platform badges (see common.js).
 const max = Math.max(1, Math.min(30, parseInt(ST.params.get("max") || "8", 10)));
 const fade = Math.max(0, parseInt(ST.params.get("fade") || "45", 10));
-const show = { comment: true, gift: ST.params.get("gifts") !== "0", follow: ST.params.get("follows") !== "0" };
+const eventFade = Math.max(0, parseInt(ST.params.get("eventfade") || "6", 10)) || fade;
+const show = { comment: true, gift: ST.params.get("gifts") !== "0", follow: ST.params.get("follows") !== "0",
+               join: ST.params.get("joins") !== "0" };
 const chat = document.getElementById("chat");
 
 function giftValues(m) {
@@ -35,14 +38,18 @@ ST.on("chat", (m) => {
   let text;
   if (m.kind === "gift") text = ST.t("overlay.chat_gift", "sent {gift}{times}{value}", giftValues(m));
   else if (m.kind === "follow") text = ST.t("overlay.chat_follow", "followed", { platform: m.platform_name });
+  else if (m.kind === "join") text = ST.t("overlay.chat_join", "joined", { platform: m.platform_name });
   else text = m.text;
   body.append(who, ST.el("div", "text", text));
   if (m.kind === "gift" && m.message) body.append(ST.el("div", "text", m.message));
   line.append(ST.avatar(m.name, m.avatar), body);
   chat.append(line);
   while (chat.children.length > max) chat.firstElementChild.remove();
-  if (fade) setTimeout(() => { line.classList.add("gone"); setTimeout(() => line.remove(), 700); }, fade * 1000);
+  const seconds = m.kind === "gift" || m.kind === "join" ? eventFade : fade;
+  if (seconds) setTimeout(() => { line.classList.add("gone"); setTimeout(() => line.remove(), 700); }, seconds * 1000);
 });
+
+ST.on("chat_clear", () => chat.replaceChildren()); // Clear All Chats, in the app.
 </script>
 </body>
 </html>

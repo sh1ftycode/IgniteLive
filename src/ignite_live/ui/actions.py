@@ -81,6 +81,9 @@ class AppActions:
         self.disconnect_chat = make("&Disconnect All", theme="network-disconnect", fallback=SP.SP_DialogCancelButton)
         self.simulate = make("&Simulate Events…", theme="system-run", fallback=SP.SP_MediaPlay,
                              tip="Send fake gifts, follows, likes and comments to test your setup without going live")
+        self.clear_chats = make("C&lear All Chats", theme="edit-clear-all", fallback=SP.SP_DialogResetButton,
+                                tip="Empty the chat panel, the pop-out and the chat overlays in OBS (chat on "
+                                    "TikTok, Twitch and YouTube stays)")
         self.popout_chat = make("&Pop Out Chat", theme="window-new", fallback=SP.SP_TitleBarNormalButton,
                                 shortcut="Ctrl+Shift+C", tip="Picture-in-picture chat that stays on top of OBS or your game")
 
@@ -138,6 +141,7 @@ class AppActions:
             lambda: controller.set_obs_streaming(False) if controller.obs_streaming else self.go_live())
         self.refresh_outputs.triggered.connect(controller.refresh_targets)
         self.disconnect_chat.triggered.connect(lambda: controller.disconnect_chat())
+        self.clear_chats.triggered.connect(controller.clear_chats)
         self.skip_tts.triggered.connect(controller.skip_tts)
         self.toggle_record.triggered.connect(controller.toggle_recording)
         self.pause_record.triggered.connect(controller.toggle_record_pause)

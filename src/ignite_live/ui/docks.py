@@ -32,7 +32,7 @@ from ignite_live.controller import SOURCES, Controller
 from ignite_live.core import settings as settings_store
 from ignite_live.core.events import ChatEvent, ConnectionState, LiveStatus, StatusChange, ViewerCount
 from ignite_live.ui.actions import AppActions
-from ignite_live.ui.chat_feed import ChatFeed
+from ignite_live.ui.chat_feed import ChatFeed, fades
 from ignite_live.ui.live_widgets import AudienceList, MusicBar, StatsBar
 from ignite_live.ui.pages.music import read_only_table
 from ignite_live.ui.icons import glyph
@@ -40,7 +40,7 @@ from ignite_live.ui.theme import RADIUS, STATE_TEXT, colors, state_color, theme_
 
 HISTORY = 200  # Chat events replayed into a newly opened pop-out.
 MAX_ACTIVITY = 500
-FILTERS = (("comments", "Comments"), ("gifts", "Gifts"), ("follows", "Follows"))
+FILTERS = (("comments", "Comments"), ("gifts", "Gifts"), ("follows", "Follows"), ("joins", "Joins"))
 NOT_CHAT_LINES = (ViewerCount, LiveStatus)  # Shown in the stats row, not in the feed.
 
 
@@ -101,7 +101,7 @@ class ChatPanel(QWidget):
 
         top = QHBoxLayout()
         top.addStretch(1)
-        for action in (actions.connect_chat, actions.disconnect_chat, actions.popout_chat):
+        for action in (actions.connect_chat, actions.disconnect_chat, actions.clear_chats, actions.popout_chat):
             button = QToolButton()
             button.setDefaultAction(action)
             top.addWidget(button)
@@ -128,6 +128,7 @@ class ChatPanel(QWidget):
 
         actions.connect_chat.triggered.connect(self._connect_all)
         controller.chat_event.connect(self._event)
+        controller.chats_cleared.connect(self._cleared)
         controller.status_changed.connect(self._status)
         controller.settings_changed.connect(self._settings)
         controller.audience_changed.connect(self._audience)
@@ -163,8 +164,13 @@ class ChatPanel(QWidget):
     def _event(self, event: ChatEvent) -> None:
         if isinstance(event, NOT_CHAT_LINES):
             return
-        self.history.append(event)
+        if not fades(event):  # A pop-out opened later shouldn't bring back rows that have faded away.
+            self.history.append(event)
         self.feed.add_event(event)
+
+    def _cleared(self) -> None:
+        self.history.clear()
+        self.feed.clear()
 
     def _status(self, change: StatusChange) -> None:
         if change.source not in self.names:
@@ -261,6 +267,7 @@ class ChatPopout(QWidget):
             self.feed.add_event(event)
         self.feed.jump_to_latest()
         controller.chat_event.connect(self._event)
+        controller.chats_cleared.connect(self._cleared)  # Bound methods: gone with the pop-out.
         controller.audience_changed.connect(self._audience)
         self._audience(controller.audience_snapshot)
         if s.chat_popout_geometry:
@@ -288,6 +295,7 @@ class ChatPopout(QWidget):
             action.setCheckable(True)
             action.setChecked(self.feed.filters[kind])
             action.toggled.connect(lambda shown, k=kind: self.feed.set_filter(k, shown))
+        menu.addAction("Clear All Chats", self.controller.clear_chats)
         menu.addSeparator()
         for text, widget in (("Viewer and follower counts", self.stats), ("Music buttons", self.music)):
             action = menu.addAction(text)
@@ -375,6 +383,9 @@ class ChatPopout(QWidget):
     def _event(self, event: ChatEvent) -> None:
         if not isinstance(event, NOT_CHAT_LINES):
             self.feed.add_event(event)
+
+    def _cleared(self) -> None:
+        self.feed.clear()
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt override
         s = self.controller.settings

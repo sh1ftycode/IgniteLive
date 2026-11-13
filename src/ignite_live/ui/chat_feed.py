@@ -5,9 +5,10 @@ Used by the Chat panel and the pop-out chat window.
 
 from __future__ import annotations
 
+import time
 import zlib
 
-from PySide6.QtCore import QModelIndex, QObject, QPointF, QRect, QRectF, QSize, Qt, QUrl, Signal
+from PySide6.QtCore import QModelIndex, QObject, QPointF, QRect, QRectF, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QImage, QPainter, QPainterPath, QPalette
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtWidgets import (
@@ -20,7 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from ignite_live.core.images import allowed_image_url
-from ignite_live.core.events import PLATFORMS, ChatComment, ChatEvent, ChatFollow, ChatGift, ChatUser
+from ignite_live.core.events import PLATFORMS, ChatComment, ChatEvent, ChatFollow, ChatGift, ChatJoin, ChatUser
 from ignite_live.ui.theme import RADIUS, colors, tint_color
 
 # Twitch and YouTube names always get a platform pill; TikTok (the default) gets one once the chat is mixed.
@@ -28,6 +29,12 @@ ALWAYS_BADGED = {"twitch", "youtube"}
 GIFT_TINT = 0.09  # Gifts, subs and Super Chats: a faint orange wash on the row.
 EVENT_ROLE = Qt.ItemDataRole.UserRole
 KIND_ROLE = Qt.ItemDataRole.UserRole + 1
+FADE_ROLE = Qt.ItemDataRole.UserRole + 2  # time.monotonic() when a fading row arrived; None: the row stays.
+
+# Gift combo ticks and "joined" rows flood in, then fade away: shown this long, then faded out over FADE_OUT_S.
+SHOWN_S = 6.0
+FADE_OUT_S = 1.0
+FADE_TICK_MS = 50
 
 MAX_IMAGE_BYTES = 512 * 1024
 MAX_CACHED_IMAGES = 800
@@ -41,7 +48,21 @@ def kind_of(event: ChatEvent) -> str | None:
         return "gifts"
     if isinstance(event, ChatFollow):
         return "follows"
+    if isinstance(event, ChatJoin) and not event.listed:
+        return "joins"
     return None
+
+
+def fades(event: ChatEvent) -> bool:
+    """Rows that fade away: a gift combo's ticks and "joined". A combo's total (the last gift) stays."""
+    return isinstance(event, ChatJoin) or (isinstance(event, ChatGift) and event.streaking)
+
+
+def opacity(arrived: float | None, now: float) -> float:
+    """1 while a fading row is shown, then down to 0 over FADE_OUT_S; rows that don't fade stay at 1."""
+    if arrived is None:
+        return 1.0
+    return max(0.0, min(1.0, 1.0 - (now - arrived - SHOWN_S) / FADE_OUT_S))
 
 
 
@@ -188,6 +209,7 @@ class ChatDelegate(QStyledItemDelegate):
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index: QModelIndex) -> None:
         event = index.data(EVENT_ROLE)
         painter.save()
+        painter.setOpacity(opacity(index.data(FADE_ROLE), time.monotonic()))
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         rect = option.rect
@@ -196,7 +218,9 @@ class ChatDelegate(QStyledItemDelegate):
         elif isinstance(event, ChatGift):
             self._paint_gift(painter, rect, event)
         elif isinstance(event, ChatFollow):
-            self._paint_follow(painter, rect, event)
+            self._paint_follow(painter, rect, event.user, "followed the host")
+        elif isinstance(event, ChatJoin):
+            self._paint_follow(painter, rect, event.user, "joined")
         painter.restore()
 
     def _paint_avatar(self, painter: QPainter, x: float, y: float, size: float, user: ChatUser) -> None:
@@ -314,22 +338,23 @@ class ChatDelegate(QStyledItemDelegate):
         self._draw_text(painter, QPointF(tx, top - 1 + name_h + 2 + metrics.ascent()),
                         metrics.elidedText(detail, Qt.TextElideMode.ElideRight, int(right - tx)))
 
-    def _paint_follow(self, painter: QPainter, rect: QRect, event: ChatFollow) -> None:
+    def _paint_follow(self, painter: QPainter, rect: QRect, user: ChatUser, says: str) -> None:
+        """A one-line row: small avatar, name, and what they did ("followed the host", "joined")."""
         self._plate(painter, rect)
         size = round(22 * self.scale)
         x = rect.left() + self.pad + (self.avatar - size) / 2
         top = rect.center().y() - size / 2
-        self._paint_avatar(painter, x, top, size, event.user)
+        self._paint_avatar(painter, x, top, size, user)
         tx = rect.left() + self.pad + self.avatar + self.pad
         metrics = QFontMetrics(self.name_font)
         baseline = rect.center().y() - metrics.height() / 2 + metrics.ascent()
-        name = metrics.elidedText(event.user.nickname or event.user.unique_id, Qt.TextElideMode.ElideRight, 200)
+        name = metrics.elidedText(user.nickname or user.unique_id, Qt.TextElideMode.ElideRight, 200)
         painter.setFont(self.name_font)
         painter.setPen(self._text())
         self._draw_text(painter, QPointF(tx, baseline), name)
         painter.setFont(self.small_font)
         painter.setPen(self._muted())
-        self._draw_text(painter, QPointF(tx + metrics.horizontalAdvance(name) + 6, baseline), "followed the host")
+        self._draw_text(painter, QPointF(tx + metrics.horizontalAdvance(name) + 6, baseline), says)
 
 
 def make_see_through(view: QListWidget) -> None:
@@ -348,7 +373,7 @@ class ChatFeed(QListWidget):
     def __init__(self, compact: bool = False, max_rows: int = 1000, see_through: bool = False) -> None:
         super().__init__()
         self.max_rows = max_rows
-        self.filters = {"comments": True, "gifts": True, "follows": True}
+        self.filters = {"comments": True, "gifts": True, "follows": True, "joins": True}
         self.platforms: set[str] = set()  # Seen so far; with more than one, every name gets a platform pill.
         self.setObjectName("chatFeed")
         self.setItemDelegate(ChatDelegate(self, compact))
@@ -372,6 +397,9 @@ class ChatFeed(QListWidget):
         self.new_pill.hide()
         self.verticalScrollBar().valueChanged.connect(self._scrolled)
         image_cache().loaded.connect(self._image_loaded)  # A method: disconnected with the feed (the pop-out closes).
+        self._fading: list[QListWidgetItem] = []  # Rows that fade away, oldest first.
+        self._fade_timer = QTimer(self, interval=FADE_TICK_MS)
+        self._fade_timer.timeout.connect(self._fade_step)
 
     def _image_loaded(self, _url: str) -> None:
         self.viewport().update()
@@ -388,10 +416,16 @@ class ChatFeed(QListWidget):
         item = QListWidgetItem()
         item.setData(EVENT_ROLE, event)
         item.setData(KIND_ROLE, kind)
+        if fades(event):
+            item.setData(FADE_ROLE, time.monotonic())
+            self._fading.append(item)
+            self._fade_timer.start()
         self.addItem(item)
         item.setHidden(not self.filters[kind])
         while self.count() > self.max_rows:
-            self.takeItem(0)
+            gone = self.takeItem(0)
+            if gone is not None and gone.data(FADE_ROLE) is not None:
+                self._fading.remove(gone)
         if following:
             self.scrollToBottom()
         elif not item.isHidden():
@@ -411,8 +445,23 @@ class ChatFeed(QListWidget):
 
     def clear(self) -> None:
         """Remove every row and hide the new-messages pill."""
+        self._fading.clear()
+        self._fade_timer.stop()
         super().clear()
         self.jump_to_latest()
+
+    def _fade_step(self, now: float | None = None) -> None:
+        """Repaint rows that are fading out; take out the ones that have faded."""
+        now = time.monotonic() if now is None else now
+        following = self._at_bottom()
+        while self._fading and opacity(self._fading[0].data(FADE_ROLE), now) <= 0:
+            self.takeItem(self.row(self._fading.pop(0)))
+        if any(opacity(item.data(FADE_ROLE), now) < 1 for item in self._fading):
+            self.viewport().update()
+        if not self._fading:
+            self._fade_timer.stop()
+        if following:
+            self.scrollToBottom()
 
     def _at_bottom(self) -> bool:
         bar = self.verticalScrollBar()

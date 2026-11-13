@@ -135,6 +135,7 @@ TEMPLATES: tuple[Template, ...] = (
     Template("overlay.chat_gift", "Overlays", "Chat: gift line", "sent {gift}{times}{value}",
              ("gift", "count", "times", "value", "amount", "message", "platform")),
     Template("overlay.chat_follow", "Overlays", "Chat: follow line", "followed", ("platform",)),
+    Template("overlay.chat_join", "Overlays", "Chat: joined line", "joined", ("platform",)),
     Template("overlay.alert_gift_title", "Overlays", "Alert: gift heading", "New gift", ("platform",)),
     Template("overlay.alert_gift_text", "Overlays", "Alert: gift text", "sent {gift}{value}",
              ("gift", "count", "times", "value", "amount", "message", "platform")),

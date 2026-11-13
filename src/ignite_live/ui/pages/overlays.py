@@ -40,7 +40,7 @@ DESCRIPTIONS = {
         "so they're animated rather than audio-reactive. For bars that follow the real audio, add an OBS "
         "audio-visualizer plugin to the Now Playing overlay's audio."
     ),
-    "chat": "Chat from TikTok, Twitch and YouTube on stream: comments, gifts, and follows. Lines fade out after a while.",
+    "chat": "Chat from TikTok, Twitch and YouTube on stream: comments, gifts, follows and joins. Lines fade out after a while.",
     "alerts": (
         "A pop-up for each gift and new follower, one at a time, plus the alerts and sounds of your action rules "
         "(Actions tab). In OBS, tick <b>Control audio via OBS</b> so the sounds reach your stream."
@@ -64,8 +64,10 @@ OPTIONS = {
     "chat": [
         ("max=12", "lines on screen (1–30, default 8)"),
         ("fade=0", "seconds before a line disappears; 0 keeps them (default 45)"),
+        ("eventfade=10", "seconds for gift and joined lines, which flood in and fade sooner (default 6)"),
         ("gifts=0", "hide gifts"),
         ("follows=0", "hide follows"),
+        ("joins=0", "hide “joined” lines"),
         ("platforms=all", "platform badge on every line (default: Twitch and YouTube only); 0 hides them"),
     ],
     "alerts": [

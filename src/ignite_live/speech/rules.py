@@ -74,7 +74,7 @@ class TtsRules:
                 return None
             text = self.texts.format("tts.comment", message=message, **values)
         elif isinstance(event, ChatGift):
-            if not s.tts_gifts:
+            if not s.tts_gifts or event.streaking:  # A combo is read once, at its total.
                 return None
             message = clean(event.message, s.tts_skip_links)
             if message and self.moderation.says_blocked(message, "tts"):

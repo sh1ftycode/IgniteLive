@@ -24,6 +24,7 @@ from typing import Callable
 import aiohttp
 
 from ignite_live.core.events import ChatComment, ChatEvent, ChatFollow, ChatGift, ChatUser, ConnectionState, StatusChange
+from ignite_live.core.http import tls_session
 from ignite_live.core.templates import Texts
 
 log = logging.getLogger(__name__)
@@ -198,7 +199,7 @@ class DiscordBridge:
 
     async def _post(self, content: str, attempts: int = 4) -> bool:
         if self._session is None:
-            self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15))
+            self._session = tls_session(timeout=aiohttp.ClientTimeout(total=15))
         payload = {
             "content": content,
             # Discord refuses webhook names containing "discord"; fall back rather than fail every post.

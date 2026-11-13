@@ -504,6 +504,13 @@ class PreferencesDialog(QDialog):
         form.addRow(note("Checks Ignite's GitHub releases every few hours and downloads a new version in the "
                          "background. It installs when you quit Ignite, or right away from the banner, never in "
                          "the middle of a stream. Help → Check for Updates checks now."))
+        self.experimental_relaunch = QCheckBox("Change the TikTok title and category while live")
+        self.experimental_relaunch.setChecked(s.experimental_relaunch)
+        form.addRow("&Experimental:", self.experimental_relaunch)
+        form.addRow(note("Adds Update While Live to the Stream tab. TikTok can't change a LIVE that's running, so "
+                         "Ignite gets a new Streamlabs key with the new title and category, puts it on your OBS "
+                         "output and restarts the LIVE. Viewers see it end and a new one start, and some may "
+                         "not follow. Uses Streamlabs' private API: it may stop working without notice."))
 
         self.message = QLabel("")
         self.message.setWordWrap(True)
@@ -871,6 +878,7 @@ class PreferencesDialog(QDialog):
             ui_theme=self.ui_theme.currentData(),
             close_to_tray=self.close_to_tray.isChecked(),
             auto_update=self.auto_update.isChecked(),
+            experimental_relaunch=self.experimental_relaunch.isChecked(),
             overlay_theme=self.overlay_theme.currentData(),
             overlay_accent=self.overlay_accent.value,
             overlay_accent_2=self.overlay_accent_2.value,
