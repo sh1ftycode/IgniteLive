@@ -7,6 +7,7 @@ or leaderboards.
 
 from __future__ import annotations
 
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -85,8 +86,9 @@ class SimulateDialog(QDialog):
         self.viewers = self._spin(25, 0, 1_000_000, "", " viewers")
         rows = [
             ("Gift", [self.gift, self.gift_count, self.coins], self._gift),
+            ("Gift combo", [], self._combo),
             ("Follow", [], lambda: self._send(ChatFollow(self._user()))),
-            ("Joins (viewer list)", [], lambda: self._send(ChatJoin(self._user()))),
+            ("Joins", [], lambda: self._send(ChatJoin(self._user()))),
             ("Likes", [self.likes], lambda: self._send(ChatLike(self._user(), self.likes.value()))),
             ("Share", [], lambda: self._send(ChatShare(self._user()))),
             ("Comment", [self.comment], self._comment),
@@ -126,6 +128,15 @@ class SimulateDialog(QDialog):
     def _gift(self) -> None:
         self._send(ChatGift(self._user(), self.gift.text().strip()[:60] or "Rose", self.gift_count.value(),
                             diamonds=self.coins.value()))
+
+    def _combo(self) -> None:
+        """A TikTok combo of the gift above: a tick per gift (they flood chat), then the total, which counts."""
+        user, name = self._user(), self.gift.text().strip()[:60] or "Rose"
+        total, coins = self.gift_count.value(), self.coins.value()
+        for count in range(1, total):
+            QTimer.singleShot(150 * count, self, lambda c=count: self._send(
+                ChatGift(user, name, c, diamonds=coins, streaking=True)))
+        QTimer.singleShot(150 * total, self, lambda: self._send(ChatGift(user, name, total, diamonds=coins)))
 
     def _comment(self) -> None:
         if self.comment.text().strip():

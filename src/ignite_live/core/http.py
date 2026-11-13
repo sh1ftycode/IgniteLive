@@ -10,7 +10,10 @@ import socket
 import ssl
 import urllib.error
 import urllib.request
-from typing import Callable
+from typing import TYPE_CHECKING, Any, Callable
+
+if TYPE_CHECKING:
+    import aiohttp
 
 Transport = Callable[[str, str, dict[str, str], bytes | None], tuple[int, bytes]]
 
@@ -40,6 +43,17 @@ def tls_context() -> ssl.SSLContext:
             pass  # The system store alone, as before.
         _tls = context
     return _tls
+
+
+def tls_session(**kwargs: Any) -> aiohttp.ClientSession:
+    """An aiohttp session that trusts what ``tls_context()`` trusts. Create it inside a running event loop.
+
+    aiohttp's own default trusts only the system store, so under Wine every chat connection failed
+    with CERTIFICATE_VERIFY_FAILED while TikTokLive's httpx requests (which bundle certifi) went through.
+    """
+    import aiohttp
+
+    return aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=tls_context()), **kwargs)
 
 
 def reason(error: BaseException) -> str:

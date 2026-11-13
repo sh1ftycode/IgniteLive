@@ -117,6 +117,7 @@ OBS_RETRY_SECONDS = 5.0
 HEALTH_POLL_SECONDS = 2.0
 # Plugin outputs send no events, so their live state is polled.
 TARGET_POLL_SECONDS = 5.0
+RELAUNCH_WAIT_SECONDS = 20.0  # relaunch_live: how long OBS gets to stop, and then to start, the output.
 HOST = ChatUser("host", "Host", is_host=True)
 SIMULATED_USER = ChatUser("test-viewer", "Test viewer", is_follower=True)
 TEST_SHOW_SECONDS = 6.0  # How long a test result stays on the overlays.
@@ -230,6 +231,7 @@ def overlay_style_of(s: Settings) -> dict:
 class Controller(QObject):
     status_changed = Signal(object)  # StatusChange
     chat_event = Signal(object)  # ChatEvent
+    chats_cleared = Signal()  # Clear All Chats: every chat panel empties.
     queue_changed = Signal(dict)  # SongQueue.snapshot()
     notice = Signal(str, str)  # level ("info" | "error"), text
     key_changed = Signal(object)  # CachedKey | None
@@ -293,6 +295,9 @@ class Controller(QObject):
         self._provider: StreamlabsExperimentalProvider | None = None
         self._obs: ObsClient | None = None
         self.targets: list[StreamTarget] = [obs_targets.MAIN]
+        # Restarting the LIVE for a new title or category: the output's stop and start are one stream, not two.
+        self._relaunching = False
+        self._relaunch_sleep = asyncio.sleep  # Tests make the waits instant.
         self.studio = Studio()
         self._health = HealthMonitor(self.settings.obs_warn_dropped_pct)
         self._started_with_stream: set[str] = set()  # Outputs our automations started ("record", "replay").
@@ -363,6 +368,8 @@ class Controller(QObject):
         self.playlist_info: dict | None = None
         self.music.on_playlist_change = self._playlist_info_changed
         self.overlay.on_clients_changed = self._overlay_clients_changed
+        # Without a Now Playing overlay, a web dashboard tab can play the music (integrations/relay.py).
+        self.overlay.on_music_changed = lambda state: self._relay_publish("music", state)
         self.overlay.on_toast = lambda text: self.notice.emit("info", text)
         self.overlay.on_choose_theme = lambda theme: self.runtime.to_ui(self.set_overlay_theme, theme)
         self.overlay.on_progress = lambda _progress: self._playback_changed()
@@ -638,8 +645,16 @@ class Controller(QObject):
             await asyncio.wait([task], timeout=2)
 
     def _on_chat_event(self, event: ChatEvent) -> None:
-        if isinstance(event, (ChatJoin, ChatLeave, ChannelStats)):
+        if isinstance(event, ChatJoin):
+            self._audience_event(event)
+            if not event.listed:  # An arrival: a "joined" line in chat. Not counted, not for rules or Discord.
+                self._show_line(event, discord=False)
+            return
+        if isinstance(event, (ChatLeave, ChannelStats)):
             self._audience_event(event)  # Only the viewer list and the stats row: not chat, rules, or reports.
+            return
+        if isinstance(event, ChatGift) and event.streaking:
+            self._show_line(event, discord=False)  # A combo tick floods chat; the combo's last gift counts.
             return
         if isinstance(event, ViewerCount):
             self._audience_event(ChannelStats(event.platform, viewers=event.count))
@@ -686,19 +701,35 @@ class Controller(QObject):
                 self._spawn_task(self._run_actions(fired))
         if isinstance(event, (ChatLike, ChatShare)):
             return  # Not chat lines (likes arrive several a second): only action rules use them.
+        self._show_line(event)
+        if isinstance(event, ChatComment):
+            task = asyncio.create_task(self.music.handle_comment(event))
+            self._tasks.add(task)
+            task.add_done_callback(self._task_done)
+
+    def _show_line(self, event: ChatEvent, discord: bool = True) -> None:
+        """A chat line: the chat panels (and text to speech), the chat overlays, and Discord."""
         self.chat_event.emit(event)
         shown = self.moderation.shown(event, "overlay")
         payload = chat_payload(shown) if shown is not None else None
         if payload is not None:
             self._spawn_task(self.overlay.push_chat(payload))
-        if self._discord is not None:
+        if discord and self._discord is not None:
             shown = self.moderation.shown(event, "discord")
             if shown is not None:
                 self._discord.push(shown)
-        if isinstance(event, ChatComment):
-            task = asyncio.create_task(self.music.handle_comment(event))
-            self._tasks.add(task)
-            task.add_done_callback(self._task_done)
+
+    def clear_chats(self) -> None:
+        """Clear All Chats: the chat panel, the pop-out and the chat overlays in OBS.
+
+        Only what Ignite shows: chat on TikTok, Twitch and YouTube themselves stays (apps can't delete it).
+        """
+        self.chats_cleared.emit()
+
+        async def clear() -> None:
+            await self.overlay.clear_chat()
+
+        self.runtime.submit(clear(), on_error=self._error)
 
     def _other_command(self, command: Command) -> None:
         """Commands that aren't about music (runs on the loop thread)."""
@@ -1825,6 +1856,8 @@ class Controller(QObject):
             self._set_studio(replace(studio, virtualcam=bool(data.get("outputActive"))))
 
     def _set_streaming(self, active: bool) -> None:
+        if self._relaunching:
+            return  # relaunch_live: still the same stream (goals, report, record-while-live carry on).
         if active != self.obs_streaming:
             if active:  # A new stream: like totals, viewer milestones and goals start over.
                 self.action_engine.reset()
@@ -2212,6 +2245,83 @@ class Controller(QObject):
         self.active_key = key
         self.key_changed.emit(key)
 
+    # Experimental: a new title or category while live.
+
+    def relaunch_live(self, title: str, category_id: str, audience: str = "0") -> None:
+        """Change the TikTok title or category mid-stream (Preferences → Advanced; experimental).
+
+        Streamlabs can't edit a LIVE that's running, so this gets a new key with the new title and category,
+        stops the chosen OBS output, ends the old LIVE, puts the new key on the output and starts it again.
+        Viewers see the LIVE end and a new one begin. In Ignite it stays one stream: goals, points,
+        leaderboards, the stream report and record-while-live carry on.
+        """
+        if not self.settings.experimental_relaunch:
+            self.notice.emit("error", "Turn on “Change title and category while live” in Preferences → Advanced first.")
+            return
+        provider = self._provider
+        if provider is None:
+            self.notice.emit("error", "Sign in to Streamlabs first: a new title or category needs a new key from it.")
+            return
+        if self._relaunching:
+            self.notice.emit("error", "Already restarting the LIVE…")
+            return
+        if title.strip() and title.strip() != self.settings.stream_title:
+            self.save_settings(replace(self.settings, stream_title=title.strip()))
+        old = self.active_key
+
+        async def relaunch() -> str:
+            obs, target = self._require_obs(), self._require_target()
+            if not target.can_set_key or target.kind == "multistream":
+                raise ObsError(f"Ignite can't change the key of “{target.label}”. Pick the main stream or a "
+                               "Vertical Canvas output on the Stream tab.")
+            if not await obs_targets.is_streaming(obs, target):
+                raise ObsError(f"{target.label} isn't live. Before going live, Generate New Key sets the title "
+                               "and category.")
+            # The new key first: if Streamlabs refuses, the LIVE carries on untouched.
+            fresh = await asyncio.to_thread(
+                lambda: self._key_cache().store_key(provider.generate(title, category_id, audience)))
+            self._key_loaded(fresh)
+            self.notice.emit("info", f"New key ready. Restarting the LIVE on {target.label}…")
+            self._relaunching = True
+            try:
+                await obs_targets.set_streaming(obs, target, False, self._has_multistream)
+                await self._wait_streaming(obs, target, False)  # Failing here, the old LIVE is still on.
+                try:
+                    old_session = old.credentials.session_id if old else None
+                    if old_session and old_session != fresh.credentials.session_id:
+                        try:
+                            await asyncio.to_thread(provider.end, old_session)
+                        except ProviderError as error:  # The new LIVE matters more than tidying up the old one.
+                            log.warning("Could not end the old LIVE session: %s", error)
+                    await obs_targets.apply_key(obs, target, fresh.credentials.server, fresh.credentials.key)
+                    await obs_targets.set_streaming(obs, target, True, self._has_multistream)
+                    await self._wait_streaming(obs, target, True)
+                except Exception as error:
+                    raise ObsError(f"The LIVE stopped but didn't start again ({friendly(error)}). The new key is "
+                                   "saved: press Send to OBS, then Start Streaming.") from error
+            finally:
+                self._relaunching = False
+                if self._obs is not None:
+                    await self._refresh_streaming(self._obs)  # If it didn't come back, the stream did end.
+                else:
+                    self._set_streaming(False)
+            return target.label
+
+        self.runtime.submit(
+            relaunch(), lambda label: self.notice.emit("info", f"Back LIVE on {label} with the new title and category."),
+            self._error,
+        )
+
+    async def _wait_streaming(self, obs: ObsClient, target: StreamTarget, live: bool,
+                              timeout: float = RELAUNCH_WAIT_SECONDS) -> None:
+        """Until the output is (or isn't) streaming; OBS takes a moment to stop and connect."""
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while await obs_targets.is_streaming(obs, target) != live:
+            if loop.time() >= deadline:
+                raise ObsError(f"{target.label} didn't {'start' if live else 'stop'} within {timeout:.0f} seconds.")
+            await self._relaunch_sleep(0.5)
+
     # Backend.
 
     # Remote control (the web dashboard on your Ignite server). The app connects out; see integrations/relay.py.
@@ -2239,7 +2349,8 @@ class Controller(QObject):
                 self._status("remote", state, detail)
 
         try:
-            relay = RelayClient(self.settings.backend_url, token, self._remote_command, on_status)
+            relay = RelayClient(self.settings.backend_url, token, self._remote_command, on_status,
+                                on_player=self._remote_player)
         except ValueError as error:
             self._status("remote", ConnectionState.ERROR, str(error))
             return
@@ -2256,7 +2367,17 @@ class Controller(QObject):
             "studio": self._studio_payload(self.studio),
             "queue": self.queue_snapshot,
             "playlist": self.playlist_info,
+            "music": self.overlay.music_state(),
         }
+
+    async def _remote_player(self, report: dict) -> None:
+        """On the event loop: a dashboard tab playing the music reports, like the Now Playing overlay would."""
+        if not self.overlay.music_state()["needed"]:
+            return  # An overlay in OBS plays the music; it's the one that counts.
+        if report["type"] == "progress":
+            await self.overlay.outside_progress(report)
+        else:
+            self.music.on_player_message(report)
 
     def _relay_publish(self, kind: str, data) -> None:
         """From any thread: hand an update to the relay (if remote control is on)."""

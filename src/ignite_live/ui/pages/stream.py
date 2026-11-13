@@ -165,7 +165,11 @@ class StreamPage(QWidget):
         form.addRow("Key:", self.key_state)
         get_key = action_button(actions.get_key)
         set_props(get_key, primary=True)
-        form.addRow(buttons(action_button(actions.new_key, "Generate New Key"), get_key))
+        # Experimental (Preferences → Advanced): a new title or category mid-stream, by restarting the LIVE.
+        self.relaunch = QPushButton("Update While Live…")
+        self.relaunch.setToolTip("Experimental: restart the LIVE with this title and category (a new key)")
+        self.relaunch.clicked.connect(self._relaunch)
+        form.addRow(buttons(self.relaunch, action_button(actions.new_key, "Generate New Key"), get_key))
 
         more = QWidget()
         more_form = QFormLayout(more)
@@ -248,16 +252,35 @@ class StreamPage(QWidget):
         controller.key_changed.connect(self._key)
         controller.targets_changed.connect(self._targets)
         controller.settings_changed.connect(lambda _: self._targets(controller.targets))
+        controller.settings_changed.connect(self._settings)
+        controller.obs_streaming_changed.connect(lambda _live: self._settings(controller.settings))
         controller.studio_changed.connect(self._studio)
         theme_changed().connect(self._restyle)
         self._targets(controller.targets)
         self._account(controller.account)
         self._key(controller.active_key)
+        self._settings(controller.settings)
+
+    def _category_id(self) -> str:
+        index = self.category.findText(self.category.currentText())
+        return str((self.category.itemData(index) if index >= 0 else "") or "")
 
     def get_key(self, force_new: bool) -> None:
-        index = self.category.findText(self.category.currentText())
-        category = self.category.itemData(index) if index >= 0 else ""
-        self.controller.get_stream_key(self.title.text(), str(category or ""), "0", force_new)
+        self.controller.get_stream_key(self.title.text(), self._category_id(), "0", force_new)
+
+    def _settings(self, settings) -> None:
+        self.relaunch.setVisible(settings.experimental_relaunch)
+        self.relaunch.setEnabled(self.controller.obs_streaming)
+
+    def _relaunch(self) -> None:
+        answer = QMessageBox.question(
+            self, "Update While Live (experimental)",
+            f"Restart the LIVE as “{self.title.text().strip()}” in {self.category.currentText() or 'Other'}?\n\n"
+            "Ignite gets a new key, stops your OBS output, ends this LIVE, and starts a new one with the new key. "
+            "Viewers see the LIVE end and a new one begin, and some may not follow. TikTok chat reconnects by itself once the new LIVE is up.",
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            self.controller.relaunch_live(self.title.text(), self._category_id())
 
     def _use_token(self) -> None:
         if self.token.text().strip():

@@ -19,6 +19,8 @@ from urllib.parse import urlencode
 
 import aiohttp
 
+from ignite_live.core.http import tls_session
+
 PROVIDERS = {
     "edge": "Microsoft Edge voices (natural, free, online)",
     "tiktok": "TikTok voices (needs your TikTok session ID)",
@@ -168,7 +170,7 @@ async def tiktok_speech(text: str, voice: str, session: str, http: aiohttp.Clien
     if not session:
         raise VoiceError(TIKTOK_ERRORS[5], fatal=True)
     own = http is None
-    http = http or aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20))
+    http = http or tls_session(timeout=aiohttp.ClientTimeout(total=20))
     audio = bytearray()
     try:
         for part in split_text(text):

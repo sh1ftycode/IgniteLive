@@ -115,10 +115,27 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4  # For CHANGELOG.md.
+
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
+
+      # The release page starts with this version's section of CHANGELOG.md ("## 1.6.1" up to the next
+      # "## "); GitHub's generated notes (merged PRs, compare link) follow it. Outside dist/: not uploaded.
+      - name: Release notes
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v heading="## $version" '
+            $0 == heading || index($0, heading " ") == 1 { found = 1; next }
+            found && /^## / { exit }
+            found { print }
+          ' CHANGELOG.md > "$RUNNER_TEMP/notes.md"
+          if [ ! -s "$RUNNER_TEMP/notes.md" ]; then
+            echo "::warning::CHANGELOG.md has no section for $version; the release only gets GitHub's generated notes."
+          fi
+          cat "$RUNNER_TEMP/notes.md"
 
       # Ignite's updater only installs a file whose SHA-256 matches this list.
       - name: Checksums
@@ -130,4 +147,5 @@ jobs:
       - uses: softprops/action-gh-release@v2
         with:
           files: dist/*
+          body_path: ${{ runner.temp }}/notes.md
           generate_release_notes: true

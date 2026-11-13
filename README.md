@@ -32,6 +32,9 @@ good-looking live setup. Ignite puts all of that into one program.
   [Aitum Vertical Canvas](https://github.com/Aitum/obs-vertical-canvas) and
   [Aitum Multistream](https://github.com/Aitum/obs-aitum-multistream) plugins:
   pick which output gets the TikTok key, and only that one is started.
+  **Update While Live (experimental, Preferences → Advanced):** change the
+  title or category mid-stream. Ignite gets a new key, puts it on that output
+  and restarts the LIVE; viewers see it end and a new one begin.
 - **OBS control:** from the OBS menu and the toolbar: recording (with pause), the
   replay buffer with **Save Clip**, the virtual camera, screenshots, refreshing every
   overlay, and **Add Overlays to OBS…**: tick which overlays (or all of them)
@@ -46,7 +49,10 @@ good-looking live setup. Ignite puts all of that into one program.
   plus **Twitch** and **YouTube** live chat, merged into one feed with a badge
   for each platform. No Twitch or YouTube login or key: both are read the way
   their own websites show chat. Bits, subs, Super Chats and memberships count as
-  gifts. Optionally forward it to a Discord channel through a webhook (File →
+  gifts. Every tick of a TikTok gift combo floods the chat and fades away
+  (the combo counts once, at its total), and "*name* joined" lines do the same.
+  **Chat → Clear All Chats** empties the chat panel, the pop-out and the chat
+  overlay. Optionally forward it to a Discord channel through a webhook (File →
   Preferences → Discord).
 - **Pop-out chat over your game:** Chat → Pop Out Chat (Ctrl+Shift+C) is a
   small always-on-top window with a see-through background: set how solid it
@@ -214,7 +220,8 @@ good-looking live setup. Ignite puts all of that into one program.
 - **Remote control (optional, off by default):** Preferences → Server → *Allow
   remote control from this server's web dashboard*. Ignite connects out to the
   server, so nothing is port-forwarded; the server's dashboard can then start
-  and stop the stream, switch scenes, hit Panic and run the music queue. The
+  and stop the stream, switch scenes, hit Panic and run the music queue. With
+  no Now Playing overlay open, a dashboard tab can play the music itself. The
   status bar shows **Remote** while it's connected.
 
 > Streamlabs key generation uses undocumented routes and may break without

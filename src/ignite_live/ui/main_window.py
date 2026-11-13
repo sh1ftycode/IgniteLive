@@ -237,7 +237,7 @@ class MainWindow(QMainWindow):
             stream.addSeparator() if item is None else stream.addAction(item)
 
         chat = bar.addMenu("&Chat")
-        for item in (a.connect_chat, a.disconnect_chat, None, a.popout_chat, None, a.skip_tts, a.mute_tts):
+        for item in (a.connect_chat, a.disconnect_chat, None, a.clear_chats, a.popout_chat, None, a.skip_tts, a.mute_tts):
             chat.addSeparator() if item is None else chat.addAction(item)
 
         obs = bar.addMenu("&OBS")

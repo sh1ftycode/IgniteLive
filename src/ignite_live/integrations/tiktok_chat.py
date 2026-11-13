@@ -54,6 +54,7 @@ from ignite_live.core.events import (
     StatusChange,
     ViewerCount,
 )
+from ignite_live.core.http import tls_context
 
 log = logging.getLogger(__name__)
 
@@ -146,7 +147,7 @@ class TikTokChat:
         self._on_status = on_status
         if sign_api_key:
             WebDefaults.tiktok_sign_api_key = sign_api_key
-        self._client_factory = client_factory or (lambda uid: TikTokLiveClient(unique_id=uid))
+        self._client_factory = client_factory or (lambda uid: TikTokLiveClient(unique_id=uid, ws_kwargs={"ssl": tls_context()}))
         self._sleep = sleep
         self._clock = clock
         self._connected_at_ms = 0
@@ -282,9 +283,7 @@ class TikTokChat:
             self._on_event(ChatComment(user, text, created or int(self._clock() * 1000)))
 
     async def _handle_gift(self, event: Any) -> None:
-        # Streakable gifts fire on every combo tick; report only the final total.
-        if event.gift.streakable and event.streaking:
-            return
+        # Streakable gifts fire on every combo tick: each one floods the chat, and only the last (the total) counts.
         self._on_event(
             ChatGift(
                 _user(event.user, getattr(event, "user_identity", None)),
@@ -292,6 +291,7 @@ class TikTokChat:
                 int(event.repeat_count or 1),
                 _image_url(getattr(event.gift, "image", None)),
                 int(getattr(event.gift, "diamond_count", 0) or 0),
+                streaking=bool(event.gift.streakable and event.streaking),
             )
         )
 

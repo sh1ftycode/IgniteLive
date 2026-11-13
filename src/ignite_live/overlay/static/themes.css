@@ -438,7 +438,7 @@ ul { list-style: none; }
 /* The highlight is layered over the theme's own surface, so light themes stay readable. */
 .line.gift { border-color: var(--accent-2);
   background: linear-gradient(90deg, color-mix(in srgb, var(--accent-2) 30%, transparent), transparent), var(--surface); }
-.line.follow .text { color: var(--muted); font-size: 0.85em; }
+.line.follow .text, .line.join .text { color: var(--muted); font-size: 0.85em; }
 
 /* Alerts. */
 .alert-wrap { height: 100%; display: grid; place-items: center; padding: var(--gap); }

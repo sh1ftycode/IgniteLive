@@ -33,7 +33,8 @@ ST.on("state", (s) => {
 
 ST.on("chat", (m) => {
   if (quiet) return;
-  if (m.kind === "gift" && (m.diamonds || 0) >= minDiamonds) queue.push(m);
+  // A combo's ticks flood the chat overlay; the alert waits for its last gift, with the total.
+  if (m.kind === "gift" && !m.streaking && (m.diamonds || 0) >= minDiamonds) queue.push(m);
   else if (m.kind === "follow" && showFollows) queue.push(m);
   if (queue.length > 50) queue.shift(); // Don't fall minutes behind during a gift storm.
   next();

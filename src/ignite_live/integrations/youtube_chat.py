@@ -35,6 +35,7 @@ from ignite_live.core.events import (
     StatusChange,
     ViewerCount,
 )
+from ignite_live.core.http import tls_session
 from ignite_live.music.youtube import video_id_from
 
 log = logging.getLogger(__name__)
@@ -274,7 +275,7 @@ class YouTubeChat:
 
     async def run(self) -> None:
         attempt = 0
-        self._session = aiohttp.ClientSession(headers=HEADERS, timeout=aiohttp.ClientTimeout(total=20))
+        self._session = tls_session(headers=HEADERS, timeout=aiohttp.ClientTimeout(total=20))
         try:
             while not self._stopping and not self._failed:
                 self._status(ConnectionState.CONNECTING, f"Looking for {self.name}'s live stream…")

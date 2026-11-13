@@ -113,6 +113,8 @@ class OverlayServer:
         self.on_player_message = on_player_message
         # Optional observers for the app: open overlay count, and every toast shown.
         self.on_clients_changed: Callable[[int], None] | None = None
+        # music_state() changed: a Now Playing overlay opened or closed, or the volume or pause changed.
+        self.on_music_changed: Callable[[dict], None] | None = None
         self.on_toast: Callable[[str], None] | None = None
         self.on_choose_theme: Callable[[str], None] | None = None  # "Use this theme" in the gallery.
         # The app's own music buttons: where the song is (twice a second), and whether anything can play it.
@@ -192,6 +194,10 @@ class OverlayServer:
         """Send a chat line, gift, or follow to the chat and alerts overlays (already sanitised)."""
         await self._broadcast({"type": "chat", **payload})
 
+    async def clear_chat(self) -> None:
+        """Clear All Chats: the chat overlays drop every line they show (alerts already queued still play)."""
+        await self._broadcast({"type": "chat_clear"})
+
     async def alert(self, title: str, text: str, image: str = "", sound: str = "", volume: int = 100) -> None:
         """A custom alert from an action rule, queued with the gift and follow alerts."""
         await self._broadcast({"type": "alert", "title": title[:80], "text": text[:300], "image": image,
@@ -236,12 +242,14 @@ class OverlayServer:
         """Panic mode: the Alerts overlay drops what's showing and waiting; the music pauses."""
         self._panic_paused = paused
         self._state = {**self._state, "quiet": quiet_alerts, "paused": paused or self._user_paused}
+        self._music_changed()
         await self._broadcast(self._state)
 
     async def set_paused(self, paused: bool) -> None:
         """The Pause button. Kept apart from panic's pause, so Resume doesn't start music you paused."""
         self._user_paused = paused
         self._state = {**self._state, "paused": paused or self._panic_paused}
+        self._music_changed()
         await self._broadcast(self._state)
 
     @property
@@ -263,7 +271,19 @@ class OverlayServer:
 
     async def set_volume(self, volume: int) -> None:
         self._state = {**self._state, "volume": max(0, min(100, volume))}
+        self._music_changed()
         await self._broadcast(self._state)
+
+    def music_state(self) -> dict:
+        """For a player outside OBS (the web dashboard): whether one is needed, and how to play."""
+        return {"needed": not self._players, "volume": self._state["volume"], "paused": self._state["paused"]}
+
+    async def outside_progress(self, data: dict) -> None:
+        """Progress from a player outside OBS; ignored while a Now Playing overlay plays the music."""
+        if self._players:
+            return
+        self._progress = _progress(data)
+        await self._broadcast(self._progress)
 
     @property
     def client_count(self) -> int:
@@ -281,6 +301,11 @@ class OverlayServer:
     def _clients_changed(self) -> None:
         if self.on_clients_changed:
             self.on_clients_changed(self.client_count)
+        self._music_changed()
+
+    def _music_changed(self) -> None:
+        if self.on_music_changed:
+            self.on_music_changed(self.music_state())
 
     async def _broadcast(self, message: dict, skip: web.WebSocketResponse | None = None) -> None:
         for ws in list(self._sockets):

@@ -67,6 +67,9 @@ class ChatGift:
     diamonds: int = 0  # Value of one gift; the total is diamonds * count.
     amount: str = ""  # Money shown as text, e.g. a YouTube Super Chat's "$5.00".
     message: str = ""  # Text sent with it (Super Chat, cheer, resub message).
+    # A TikTok combo still going (``count`` so far): shown in chat, but not counted or read aloud. The combo's
+    # last gift comes as a normal ChatGift with the total, and that one counts.
+    streaking: bool = False
 
 
 @dataclass(frozen=True)
@@ -103,9 +106,14 @@ class LiveStatus:
 
 @dataclass(frozen=True)
 class ChatJoin:
-    """A viewer arrived: TikTok's "joined", or a name in Twitch's chat member list. Not a chat line."""
+    """A viewer arrived: TikTok's "joined", or a name in Twitch's chat member list.
+
+    Arrivals are chat lines ("name joined"); ``listed`` ones were already there when chat connected (Twitch's
+    member list), so they only go to the viewer list.
+    """
 
     user: ChatUser
+    listed: bool = False
 
 
 @dataclass(frozen=True)
