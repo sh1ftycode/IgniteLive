@@ -24,7 +24,7 @@ CONFIG_FILE = "bundled_config.json"
 
 
 def main_server(source=None) -> str:
-    """The Ignite server Hosted links uses when none is set in Preferences → Server ("" if this build has none)."""
+    """The Ignite server this build is locked to ("" if it has none: then Preferences → Server sets it)."""
     if os.environ.get("IGNITE_MAIN_SERVER"):
         return os.environ["IGNITE_MAIN_SERVER"].strip().rstrip("/")
     try:

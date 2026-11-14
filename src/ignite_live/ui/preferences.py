@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
 
 from ignite_live.controller import REMOTE_CONTROL, Controller, command_aliases
 from ignite_live.core import keychain
+from ignite_live.core.bundled import main_server
 from ignite_live.core.events import PLATFORMS
 from ignite_live.core.settings import COMMAND_DEFAULTS, ROLES, Settings
 from ignite_live.core.templates import BY_KEY, GROUPS, PLACEHOLDERS, SAMPLE, TEMPLATES, render, unknown_placeholders
@@ -364,6 +365,10 @@ class PreferencesDialog(QDialog):
         self.backend_url = QLineEdit(s.backend_url)
         self.backend_url.setPlaceholderText("https://ignite.example.com")
         form.addRow("Server &URL:", self.backend_url)
+        if main_server():  # This build always uses its main server.
+            self.backend_url.setText(main_server())
+            self.backend_url.setReadOnly(True)
+            self.backend_url.setToolTip("This version of Ignite always uses this server.")
         self.backend_token = _secret(keychain.BACKEND_TOKEN)
         form.addRow("Device &token:", self.backend_token)
         self.remote_control = QCheckBox("Allow remote control")

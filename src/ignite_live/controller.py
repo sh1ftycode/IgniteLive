@@ -275,6 +275,7 @@ class Controller(QObject):
         self.runtime = runtime
         self.settings_path = settings_path or settings_store.default_path()
         self.settings = settings_store.load(self.settings_path)
+        self._move_to_main_server()
         if not self.settings.overlay_token:
             self.settings.overlay_token = secrets.token_urlsafe(18)
             settings_store.save(self.settings, self.settings_path)
@@ -2962,7 +2963,21 @@ class Controller(QObject):
 
     # Settings.
 
+    def _move_to_main_server(self) -> None:
+        """Builds with a main server always use it, whatever an older version or a profile saved."""
+        server = main_server()
+        if not server or self.settings.backend_url == server:
+            return
+        if self.settings.backend_url:  # Signed up with another server: its account and links don't work here.
+            log.info("Moving to the main Ignite server; signing up there again")
+            keychain.forget(keychain.BACKEND_TOKEN)
+            self.settings = replace(self.settings, hosted_widgets=False, hosted_base="", hosted_api="")
+        self.settings = replace(self.settings, backend_url=server)
+        settings_store.save(self.settings, self.settings_path)
+
     def save_settings(self, new: Settings) -> None:
+        if main_server():
+            new = replace(new, backend_url=main_server())  # Locked: see _move_to_main_server.
         old = replace(self.settings)
         self.settings = new
         self._health.warn_dropped_pct = new.obs_warn_dropped_pct
