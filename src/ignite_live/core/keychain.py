@@ -17,6 +17,7 @@ SIGN_API_KEY = "euler-sign-api-key"
 STREAM_KEY = "stream-key"
 TIKTOK_SESSION = "tiktok-session-id"  # Only for TikTok's text-to-speech voices.
 DISCORD_WEBHOOK = "discord-webhook-url"
+HOSTED_CONTROL_KEY = "hosted-control-key"  # Hosted widgets: runs commands through the server's API.
 YTMUSIC_COOKIE = "youtube-music-cookie"  # Your own YouTube Music session, for your library's playlists.
 
 # Windows Credential Manager holds about 1,280 characters per entry: longer secrets are stored in parts.

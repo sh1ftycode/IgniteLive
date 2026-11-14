@@ -146,9 +146,17 @@ class MusicSession:
     # never seeds from its own picks, so it doesn't drift.
 
     def set_radio(self, on: bool, start: str) -> None:
-        self.radio_on, self.radio_start = on, start.strip()
-        if not self.radio_seeds and self._radio_seed is not None and self._radio_seed != self._start_id():
-            self._radio_queue, self._radio_seed = [], None  # A new starting point.
+        start = start.strip()
+        changed = bool(start) and start != self.radio_start
+        self.radio_on, self.radio_start = on, start
+        if changed and self.radio_seeds:
+            # A new "Start from" means play that now. Chat's earlier requests (kept between streams) used to
+            # win, so changing the artist did nothing; the next request still takes over, as before.
+            self.radio_seeds = []
+            if self.on_seeds_change:
+                self.on_seeds_change([])
+        if changed or (not self.radio_seeds and self._radio_seed is not None and self._radio_seed != self._start_id()):
+            self._radio_queue, self._radio_seed = [], None  # A new starting point: the old artist's picks go.
         self._radio_status()
         self._maybe_fill()
 

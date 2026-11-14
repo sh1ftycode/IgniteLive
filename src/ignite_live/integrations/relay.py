@@ -14,11 +14,22 @@ Music: while no Now Playing overlay is open, a dashboard tab that allows it
 plays the songs instead ("music" says whether one is needed). That tab reports
 back like the overlay does: "player" messages (ended, error, playing,
 progress), checked by PLAYER_EVENTS.
+
+Hosted widgets (API tab → Hosted links): the same connection also carries
+what the local overlay server broadcasts ("overlay") and the local API's
+messages ("api"), so the server can serve the overlays and the API to any
+streaming app. Those are live only: never queued while disconnected (an alert
+shown minutes late is worse than none); the latest state is sent again on
+reconnecting. The server asks for alert sounds and game pictures by name
+("fetch"); they come back in small pieces ("file").
+
+Commands run only while remote control is on (Preferences → Server).
 """
 
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import logging
 import random
@@ -29,24 +40,15 @@ import aiohttp
 from ignite_live import __version__
 from ignite_live.core.events import ConnectionState
 from ignite_live.core.http import tls_session
+from ignite_live.overlay import api
 
 log = logging.getLogger(__name__)
 
 PROTOCOL = 1
-# What the dashboard may ask for, and the arguments each takes.
-COMMANDS: dict[str, tuple[str, ...]] = {
-    "toggle_stream": (),
-    "panic": (),
-    "resume": (),
-    "toggle_record": (),
-    "save_replay": (),
-    "switch_scene": ("name",),
-    "skip_song": (),
-    "remove_song": ("item_id",),
-    "request_song": ("text",),
-    "skip_tts": (),
-    "mute_tts": ("muted",),
-}
+# What the server may ask for (the dashboard, and the hosted API with its control key): the local API's commands.
+COMMANDS: dict[str, tuple[str, ...]] = {name: command.args for name, command in api.COMMANDS.items()}
+FILE_CHUNK = 32 * 1024  # A fetched file goes in pieces this size (before base64), so each message stays small.
+FILE_MAX = 2 * 1024 * 1024
 # The latest of each is kept and re-sent after a reconnect; chat lines and notices are sent once, as they happen.
 STATE_KINDS = ("live", "panic", "status", "studio", "queue", "playlist", "tts_muted", "music")
 # What a dashboard tab that plays the music may report.
@@ -90,6 +92,10 @@ class RelayClient:
         on_status: Callable[[ConnectionState, str], None],
         session_factory: Callable[[], aiohttp.ClientSession] = tls_session,
         on_player: Callable[[dict], Awaitable[None]] | None = None,
+        allow_commands: Callable[[], bool] = lambda: True,
+        snapshot: Callable[[], list[dict]] | None = None,
+        on_fetch: Callable[[str, str], tuple[bytes, str] | None] | None = None,
+        local: Callable[[], dict | None] | None = None,
     ) -> None:
         """``on_command(name, args)`` runs an allowed command and returns a short result for the dashboard
         (raise ValueError for a refusal). ``on_player(report)`` gets a dashboard player's report (player_report)."""
@@ -103,6 +109,10 @@ class RelayClient:
         self._on_status = on_status
         self._session_factory = session_factory
         self._on_player = on_player
+        self._allow_commands = allow_commands  # Remote control on: else the server only gets to watch.
+        self._snapshot = snapshot  # Hosted widgets: what to send again after (re)connecting.
+        self._on_fetch = on_fetch  # (kind "sound" | "image", name) -> (bytes, content type), or None.
+        self._local = local  # Hosted widgets: where their pages fall back to on this PC.
         self._state: dict[str, object] = {}
         self._pending: list[dict] = []
         self._ws: aiohttp.ClientWebSocketResponse | None = None
@@ -118,6 +128,11 @@ class RelayClient:
             return
         if self._ws is not None and not self._ws.closed:
             asyncio.get_running_loop().create_task(self._send(message))
+
+    def send_live(self, kind: str, message: dict) -> None:
+        """Hosted widgets: an overlay ("overlay") or API ("api") message, now or never."""
+        if self._ws is not None and not self._ws.closed:
+            asyncio.get_running_loop().create_task(self._send({"type": kind, "message": message}))
 
     async def run(self) -> None:
         delay = 1.0
@@ -155,14 +170,19 @@ class RelayClient:
             await asyncio.sleep(wait)
 
     async def _hello(self, ws: aiohttp.ClientWebSocketResponse) -> None:
-        await ws.send_json({"type": "hello", "protocol": PROTOCOL, "version": __version__,
-                            "commands": sorted(COMMANDS)})
+        hello = {"type": "hello", "protocol": PROTOCOL, "version": __version__, "commands": sorted(COMMANDS)}
+        local = self._local() if self._local else None
+        if local:
+            hello["local"] = local
+        await ws.send_json(hello)
         for kind, data in self._state.items():
             await ws.send_json({"type": "event", "kind": kind, "data": data})
         pending, self._pending = self._pending, []
         for message in pending:
             await ws.send_json(message)
-        self._on_status(ConnectionState.CONNECTED, "The web dashboard can control Ignite")
+        for kind, message in (self._snapshot() if self._snapshot else []):
+            await ws.send_json({"type": kind, "message": message})
+        self._on_status(ConnectionState.CONNECTED, "Connected to your Ignite server")
 
     async def _listen(self, ws: aiohttp.ClientWebSocketResponse) -> None:
         async for message in ws:
@@ -174,6 +194,8 @@ class RelayClient:
                 continue
             if isinstance(data, dict) and data.get("type") == "command":
                 await self._command(data)
+            elif isinstance(data, dict) and data.get("type") == "fetch":
+                asyncio.get_running_loop().create_task(self._fetch(data))
             elif isinstance(data, dict) and data.get("type") == "player" and self._on_player is not None:
                 report = player_report(data)
                 if report is not None:
@@ -189,6 +211,10 @@ class RelayClient:
         if name not in COMMANDS:
             await self._send({**reply, "ok": False, "message": "Ignite doesn't take that command remotely."})
             return
+        if not self._allow_commands():
+            await self._send({**reply, "ok": False, "message": "Remote control is off on this PC (Ignite → "
+                                                                "Preferences → Server)."})
+            return
         args = {key: raw[key] for key in COMMANDS[name] if key in raw}
         try:
             text = await self._on_command(name, args)
@@ -198,6 +224,24 @@ class RelayClient:
         except Exception:  # noqa: BLE001 - one bad command mustn't drop the connection
             log.exception("Remote control: %s failed", name)
             await self._send({**reply, "ok": False, "message": "Something went wrong. Check Ignite's log."})
+
+    async def _fetch(self, data: dict) -> None:
+        """A sound or picture a hosted widget asked for, by name only (the PC decides what that name means)."""
+        fetch_id, kind, name = data.get("id"), str(data.get("kind", "")), str(data.get("name", ""))
+        found = None
+        if self._on_fetch is not None and kind in ("sound", "image"):
+            try:
+                found = await asyncio.to_thread(self._on_fetch, kind, name)
+            except OSError:
+                found = None
+        if found is None or len(found[0]) > FILE_MAX:
+            await self._send({"type": "file", "id": fetch_id, "ok": False})
+            return
+        body, content_type = found
+        pieces = [body[i:i + FILE_CHUNK] for i in range(0, len(body), FILE_CHUNK)] or [b""]
+        for index, piece in enumerate(pieces):
+            await self._send({"type": "file", "id": fetch_id, "ok": True, "content_type": content_type,
+                              "data": base64.b64encode(piece).decode(), "last": index == len(pieces) - 1})
 
     async def _send(self, message: dict) -> None:
         ws = self._ws

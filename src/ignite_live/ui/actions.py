@@ -9,12 +9,9 @@ from __future__ import annotations
 from typing import Callable
 
 from PySide6.QtGui import QAction, QKeySequence
-from PySide6.QtWidgets import QPushButton, QStyle, QWidget
+from PySide6.QtWidgets import QPushButton, QWidget
 
 from ignite_live.controller import Controller
-from ignite_live.ui.theme import icon
-
-SP = QStyle.StandardPixmap
 
 
 def action_button(action: QAction, text: str | None = None) -> QPushButton:
@@ -37,10 +34,9 @@ class AppActions:
     def __init__(self, controller: Controller, parent: QWidget) -> None:
         self.controller = controller
 
-        def make(text: str, *, theme: str = "", fallback: SP | None = None, shortcut: str = "", tip: str = "") -> QAction:
+        def make(text: str, *, shortcut: str = "", tip: str = "") -> QAction:
+            """Text only: no stock icons in menus (they're colourful and look like emoji next to the app's own)."""
             action = QAction(text, parent)
-            if theme or fallback is not None:
-                action.setIcon(icon(theme, fallback if fallback is not None else SP.SP_FileIcon, parent))
             if shortcut:
                 action.setShortcut(QKeySequence(shortcut))
             if tip:
@@ -49,88 +45,68 @@ class AppActions:
             return action
 
         # File / Help
-        self.preferences = make("&Preferences…", theme="preferences-system", fallback=SP.SP_FileDialogDetailedView,
-                                shortcut="Ctrl+,", tip="Connections, song request rules, Discord, appearance")
+        self.preferences = make("&Preferences…", shortcut="Ctrl+,", tip="Connections, song request rules, Discord, appearance")
         self.preferences.setMenuRole(QAction.MenuRole.PreferencesRole)
-        self.open_logs = make("Open &Log Folder", theme="folder-open", fallback=SP.SP_DirOpenIcon)
-        self.quit = make("&Quit", theme="application-exit", fallback=SP.SP_DialogCloseButton, shortcut="Ctrl+Q")
+        self.open_logs = make("Open &Log Folder")
+        self.quit = make("&Quit", shortcut="Ctrl+Q")
         self.quit.setMenuRole(QAction.MenuRole.QuitRole)
-        self.about = make("&About Ignite", theme="help-about", fallback=SP.SP_MessageBoxInformation)
+        self.about = make("&About Ignite")
         self.about.setMenuRole(QAction.MenuRole.AboutRole)
 
         # Stream
-        self.sign_in = make("&Sign In to Streamlabs…", theme="system-log-out", fallback=SP.SP_DialogYesButton,
-                            tip="Opens Streamlabs in your browser")
+        self.sign_in = make("&Sign In to Streamlabs…", tip="Opens Streamlabs in your browser")
         self.sign_out = make("Sign &Out of Streamlabs")
-        self.get_key = make("&Get Stream Key", theme="go-down", fallback=SP.SP_ArrowDown, shortcut="Ctrl+K",
+        self.get_key = make("&Get Stream Key", shortcut="Ctrl+K",
                             tip="Reuse the saved key while it's valid, otherwise generate one")
         self.new_key = make("Generate &New Key", tip="Always generate a fresh key through Streamlabs")
-        self.send_key = make("Send Key to &OBS", theme="document-send", fallback=SP.SP_ArrowRight,
-                             shortcut="Ctrl+Shift+K", tip="Put the key on the chosen OBS output")
-        self.toggle_stream = make("Start &Streaming", theme="media-record", fallback=SP.SP_MediaPlay,
-                                  tip="Start or stop the chosen OBS output")
-        self.check_stream = make("&Check Before Going Live…", theme="dialog-ok-apply", fallback=SP.SP_DialogApplyButton,
-                                 tip="OBS, key, output, audio, overlays and clips: is everything ready?")
-        self.end_live = make("&End LIVE…", theme="process-stop", fallback=SP.SP_BrowserStop,
-                             tip="End the TikTok LIVE and retire this key")
-        self.refresh_outputs = make("&Refresh OBS Outputs", theme="view-refresh", fallback=SP.SP_BrowserReload)
+        self.send_key = make("Send Key to &OBS", shortcut="Ctrl+Shift+K", tip="Put the key on the chosen OBS output")
+        self.toggle_stream = make("Start &Streaming", tip="Start or stop the chosen OBS output")
+        self.check_stream = make("&Check Before Going Live…", tip="OBS, key, output, audio, overlays and clips: is everything ready?")
+        self.end_live = make("&End LIVE…", tip="End the TikTok LIVE and retire this key")
+        self.refresh_outputs = make("&Refresh OBS Outputs")
 
         # Chat
-        self.connect_chat = make("&Connect All", theme="network-connect", fallback=SP.SP_DialogApplyButton,
-                                 tip="Connect every platform that has a name: TikTok, Twitch, YouTube")
-        self.disconnect_chat = make("&Disconnect All", theme="network-disconnect", fallback=SP.SP_DialogCancelButton)
-        self.simulate = make("&Simulate Events…", theme="system-run", fallback=SP.SP_MediaPlay,
-                             tip="Send fake gifts, follows, likes and comments to test your setup without going live")
-        self.clear_chats = make("C&lear All Chats", theme="edit-clear-all", fallback=SP.SP_DialogResetButton,
-                                tip="Empty the chat panel, the pop-out and the chat overlays in OBS (chat on "
+        self.connect_chat = make("&Connect All", tip="Connect every platform that has a name: TikTok, Twitch, YouTube")
+        self.disconnect_chat = make("&Disconnect All")
+        self.simulate = make("&Simulate Events…", tip="Send fake gifts, follows, likes and comments to test your setup without going live")
+        self.clear_chats = make("C&lear All Chats", tip="Empty the chat panel, the pop-out and the chat overlays in OBS (chat on "
                                     "TikTok, Twitch and YouTube stays)")
-        self.popout_chat = make("&Pop Out Chat", theme="window-new", fallback=SP.SP_TitleBarNormalButton,
-                                shortcut="Ctrl+Shift+C", tip="Picture-in-picture chat that stays on top of OBS or your game")
+        self.lock_popout = make("&Lock Pop-out Chat (Click-Through)",
+                                tip="Lock the pop-out chat in place; clicks go through it to your game")
+        self.lock_popout.setCheckable(True)
+        self.lock_popout.setChecked(controller.settings.chat_popout_locked)
+        self.popout_chat = make("&Pop Out Chat", shortcut="Ctrl+Shift+C", tip="Picture-in-picture chat that stays on top of OBS or your game")
 
         # OBS
-        self.toggle_record = make("Start &Recording", theme="media-record", fallback=SP.SP_DialogYesButton,
-                                  shortcut="Ctrl+R", tip="Start or stop recording in OBS")
-        self.pause_record = make("&Pause Recording", theme="media-playback-pause", fallback=SP.SP_MediaPause,
-                                 shortcut="Ctrl+Shift+R")  # Not Ctrl+Shift+P: that's Panic.
-        self.toggle_replay = make("Start Replay &Buffer", theme="media-playlist-repeat", fallback=SP.SP_BrowserReload,
-                                  tip="The replay buffer keeps the last moments so you can save them as a clip")
-        self.save_replay = make("Save &Clip", theme="document-save", fallback=SP.SP_DialogSaveButton,
-                                shortcut="Ctrl+Shift+S", tip="Save the replay buffer (the last moments) as a clip")
-        self.toggle_vertical_record = make("Start Vertical Re&cording", theme="media-record", fallback=SP.SP_DialogYesButton,
-                                           tip="Record the Aitum vertical canvas")
-        self.toggle_vertical_backtrack = make("Start Vertical &Backtrack", theme="media-playlist-repeat",
-                                              fallback=SP.SP_BrowserReload,
-                                              tip="Aitum's replay buffer for the vertical canvas")
-        self.save_vertical_clip = make("Save Vertical C&lip", theme="document-save", fallback=SP.SP_DialogSaveButton,
-                                       tip="Save the vertical canvas's backtrack as a clip")
-        self.toggle_virtualcam = make("Start &Virtual Camera", theme="camera-web", fallback=SP.SP_ComputerIcon)
-        self.screenshot = make("Take Screens&hot", theme="camera-photo", fallback=SP.SP_DesktopIcon, shortcut="F12",
+        self.toggle_record = make("Start &Recording", shortcut="Ctrl+R", tip="Start or stop recording in OBS")
+        self.pause_record = make("&Pause Recording", shortcut="Ctrl+Shift+R")  # Not Ctrl+Shift+P: that's Panic.
+        self.toggle_replay = make("Start Replay &Buffer", tip="The replay buffer keeps the last moments so you can save them as a clip")
+        self.save_replay = make("Save &Clip", shortcut="Ctrl+Shift+S", tip="Save the replay buffer (the last moments) as a clip")
+        self.toggle_vertical_record = make("Start Vertical Re&cording", tip="Record the Aitum vertical canvas")
+        self.toggle_vertical_backtrack = make("Start Vertical &Backtrack", tip="Aitum's replay buffer for the vertical canvas")
+        self.save_vertical_clip = make("Save Vertical C&lip", tip="Save the vertical canvas's backtrack as a clip")
+        self.toggle_virtualcam = make("Start &Virtual Camera")
+        self.screenshot = make("Take Screens&hot", shortcut="F12",
                                tip="Save a PNG of the current OBS scene")
-        self.refresh_overlays = make("Re&fresh Overlays", theme="view-refresh", fallback=SP.SP_BrowserReload,
-                                     shortcut="F5", tip="Reload every Ignite overlay in OBS")
-        self.add_all_overlays = make("&Add Overlays to OBS…", theme="list-add", fallback=SP.SP_FileDialogNewFolder,
-                                     tip="Choose which overlays (or all of them) to add, and to which scene")
+        self.refresh_overlays = make("Re&fresh Overlays", shortcut="F5", tip="Reload every Ignite overlay in OBS")
+        self.add_all_overlays = make("&Add Overlays to OBS…", tip="Choose which overlays (or all of them) to add, and to which scene")
 
         # Text to speech
-        self.skip_tts = make("S&kip Spoken Message", theme="media-skip-forward", fallback=SP.SP_MediaSkipForward,
-                             shortcut="Ctrl+Shift+Right", tip="Stop the message being read aloud")
-        self.mute_tts = make("&Mute Text to Speech", theme="audio-volume-muted", fallback=SP.SP_MediaVolumeMuted,
-                             shortcut="Ctrl+M", tip="Stop reading chat aloud until you unmute")
+        self.skip_tts = make("S&kip Spoken Message", shortcut="Ctrl+Shift+Right", tip="Stop the message being read aloud")
+        self.mute_tts = make("&Mute Text to Speech", shortcut="Ctrl+M", tip="Stop reading chat aloud until you unmute")
         self.mute_tts.setCheckable(True)
 
         # Moderation
-        self.panic = make("&Panic", theme="dialog-warning", fallback=SP.SP_MessageBoxWarning, shortcut="Ctrl+Shift+P",
+        self.panic = make("&Panic", shortcut="Ctrl+Shift+P",
                           tip="Mute text to speech, clear alerts, pause music and rules, switch to your BRB scene")
 
         # Music
-        self.play_pause = make("&Pause Music", theme="media-playback-pause", fallback=SP.SP_MediaPause,
-                               shortcut="Ctrl+Space", tip="Pause or play the song requests")
-        self.previous_song = make("P&revious Song", theme="media-skip-backward", fallback=SP.SP_MediaSkipBackward,
-                                  shortcut="Ctrl+Left",
+        self.play_pause = make("&Pause Music", shortcut="Ctrl+Space", tip="Pause or play the song requests")
+        self.previous_song = make("P&revious Song", shortcut="Ctrl+Left",
                                   tip="Start the song over; again right away, go back to the song before it")
-        self.skip = make("S&kip Song", theme="media-skip-forward", fallback=SP.SP_MediaSkipForward, shortcut="Ctrl+Right")
-        self.clear_queue = make("&Clear Queue", theme="edit-clear", fallback=SP.SP_DialogResetButton)
-        self.stop_playlist = make("Stop &Playlist", theme="media-playback-stop", fallback=SP.SP_MediaStop)
+        self.skip = make("S&kip Song", shortcut="Ctrl+Right")
+        self.clear_queue = make("&Clear Queue")
+        self.stop_playlist = make("Stop &Playlist")
 
         self.sign_out.triggered.connect(controller.sign_out_streamlabs)
         self.sign_in.triggered.connect(controller.login_streamlabs)

@@ -35,6 +35,12 @@ FADE_ROLE = Qt.ItemDataRole.UserRole + 2  # time.monotonic() when a fading row a
 SHOWN_S = 6.0
 FADE_OUT_S = 1.0
 FADE_TICK_MS = 50
+# Chat text size, in percent of the normal size: Ctrl + mouse wheel, or the Text size controls.
+TEXT_SIZE_MIN, TEXT_SIZE_MAX, TEXT_SIZE_STEP = 70, 200, 10
+
+
+def text_size(percent: int) -> int:
+    return max(TEXT_SIZE_MIN, min(TEXT_SIZE_MAX, int(percent)))
 
 MAX_IMAGE_BYTES = 512 * 1024
 MAX_CACHED_IMAGES = 800
@@ -127,11 +133,20 @@ def _font(base: QFont, px: float, weight: QFont.Weight = QFont.Weight.Normal) ->
 
 
 class ChatDelegate(QStyledItemDelegate):
-    def __init__(self, view: QListWidget, compact: bool = False) -> None:
+    def __init__(self, view: QListWidget, compact: bool = False, size: int = 100) -> None:
         super().__init__(view)
         self.view = view
-        self.scale = 0.88 if compact else 1.0
-        base = view.font()
+        self.compact = compact
+        self.set_text_size(size)
+        # Over a game (the see-through pop-out) there's no solid background to read against: every text gets
+        # a contrasting edge, secondary text is less faded, and pills get a backing of their own.
+        self.see_through = False
+
+    def set_text_size(self, percent: int) -> None:
+        """Every font, the avatars and the padding grow and shrink together, so rows keep their shape."""
+        self.text_size = text_size(percent)
+        self.scale = (0.88 if self.compact else 1.0) * self.text_size / 100
+        base = self.view.font()
         self.name_font = _font(base, 12 * self.scale, QFont.Weight.DemiBold)
         self.text_font = _font(base, 14 * self.scale)
         self.badge_font = _font(base, 10 * self.scale, QFont.Weight.DemiBold)
@@ -139,9 +154,6 @@ class ChatDelegate(QStyledItemDelegate):
         self.small_font = _font(base, 11 * self.scale)
         self.pad = round(10 * self.scale)
         self.avatar = round(32 * self.scale)
-        # Over a game (the see-through pop-out) there's no solid background to read against: every text gets
-        # a contrasting edge, secondary text is less faded, and pills get a backing of their own.
-        self.see_through = False
 
     # Colours follow the app palette, so the feed works with light and dark themes.
 
@@ -370,13 +382,17 @@ def make_see_through(view: QListWidget) -> None:
 class ChatFeed(QListWidget):
     """Scrolling chat with filters, a row cap, and a "new messages" pill."""
 
-    def __init__(self, compact: bool = False, max_rows: int = 1000, see_through: bool = False) -> None:
+    text_size_changed = Signal(int)  # Percent; Ctrl + mouse wheel or set_text_size().
+
+    def __init__(self, compact: bool = False, max_rows: int = 1000, see_through: bool = False,
+                 size: int = 100) -> None:
         super().__init__()
         self.max_rows = max_rows
         self.filters = {"comments": True, "gifts": True, "follows": True, "joins": True}
         self.platforms: set[str] = set()  # Seen so far; with more than one, every name gets a platform pill.
         self.setObjectName("chatFeed")
-        self.setItemDelegate(ChatDelegate(self, compact))
+        self.chat_delegate = ChatDelegate(self, compact, size)
+        self.setItemDelegate(self.chat_delegate)
         if see_through:
             make_see_through(self)
         self.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
@@ -386,6 +402,7 @@ class ChatFeed(QListWidget):
         self.setResizeMode(QListWidget.ResizeMode.Adjust)
         self.setUniformItemSizes(False)
         self._unseen = 0
+        self._wheel = 0  # Ctrl + wheel, not yet a whole notch.
         self.new_pill = QPushButton("", self)
         self.new_pill.setObjectName("newMessages")
         self.new_pill.setStyleSheet(
@@ -431,6 +448,35 @@ class ChatFeed(QListWidget):
         elif not item.isHidden():
             self._unseen += 1
             self._show_pill()
+
+    @property
+    def text_size(self) -> int:
+        return self.chat_delegate.text_size
+
+    def set_text_size(self, percent: int) -> None:
+        """Bigger or smaller chat text (percent of normal); rows re-wrap, and the view stays at the latest."""
+        percent = text_size(percent)
+        if percent == self.text_size:
+            return
+        following = self._at_bottom()
+        self.chat_delegate.set_text_size(percent)
+        self.doItemsLayout()
+        self.viewport().update()
+        if following:
+            self.scrollToBottom()
+        self.text_size_changed.emit(percent)
+
+    def wheelEvent(self, event) -> None:  # noqa: N802 - Qt override
+        if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
+            # A mouse wheel notch is 120; touchpads send small amounts, which add up to a notch.
+            self._wheel += event.angleDelta().y()
+            notches = int(self._wheel / 120)
+            if notches:
+                self._wheel -= notches * 120
+                self.set_text_size(self.text_size + notches * TEXT_SIZE_STEP)
+            event.accept()
+            return
+        super().wheelEvent(event)
 
     def set_filter(self, kind: str, shown: bool) -> None:
         self.filters[kind] = shown

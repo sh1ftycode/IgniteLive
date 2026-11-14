@@ -26,6 +26,8 @@ from aiohttp import WSMsgType, web
 
 from ignite_live.actions.rules import SOUND_NAME
 from ignite_live.games.base import IMAGE_NAME
+from ignite_live.overlay import api
+from ignite_live.overlay.api import ApiHub
 
 # name -> (title, suggested OBS Browser Source width, height)
 PAGES = {
@@ -117,6 +119,10 @@ class OverlayServer:
         self.on_music_changed: Callable[[dict], None] | None = None
         self.on_toast: Callable[[str], None] | None = None
         self.on_choose_theme: Callable[[str], None] | None = None  # "Use this theme" in the gallery.
+        # Everything sent to every overlay, for hosted widgets on an Ignite server (through the relay).
+        self.on_broadcast: Callable[[dict], None] | None = None
+        # Origins of the Ignite server whose hosted pages may fall back to this PC (still with the token).
+        self.trusted_origins: set[str] = set()
         # The app's own music buttons: where the song is (twice a second), and whether anything can play it.
         self.on_progress: Callable[[dict], None] | None = None
         self.on_player_changed: Callable[[bool], None] | None = None
@@ -136,11 +142,37 @@ class OverlayServer:
         self._leaderboards: dict = {"type": "leaderboards", "boards": {}}
         self._game: dict = {"type": "game", "game": None}
         self._runner: web.AppRunner | None = None
+        # The local API (overlay/api.py): events, state and commands for any widget or app on this PC.
+        self.api = ApiHub()
+        self.api_key = ""  # The API's control key; empty: no commands.
         self.app = web.Application(middlewares=[self._guard])
+        # Pages reach their socket and files next to themselves (/overlay/ws), so the same pages work hosted on an
+        # Ignite server (/w/<key>/ws). The root ones stay for pages opened before that. Before /overlay/{page}.
+        for prefix in ("/overlay", ""):
+            self.app.router.add_get(f"{prefix}/ws", self._socket)
+            self.app.router.add_get(f"{prefix}/sounds/{{name}}", self._sound)
+            self.app.router.add_get(f"{prefix}/images/{{name}}", self._image)
         self.app.router.add_get("/overlay/{page}", self._page)
-        self.app.router.add_get("/ws", self._socket)
-        self.app.router.add_get("/sounds/{name}", self._sound)
-        self.app.router.add_get("/images/{name}", self._image)
+        self.app.router.add_get(api.PREFIX, lambda r: self.api.http_info(r, r["control"]))
+        self.app.router.add_get(f"{api.PREFIX}/ws", lambda r: self.api.socket(r, r["control"]))
+        self.app.router.add_get(f"{api.PREFIX}/state", lambda r: self.api.http_state(r, r["control"]))
+        self.app.router.add_get(f"{api.PREFIX}/state/{{kind}}", lambda r: self.api.http_state(r, r["control"]))
+        self.app.router.add_route("GET", f"{api.PREFIX}/commands/{{name}}",
+                                  lambda r: self.api.http_command(r, r["control"]))
+        self.app.router.add_route("POST", f"{api.PREFIX}/commands/{{name}}",
+                                  lambda r: self.api.http_command(r, r["control"]))
+
+    def api_url(self, path: str = "", control: bool = False, websocket: bool = False) -> str:
+        """The API's address (with the overlay token, or the control key), for the Overlays tab."""
+        scheme = "ws" if websocket else "http"
+        credential = f"key={self.api_key}" if control else f"token={self.token}"
+        return f"{scheme}://localhost:{self.port}{api.PREFIX}{path}?{credential}"
+
+    def local_fallback(self) -> dict:
+        """Where a hosted page reaches this PC when the Ignite server doesn't answer (common.js IGNITE_LOCAL)."""
+        base = f"localhost:{self.port}"
+        return {"socket": f"ws://{base}/overlay/ws", "files": f"http://{base}/overlay/", "token": self.token,
+                "api": f"ws://{base}{api.PREFIX}/ws"}
 
     def url(self, page: str = MUSIC_PAGE, theme: str = "") -> str:
         """``theme`` pins this one overlay to a theme instead of following the app's choice."""
@@ -160,6 +192,7 @@ class OverlayServer:
             pass  # No IPv6 loopback; 127.0.0.1 is enough.
 
     async def stop(self) -> None:
+        await self.api.close()
         for ws in list(self._sockets):
             await ws.close()
         if self._runner:
@@ -196,6 +229,7 @@ class OverlayServer:
 
     async def clear_chat(self) -> None:
         """Clear All Chats: the chat overlays drop every line they show (alerts already queued still play)."""
+        self.api.emit("chat_clear", {})
         await self._broadcast({"type": "chat_clear"})
 
     async def alert(self, title: str, text: str, image: str = "", sound: str = "", volume: int = 100) -> None:
@@ -211,11 +245,13 @@ class OverlayServer:
     async def set_goals(self, bars: list[dict]) -> None:
         """Goal bars (GoalTracker.snapshot()); pages opened later get the latest copy."""
         self._goals = {"type": "goals", "goals": bars}
+        self.api.set_state("goals", bars)
         await self._broadcast(self._goals)
 
     async def set_leaderboards(self, boards: dict) -> None:
         """Leaderboards.snapshot(); pages opened later get the latest copy."""
         self._leaderboards = {"type": "leaderboards", "boards": boards}
+        self.api.set_state("leaderboards", boards)
         await self._broadcast(self._leaderboards)
 
     async def leader(self, board: str, name: str, value: int) -> None:
@@ -225,6 +261,7 @@ class OverlayServer:
     async def set_game(self, snapshot: dict | None) -> None:
         """The running game (None: none); pages opened later get the latest copy."""
         self._game = {"type": "game", "game": snapshot}
+        self.api.set_state("game", snapshot)
         await self._broadcast(self._game)
 
     async def game_over(self, result: dict) -> None:
@@ -307,7 +344,14 @@ class OverlayServer:
         if self.on_music_changed:
             self.on_music_changed(self.music_state())
 
+    def snapshot(self) -> list[dict]:
+        """What an overlay opened now is sent first: for hosted widgets, after the relay (re)connects."""
+        sticky = [self._state, self._progress, self._goals, self._leaderboards, self._game]
+        return [message for message in sticky if message]
+
     async def _broadcast(self, message: dict, skip: web.WebSocketResponse | None = None) -> None:
+        if self.on_broadcast is not None:
+            self.on_broadcast(message)
         for ws in list(self._sockets):
             if ws is skip:
                 continue
@@ -328,15 +372,39 @@ class OverlayServer:
     async def _guard(self, request: web.Request, handler):
         if request.host not in self._allowed_hosts():
             raise web.HTTPForbidden(text="Unknown host")
+        if request.path == api.PREFIX or request.path.startswith(api.PREFIX + "/"):
+            return await self._api_guard(request, handler)
         if not secrets.compare_digest(request.query.get("token", ""), self.token):
             raise web.HTTPForbidden(text="Missing or wrong overlay token")
         origin = request.headers.get("Origin")
-        if origin and origin.removeprefix("http://") not in self._allowed_hosts():
+        if origin and origin.removeprefix("http://") not in self._allowed_hosts() and origin not in self.trusted_origins:
             raise web.HTTPForbidden(text="Cross-origin request refused")
         response = await handler(request)
         response.headers["Cache-Control"] = "no-store"
         # The YouTube embed refuses to play (error 153) without a referrer.
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        return response
+
+    async def _api_guard(self, request: web.Request, handler) -> web.StreamResponse:
+        """The API takes any Origin (widgets live anywhere), but always the overlay token or the control key."""
+        if request.method == "OPTIONS":  # A browser's preflight carries no key; it learns nothing from this.
+            response: web.StreamResponse = web.Response(status=204)
+        else:
+            bearer = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+            offered = [request.query.get("key", ""), request.query.get("token", ""), bearer]
+            control = bool(self.api_key) and any(secrets.compare_digest(o, self.api_key) for o in offered if o)
+            if not control and not any(secrets.compare_digest(o, self.token) for o in offered if o):
+                response = web.json_response(
+                    {"ok": False, "message": "Add ?token= (the overlay token) or ?key= (the control key)."},
+                    status=403)
+            else:
+                request["control"] = control
+                response = await handler(request)
+        if not response.prepared:  # A WebSocket has already sent its headers.
+            response.headers["Access-Control-Allow-Origin"] = "*"
+            response.headers["Access-Control-Allow-Headers"] = "Authorization, Content-Type"
+            response.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+            response.headers["Cache-Control"] = "no-store"
         return response
 
     async def _page(self, request: web.Request) -> web.Response:

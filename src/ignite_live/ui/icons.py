@@ -149,6 +149,38 @@ def _glyph_path(name: str) -> QPainterPath:
         for y in (4.5, 8, 11.5):
             path.moveTo(3, y)
             path.lineTo(13, y)
+    elif name in ("connect", "disconnect"):  # A plug; crossed out to disconnect.
+        path.addRoundedRect(QRectF(4.5, 5.5, 7, 5), 1.5, 1.5)
+        for x in (6.5, 9.5):
+            path.moveTo(x, 2.5)
+            path.lineTo(x, 5.5)
+        path.moveTo(8, 10.5)
+        path.lineTo(8, 14)
+        if name == "disconnect":
+            path.moveTo(2.5, 13.5)
+            path.lineTo(13.5, 2.5)
+    elif name == "clear":  # An eraser on a line.
+        path.moveTo(3.5, 10)
+        path.lineTo(8.5, 5)
+        path.lineTo(12.5, 9)
+        path.lineTo(8, 13.5)
+        path.lineTo(5, 13.5)
+        path.closeSubpath()
+        path.moveTo(6, 7.5)
+        path.lineTo(10.5, 12)
+        path.moveTo(8, 13.5)
+        path.lineTo(14, 13.5)
+    elif name == "popout":  # A window with an arrow leaving it.
+        path.moveTo(7, 3.5)
+        path.lineTo(3.5, 3.5)
+        path.lineTo(3.5, 12.5)
+        path.lineTo(12.5, 12.5)
+        path.lineTo(12.5, 9)
+        path.moveTo(8, 8)
+        path.lineTo(13, 3)
+        path.moveTo(9.5, 3)
+        path.lineTo(13, 3)
+        path.lineTo(13, 6.5)
     else:
         raise ValueError(name)
     return path

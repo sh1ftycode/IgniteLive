@@ -65,6 +65,19 @@ jobs:
           echo "APPIMAGETOOL=$RUNNER_TEMP/appimagetool" >> "$GITHUB_ENV"
           echo "APPIMAGE_EXTRACT_AND_RUN=1" >> "$GITHUB_ENV"  # Runners have no FUSE to mount AppImages.
 
+      # The main Ignite server's address comes from a repository secret, so it isn't in the source on GitHub.
+      - name: Main server
+        env:
+          IGNITE_MAIN_SERVER: ${{ secrets.IGNITE_MAIN_SERVER }}
+        shell: python
+        run: |
+          import json, os
+          url = os.environ.get("IGNITE_MAIN_SERVER", "").strip()
+          if url:
+              with open("packaging/bundled_config.json", "w", encoding="utf-8") as handle:
+                  json.dump({"main_server": url}, handle)
+          print("Main server bundled." if url else "No IGNITE_MAIN_SERVER secret: Hosted links need a server set by hand.")
+
       - name: Build
         run: python packaging/build.py
 

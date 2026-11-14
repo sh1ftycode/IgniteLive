@@ -128,6 +128,11 @@ class Settings:
     backend_url: str = ""
     overlay_port: int = 17_845
     overlay_token: str = ""
+    api_key: str = ""  # The local API's control key (overlay/api.py): runs commands. Never synced.
+    # Hosted widget links on the Ignite server (API tab → Hosted links): overlays and the API for any app.
+    hosted_widgets: bool = False
+    hosted_base: str = ""  # https://server/w/<widget key>: each overlay is <base>/<page>.
+    hosted_api: str = ""  # wss://server/w/<widget key>/api
     overlay_theme: str = "minimal"  # See overlay/server.py THEMES.
     ui_theme: str = "dark"  # "dark" or "light"; an old "system" follows the desktop until changed
     window_state: str = ""  # Qt saveState()/saveGeometry() of the main window, base64
@@ -161,6 +166,8 @@ class Settings:
     chat_popout_opacity: int = 55  # How solid its background is, 0 (clear) to 100; the text stays solid.
     chat_popout_stats: bool = True  # Its viewer and follower counts.
     chat_popout_music: bool = True  # Its music buttons.
+    chat_text_size: int = 100  # Chat panel text, percent of normal (70-200): Ctrl + mouse wheel over it.
+    chat_popout_text_size: int = 100  # The same for the pop-out chat.
     # Twitch publishes viewer and follower counts only to signed-in apps; these come from DecAPI (decapi.me),
     # a public service that is sent your channel name. Off: Twitch shows chat and chatters only.
     twitch_stats: bool = True

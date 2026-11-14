@@ -525,7 +525,6 @@ ul { list-style: none; }
     radial-gradient(ellipse 3px 2px at 71% 18%, rgba(255, 214, 230, 0.5), transparent),
     radial-gradient(ellipse 4px 2.5px at 46% 80%, rgba(242, 141, 178, 0.4), transparent),
     linear-gradient(160deg, rgba(28, 48, 39, 0.9), rgba(20, 34, 28, 0.9)); }
-:root[data-theme="spring"] .eyebrow::before { content: "🌸 "; }
 :root[data-theme="spring"] .bar > i { background: linear-gradient(90deg, var(--accent-2), var(--accent)); }
 
 /* Summer: sun over the sea, a shimmering sun-to-sea bar. */
@@ -533,7 +532,6 @@ ul { list-style: none; }
   background: linear-gradient(180deg, rgba(12, 58, 86, 0.9), rgba(6, 34, 54, 0.9) 70%, rgba(10, 70, 82, 0.9)); }
 :root[data-theme="summer"] .title { color: var(--accent); text-shadow: var(--glow); }
 :root[data-theme="summer"] .eyebrow { color: var(--accent-2); }
-:root[data-theme="summer"] .eyebrow::before { content: "☀ "; color: var(--accent); }
 :root[data-theme="summer"] .bar > i { background: linear-gradient(90deg, var(--accent), var(--accent-2), var(--accent));
   background-size: 200% 100%; animation: wave 4s linear infinite; }
 
@@ -541,7 +539,6 @@ ul { list-style: none; }
 :root[data-theme="autumn"] .card, :root[data-theme="autumn"] .line {
   background: linear-gradient(150deg, rgba(46, 40, 20, 0.92), rgba(34, 28, 14, 0.92) 55%, rgba(58, 26, 16, 0.92)); }
 :root[data-theme="autumn"] .title { color: #ffe39a; font-size: 1.25em; }
-:root[data-theme="autumn"] .eyebrow::before { content: "🍁 "; }
 :root[data-theme="autumn"] .bar > i { background: linear-gradient(90deg, var(--accent), #d98a2b, var(--accent-2)); }
 
 /* Winter: frosted glass with falling snow, an icy bar. */
@@ -553,7 +550,6 @@ ul { list-style: none; }
     radial-gradient(circle at 84% 64%, rgba(255, 255, 255, 0.45) 0 1.2px, transparent 2px),
     var(--surface); }
 :root[data-theme="winter"] .title { text-shadow: var(--glow); }
-:root[data-theme="winter"] .eyebrow::before { content: "❅ "; color: var(--accent-2); }
 :root[data-theme="winter"] .bar > i { background: linear-gradient(90deg, #e8f4ff, var(--accent)); box-shadow: var(--glow); }
 
 /* Christmas: a light snowfall on the cards, gold labels, a candy-cane progress bar. */
@@ -565,14 +561,12 @@ ul { list-style: none; }
     linear-gradient(160deg, rgba(20, 58, 42, 0.92), rgba(12, 36, 27, 0.92)); }
 :root[data-theme="christmas"] .title { color: var(--accent-2); text-shadow: var(--glow); font-size: 1.3em; }
 :root[data-theme="christmas"] .eyebrow { color: var(--accent); }
-:root[data-theme="christmas"] .eyebrow::before { content: "❄ "; color: #fff; }
 :root[data-theme="christmas"] .bar > i { background: repeating-linear-gradient(45deg, var(--accent) 0 7px, #fff 7px 14px); }
 :root[data-theme="christmas"] .line.gift { border-color: var(--accent-2); }
 
 /* Halloween: a glowing pumpkin title, a cobweb in the corner, purple and orange. */
 :root[data-theme="halloween"] .title { color: var(--accent); text-shadow: var(--glow); font-size: 1.3em; }
 :root[data-theme="halloween"] .eyebrow { color: var(--accent-2); }
-:root[data-theme="halloween"] .eyebrow::before { content: "🎃 "; }
 :root[data-theme="halloween"] .card::after { content: ""; position: absolute; top: 0; right: 0; width: 3.2em; height: 3.2em;
   pointer-events: none; border-radius: 0 var(--radius) 0 0; opacity: 0.35;
   background: repeating-radial-gradient(circle at 100% 0, transparent 0 0.5em, rgba(255, 255, 255, 0.7) 0.5em 0.56em),
@@ -584,7 +578,6 @@ ul { list-style: none; }
 :root[data-theme="thanksgiving"] .card, :root[data-theme="thanksgiving"] .line {
   background: linear-gradient(150deg, rgba(74, 40, 18, 0.92), rgba(44, 24, 14, 0.92) 60%, rgba(60, 22, 16, 0.92)); }
 :root[data-theme="thanksgiving"] .title { color: #ffe3b8; }
-:root[data-theme="thanksgiving"] .eyebrow::before { content: "🍂 "; }
 :root[data-theme="thanksgiving"] .bar > i { background: linear-gradient(90deg, #f2c14e, var(--accent), var(--accent-2)); }
 :root[data-theme="thanksgiving"] .line.gift { border-color: #f2c14e; }
 

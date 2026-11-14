@@ -8,6 +8,11 @@ const ST = (() => {
   const demo = params.get("demo") === "1"; // &demo=1: sample songs and chat, for previews without going live
   const handlers = {};
   let socket = null;
+  // Hosted on an Ignite server, a page falls back to Ignite on this PC when the server doesn't answer or the PC
+  // isn't connected to it, and goes back once it is. The server writes {socket, files, token} in hosted pages.
+  const local = window.IGNITE_LOCAL || null;
+  let mode = "server"; // "server": next to the page; "local": Ignite on this PC (hosted pages only).
+  let probe = null;
   let texts = {};
   let customCss = null;
 
@@ -66,12 +71,75 @@ const ST = (() => {
     if (socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
   }
 
+  const page = location.pathname.split("/").pop(); // Lets the app's checklist see which overlays are open.
+
+  function address(where) {
+    const query = `&page=${encodeURIComponent(page)}` + (demo ? "&preview=1" : "");
+    if (where === "local") return `${local.socket}?token=${encodeURIComponent(local.token)}${query}`;
+    // Next to the page: /overlay/chat → /overlay/ws on the PC, /w/<key>/chat → /w/<key>/ws on an Ignite server.
+    const folder = location.pathname.slice(0, location.pathname.lastIndexOf("/") + 1);
+    const scheme = location.protocol === "https:" ? "wss" : "ws";
+    return `${scheme}://${location.host}${folder}ws?token=${encodeURIComponent(token)}${query}`;
+  }
+
+  // Sounds and pictures: next to the page, or from Ignite on this PC while using it.
+  function file(path) {
+    const base = mode === "local" ? local.files : "";
+    return `${base}${path}?token=${encodeURIComponent(mode === "local" ? local.token : token)}`;
+  }
+
+  function useLocal() {
+    if (!local || mode === "local") return;
+    mode = "local";
+    connect();
+    clearInterval(probe);
+    probe = setInterval(tryServer, 30000);
+  }
+
+  // While on this PC: is the server answering again, with this PC connected to it? Then go back to it.
+  function tryServer() {
+    const test = new WebSocket(address("server"));
+    const give_up = setTimeout(() => test.close(), 5000);
+    test.onmessage = (event) => {
+      const message = JSON.parse(event.data);
+      if (message.type !== "device") return;
+      clearTimeout(give_up);
+      test.close();
+      if (message.online && mode === "local") {
+        clearInterval(probe);
+        mode = "server";
+        connect();
+      }
+    };
+  }
+
   function connect() {
-    const page = location.pathname.split("/").pop(); // Lets the app's checklist see which overlays are open.
-    socket = new WebSocket(`ws://${location.host}/ws?token=${encodeURIComponent(token)}&page=${encodeURIComponent(page)}`
-                           + (demo ? "&preview=1" : ""));
-    socket.onmessage = (event) => {
+    if (socket) {
+      const old = socket;
+      socket = null; // Its onclose is no longer ours.
+      old.close();
+    }
+    const where = mode;
+    const ws = new WebSocket(address(where));
+    socket = ws;
+    let answered = false;
+    const not_answering = setTimeout(() => { if (!answered) ws.close(); }, 5000);
+    ws.onclose = () => {
+      clearTimeout(not_answering);
+      if (socket !== ws) return;
+      socket = null;
+      if (where === "server" && local) useLocal(); // The server stopped answering.
+      else if (where === "local") { mode = "server"; setTimeout(connect, 2000); } // Ignite closed here: the server.
+      else setTimeout(connect, 2000);
+    };
+    ws.onmessage = (event) => {
+      if (socket !== ws) return;
+      answered = true;
       let message = JSON.parse(event.data);
+      if (message.type === "device") { // From the server: whether this streamer's Ignite is connected to it.
+        if (!message.online && where === "server" && local) useLocal();
+        return;
+      }
       if (demo && message.type === "state") message = { ...message, queue: DEMO_QUEUE };
       if (demo && ["chat", "progress", "goals", "leaderboards", "leader", "game", "game_over"].includes(message.type)) return; // Only sample data in a preview.
       if (message.type === "state") {
@@ -81,7 +149,6 @@ const ST = (() => {
       }
       (handlers[message.type] || []).forEach((fn) => fn(message));
     };
-    socket.onclose = () => setTimeout(connect, 2000);
   }
 
   function el(tag, className, text) {
@@ -189,5 +256,5 @@ const ST = (() => {
     return el("span", `badge platform platform-${m.platform}`, m.platform_name || m.platform);
   }
 
-  return { on, send, el, clock, avatar, params, t, tBold, platformBadge, demo };
+  return { on, send, el, clock, avatar, params, t, tBold, platformBadge, demo, file, get mode() { return mode; } };
 })();

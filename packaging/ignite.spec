@@ -19,6 +19,10 @@ datas += copy_metadata("edge_tts")  # Includes its LGPL licence text.
 BUNDLED_KEYS = ROOT / "packaging" / "bundled_keys.json"
 if BUNDLED_KEYS.exists():
     datas.append((str(BUNDLED_KEYS), "ignite_live"))
+# The main Ignite server's address (core/bundled.py main_server): kept out of git; the release workflow writes it.
+BUNDLED_CONFIG = ROOT / "packaging" / "bundled_config.json"
+if BUNDLED_CONFIG.exists():
+    datas.append((str(BUNDLED_CONFIG), "ignite_live"))
 
 hiddenimports = (
     collect_submodules("keyring.backends")

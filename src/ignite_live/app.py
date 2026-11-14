@@ -20,6 +20,7 @@ from ignite_live.core.bundled import import_bundled_keys
 from ignite_live.core.runtime import Runtime
 from ignite_live.ui.icons import logo
 from ignite_live.ui.main_window import MainWindow
+from ignite_live.ui.single_instance import SingleInstance, server_name
 from ignite_live.ui.splash import Splash
 from ignite_live.ui.theme import apply_theme
 
@@ -115,11 +116,18 @@ def main() -> int:
     app.setApplicationName("Ignite")
     app.setApplicationVersion(__version__)
     app.setWindowIcon(_icon())
+    log = logging.getLogger("ignite")
+    # One copy at a time: launched again (taskbar, Start menu, a shortcut), the running one comes forward.
+    instance = SingleInstance(server_name(settings.default_path()), app)
+    if instance.already_running():
+        log.info("Ignite is already running: brought its window forward instead of starting another copy")
+        return 0
+    if not instance.listen():
+        log.warning("Couldn't listen for other launches of Ignite; a second copy could start")
     started = time.monotonic()
     splash = Splash()
     splash.show()
     splash.step("Starting…", 0.05)
-    log = logging.getLogger("ignite")
     log.info("Ignite %s starting (%s, keychain: %s)", __version__, sys.platform, keychain.backend_name())
     imported = import_bundled_keys()
     if imported:
@@ -129,6 +137,7 @@ def main() -> int:
     apply_theme(app, controller.settings.ui_theme)
     splash.step("Setting up the workspace…", 0.55)
     window = MainWindow(controller)
+    instance.activated.connect(window.bring_forward)
     splash.step("Getting ready to connect…", 0.85)
 
     def reveal() -> None:

@@ -101,7 +101,7 @@ function boss(g) {
     const img = ST.el("img");
     img.referrerPolicy = "no-referrer";
     img.src = g.image.startsWith("https://") ? g.image
-      : `/images/${encodeURIComponent(g.image)}?token=${encodeURIComponent(ST.params.get("token") || "")}`;
+      : ST.file(`images/${encodeURIComponent(g.image)}`);
     box.append(img);
   } else {
     box.append(monster());

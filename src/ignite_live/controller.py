@@ -10,12 +10,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import mimetypes
 import os
 import secrets
 import time
 from urllib.parse import urlsplit
 from dataclasses import asdict, fields, replace
 from pathlib import Path
+from typing import Callable
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
@@ -41,11 +43,12 @@ from ignite_live.core.events import (
     ViewerCount,
 )
 from ignite_live.core.images import allowed_image_url
+from ignite_live.core.bundled import main_server
 from ignite_live.core.key_cache import LocalKeyCache
 from ignite_live.core.runtime import Runtime
 from ignite_live.core.settings import COMMAND_DEFAULTS, PLATFORM_FIELDS, Settings
 from ignite_live.core.templates import Texts, render
-from ignite_live.integrations.backend import BackendClient, BackendError, CachedKey
+from ignite_live.integrations.backend import BackendClient, BackendError, CachedKey, register_device
 from ignite_live.integrations.relay import RelayClient
 from ignite_live.integrations.discord_bridge import DiscordBridge, DiscordError, Forwarding, escape
 from ignite_live.integrations import obs_targets
@@ -84,8 +87,9 @@ from ignite_live.music.youtube import (
     playlist_id_from,
     video_id_from,
 )
+from ignite_live.overlay import api
 from ignite_live.overlay.chat import chat_payload
-from ignite_live.overlay.server import PAGES, OverlayServer
+from ignite_live.overlay.server import PAGES, THEMES, OverlayServer
 from ignite_live.speech.rules import TtsRules, clean, shorten
 from ignite_live.moderation.filter import Moderation
 from ignite_live.viewers.points import Points, parse_config as points_config
@@ -96,6 +100,9 @@ from ignite_live.viewers.store import ViewerStore
 
 log = logging.getLogger("ignite")
 
+# Remote control through an Ignite server's web dashboard (integrations/relay.py). False hides its setting and
+# status, and refuses the server's commands; the connection still carries hosted widgets.
+REMOTE_CONTROL = True
 SOURCES = {
     "tiktok": "TikTok chat",
     "twitch": "Twitch chat",
@@ -107,7 +114,9 @@ SOURCES = {
     "discord": "Discord",
     "tts": "Text to speech",
     "remote": "Remote control",
+    "api": "Overlay API",
 }
+HIDDEN_SOURCES = set() if REMOTE_CONTROL else {"remote"}  # Not listed in the Connections panel.
 CHAT_HINTS = {
     "tiktok": "Not connected. Add your username in the Chat panel.",
     "twitch": "Not connected. Add your channel in the Chat panel.",
@@ -117,7 +126,8 @@ OBS_RETRY_SECONDS = 5.0
 HEALTH_POLL_SECONDS = 2.0
 # Plugin outputs send no events, so their live state is polled.
 TARGET_POLL_SECONDS = 5.0
-RELAUNCH_WAIT_SECONDS = 20.0  # relaunch_live: how long OBS gets to stop, and then to start, the output.
+RELAUNCH_WAIT_SECONDS = 20.0
+HOSTED_FILE_MAX = 2 * 1024 * 1024  # A sound or picture hosted widgets may fetch from this PC.  # relaunch_live: how long OBS gets to stop, and then to start, the output.
 HOST = ChatUser("host", "Host", is_host=True)
 SIMULATED_USER = ChatUser("test-viewer", "Test viewer", is_follower=True)
 TEST_SHOW_SECONDS = 6.0  # How long a test result stays on the overlays.
@@ -232,6 +242,7 @@ class Controller(QObject):
     status_changed = Signal(object)  # StatusChange
     chat_event = Signal(object)  # ChatEvent
     chats_cleared = Signal()  # Clear All Chats: every chat panel empties.
+    hosted_changed = Signal()  # Hosted widget links turned on or off, or new links or keys.
     queue_changed = Signal(dict)  # SongQueue.snapshot()
     notice = Signal(str, str)  # level ("info" | "error"), text
     key_changed = Signal(object)  # CachedKey | None
@@ -319,6 +330,17 @@ class Controller(QObject):
         self.images_dir = self.settings_path.parent / "images"
         self.overlay = OverlayServer(self.settings.overlay_token, self.settings.overlay_port, sounds_dir=self.sounds_dir,
                                      images_dir=self.images_dir)
+        # The local API: events, state and commands for any widget or streaming app on this PC.
+        if not self.settings.api_key:
+            self.settings.api_key = api.new_key()
+            settings_store.save(self.settings, self.settings_path)
+        self.overlay.api_key = self.settings.api_key
+        self.api = self.overlay.api
+        self.api.on_command = self._run_command
+        self.api.on_clients_changed = self._api_clients_changed
+        # Hosted widgets: what the overlays and the API get here goes to the Ignite server too, for any app.
+        self.overlay.on_broadcast = lambda message: self._hosted_send("overlay", message)
+        self.api.on_message = lambda message: self._hosted_send("api", message)
         # Viewer games: one at a time, on the loop thread. They react to simulated events too (Test buttons).
         self.games = GameManager()
         self._game_push_pending = False
@@ -369,7 +391,7 @@ class Controller(QObject):
         self.music.on_playlist_change = self._playlist_info_changed
         self.overlay.on_clients_changed = self._overlay_clients_changed
         # Without a Now Playing overlay, a web dashboard tab can play the music (integrations/relay.py).
-        self.overlay.on_music_changed = lambda state: self._relay_publish("music", state)
+        self.overlay.on_music_changed = lambda state: self._publish("music", state)
         self.overlay.on_toast = lambda text: self.notice.emit("info", text)
         self.overlay.on_choose_theme = lambda theme: self.runtime.to_ui(self.set_overlay_theme, theme)
         self.overlay.on_progress = lambda _progress: self._playback_changed()
@@ -387,24 +409,26 @@ class Controller(QObject):
         # Text to speech runs on the GUI thread: chat events reach it through the chat_event signal.
         self.tts_rules = TtsRules(self.settings)
         self.speaker = None  # Speaker, created when text to speech is first turned on.
+        self.tts_muted = False  # Text to speech muted (the button, panic, or the API).
         self._tiktok_session = ""  # TikTok voices: the streamer's sessionid (from the keychain).
         self._edge_voice_list: list = []
         self.chat_event.connect(self._speak)
         self.tts_skip_requested.connect(self.skip_tts)
         self.action_speech.connect(self._speak_action)
         self.panic_requested.connect(self.panic)
-        # What the web dashboard shows, sent through the relay when remote control is on.
-        self.status_changed.connect(lambda _change: self._relay_publish("status", self._statuses_payload()))
-        self.chat_event.connect(lambda event: (lambda line: line and self._relay_publish("chat", line))(chat_payload(event)))
-        self.queue_changed.connect(lambda snapshot: self._relay_publish("queue", snapshot))
+        # What the API (and the web dashboard, through the relay when remote control is on) shows.
+        self.stats_changed.connect(lambda snapshot: self._publish("stats", snapshot))
+        self.status_changed.connect(lambda _change: self._publish("status", self._statuses_payload()))
+        self.chat_event.connect(lambda event: (lambda line: line and self._publish("chat", line))(chat_payload(event)))
+        self.queue_changed.connect(lambda snapshot: self._publish("queue", snapshot))
         self.queue_changed.connect(lambda _snapshot: self._playback_changed())
         self.panic_changed.connect(lambda _on: self._playback_changed())
-        self.studio_changed.connect(lambda studio: self._relay_publish("studio", self._studio_payload(studio)))
-        self.obs_streaming_changed.connect(lambda live: self._relay_publish("live", live))
-        self.panic_changed.connect(lambda on: self._relay_publish("panic", on))
-        self.playlist_changed.connect(lambda info: self._relay_publish("playlist", info))
-        self.tts_mute_changed.connect(lambda muted: self._relay_publish("tts_muted", muted))
-        self.notice.connect(lambda level, text: self._relay_publish("notice", {"level": level, "text": text}))
+        self.studio_changed.connect(lambda studio: self._publish("studio", self._studio_payload(studio)))
+        self.obs_streaming_changed.connect(lambda live: self._publish("live", live))
+        self.panic_changed.connect(lambda on: self._publish("panic", on))
+        self.playlist_changed.connect(lambda info: self._publish("playlist", info))
+        self.tts_mute_changed.connect(lambda muted: self._publish("tts_muted", muted))
+        self.notice.connect(lambda level, text: self._publish("notice", {"level": level, "text": text}))
 
     # Lifecycle.
 
@@ -433,6 +457,9 @@ class Controller(QObject):
             await self.overlay.set_style(overlay_style_of(self.settings))
             await self.overlay.set_goals(self.goal_snapshot)
             self._overlay_clients_changed(0)
+            for kind, data in self._api_snapshot().items():  # API clients get the whole state as they connect.
+                self.api.set_state(kind, data)
+            self._api_clients_changed(0)
             self.music.set_radio(self.settings.music_radio, self.settings.music_radio_start)  # Starts autoplay.
         except OSError:
             self._status("overlay", ConnectionState.ERROR, f"Port {self.overlay.port} is in use. Change it in Settings.")
@@ -645,6 +672,7 @@ class Controller(QObject):
             await asyncio.wait([task], timeout=2)
 
     def _on_chat_event(self, event: ChatEvent) -> None:
+        self._api_event(event)  # Everything that happens, for widgets and apps (likes, joins and stats too).
         if isinstance(event, ChatJoin):
             self._audience_event(event)
             if not event.listed:  # An arrival: a "joined" line in chat. Not counted, not for rules or Discord.
@@ -1658,6 +1686,7 @@ class Controller(QObject):
             self.speaker.skip()
 
     def set_tts_muted(self, muted: bool) -> None:
+        self.tts_muted = muted
         if self.speaker is not None:
             self.speaker.set_muted(muted)
         self.tts_mute_changed.emit(muted)
@@ -2329,7 +2358,8 @@ class Controller(QObject):
     def _restart_relay(self) -> None:
         """On the event loop: (re)connect to the server's relay, or stop, to match the settings."""
         token = keychain.load(keychain.BACKEND_TOKEN)
-        wanted = (self.settings.backend_url, token) if self.settings.remote_control else None
+        remote = REMOTE_CONTROL and self.settings.remote_control
+        wanted = (self.settings.backend_url, token) if remote or self.settings.hosted_widgets else None
         running = self._relay_task is not None and not self._relay_task.done()
         if running and wanted == self._relay_target:
             return  # Same server and token: keep the connection it has.
@@ -2337,8 +2367,9 @@ class Controller(QObject):
         if self._relay_task is not None:
             self._relay_task.cancel()
         self._relay = self._relay_task = None
-        if not self.settings.remote_control:
-            self._status("remote", ConnectionState.OFFLINE, "Off. Turn it on in File → Preferences → Server.")
+        if wanted is None:
+            self._status("remote", ConnectionState.OFFLINE, "Off. Turn it on in File → Preferences → Server, or "
+                                                            "turn on hosted links in the Overlays tab.")
             return
         if not self.settings.backend_url or not token:
             self._status("remote", ConnectionState.DEGRADED, "Needs a server URL and device token (Preferences → Server).")
@@ -2349,8 +2380,14 @@ class Controller(QObject):
                 self._status("remote", state, detail)
 
         try:
-            relay = RelayClient(self.settings.backend_url, token, self._remote_command, on_status,
-                                on_player=self._remote_player)
+            relay = RelayClient(self.settings.backend_url, token, self._run_command, on_status,
+                                on_player=self._remote_player,
+                                allow_commands=lambda: REMOTE_CONTROL and self.settings.remote_control,
+                                snapshot=self._hosted_snapshot, on_fetch=self._hosted_file,
+                                local=lambda: self.overlay.local_fallback() if self.settings.hosted_widgets else None)
+            # Hosted pages from this server may fall back to this PC's overlays when it doesn't answer.
+            parts = urlsplit(self.settings.backend_url)
+            self.overlay.trusted_origins = {f"{parts.scheme}://{parts.netloc}"} if parts.netloc else set()
         except ValueError as error:
             self._status("remote", ConnectionState.ERROR, str(error))
             return
@@ -2358,6 +2395,85 @@ class Controller(QObject):
             relay.publish(kind, data)
         self._relay = relay
         self._relay_task = asyncio.create_task(relay.run())
+
+    # Hosted widgets: the overlays and the API, served by the Ignite server to any streaming app.
+
+    def _hosted_send(self, kind: str, message: dict) -> None:
+        """On the event loop: one overlay or API message for the server's hosted widgets."""
+        if self._relay is not None and self.settings.hosted_widgets:
+            self._relay.send_live(kind, message)
+
+    def _hosted_snapshot(self) -> list[tuple[str, dict]]:
+        """Sent again whenever the relay (re)connects, so widgets open on the server catch up."""
+        if not self.settings.hosted_widgets:
+            return []
+        return ([("overlay", message) for message in self.overlay.snapshot()]
+                + [("api", {"type": "state", "kind": kind, "data": data}) for kind, data in self.api.state.items()])
+
+    def _hosted_file(self, kind: str, name: str) -> tuple[bytes, str] | None:
+        """A hosted widget's alert sound or game picture, by name, from the same folders the overlays use."""
+        if not self.settings.hosted_widgets:
+            return None
+        path = self.overlay.sound_path(name) if kind == "sound" else self.overlay.image_path(name)
+        if path is None or path.stat().st_size > HOSTED_FILE_MAX:
+            return None
+        return path.read_bytes(), mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+
+    def set_hosted_widgets(self, on: bool) -> None:
+        """API tab → Hosted links. On: register with the Ignite server if this PC has no account there yet
+        (servers that make accounts by themselves), then show the links and start sending to it."""
+        if not on:
+            self.save_settings(replace(self.settings, hosted_widgets=False))
+            self.runtime.loop.call_soon_threadsafe(self._restart_relay)
+            self.hosted_changed.emit()
+            return
+        url = self.settings.backend_url or main_server()
+        if not url:
+            self.notice.emit("error", "Set your Ignite server first (File → Preferences → Server).")
+            return
+        registered = bool(self.settings.backend_url and keychain.load(keychain.BACKEND_TOKEN))
+
+        def work() -> dict:
+            token = keychain.load(keychain.BACKEND_TOKEN) if registered else None
+            if not token:
+                token = register_device(url, self.settings.tiktok_username)
+                if not keychain.save(keychain.BACKEND_TOKEN, token):
+                    raise BackendError("No OS keychain found, so Ignite can't keep its account on the server.")
+            return BackendClient(url, token).widgets()
+
+        def done(links: dict) -> None:
+            self.save_settings(replace(self.settings, backend_url=url, hosted_widgets=True,
+                                       hosted_base=str(links.get("base", "")), hosted_api=str(links.get("api", ""))))
+            self.check_backend()  # Restarts the relay, which now carries the widgets.
+            self.hosted_changed.emit()
+
+        self._run("hosted", work, on_success=done)
+
+    def new_hosted_links(self) -> None:
+        """New widget links: the old ones stop working (put the new ones in your streaming apps)."""
+        url, token = self.settings.backend_url, keychain.load(keychain.BACKEND_TOKEN) or ""
+
+        def done(links: dict) -> None:
+            self.save_settings(replace(self.settings, hosted_base=str(links.get("base", "")),
+                                       hosted_api=str(links.get("api", ""))))
+            self.hosted_changed.emit()
+
+        self._run("hosted", lambda: BackendClient(url, token).new_widget_links(), on_success=done)
+
+    def new_hosted_control_key(self) -> None:
+        """The hosted API's control key (commands from widgets anywhere): kept in the keychain, shown on request."""
+        url, token = self.settings.backend_url, keychain.load(keychain.BACKEND_TOKEN) or ""
+
+        def done(reply: dict) -> None:
+            keychain.save(keychain.HOSTED_CONTROL_KEY, str(reply.get("control_key", "")))
+            self.hosted_changed.emit()
+
+        self._run("hosted", lambda: BackendClient(url, token).new_control_key(), on_success=done)
+
+    def open_server_account(self, open_url: Callable[[str], None]) -> None:
+        """This PC's account on the server's website, signed in (an automatic account has no password)."""
+        url, token = self.settings.backend_url, keychain.load(keychain.BACKEND_TOKEN) or ""
+        self._run("hosted", lambda: BackendClient(url, token).login_link(), on_success=open_url)
 
     def _relay_snapshot(self) -> dict:
         return {
@@ -2379,14 +2495,44 @@ class Controller(QObject):
         else:
             self.music.on_player_message(report)
 
-    def _relay_publish(self, kind: str, data) -> None:
-        """From any thread: hand an update to the relay (if remote control is on)."""
-        if self.settings.remote_control and self.runtime.loop.is_running():
-            self.runtime.loop.call_soon_threadsafe(self._relay_publish_now, kind, data)
+    def _publish(self, kind: str, data) -> None:
+        """From any thread: an update for the API's clients and, with remote control on, the relay."""
+        if self.runtime.loop.is_running():
+            self.runtime.loop.call_soon_threadsafe(self._publish_now, kind, data)
 
-    def _relay_publish_now(self, kind: str, data) -> None:
+    def _publish_now(self, kind: str, data) -> None:
+        if kind in api.STATE_KINDS:
+            self.api.set_state(kind, data)
+        elif kind == "notice":
+            self.api.emit("notice", data)
         if self._relay is not None:
-            self._relay.publish(kind, data)
+            self._relay.publish(kind, data)  # Chat lines too ("chat"): the API gets those as events.
+
+    def _api_snapshot(self) -> dict:
+        return {**self._relay_snapshot(), "tts_muted": self.tts_muted, "stats": self.stats_snapshot,
+                "leaderboards": self.leaderboards.snapshot(), "game": self.games.snapshot()}
+
+    def _api_event(self, event: ChatEvent) -> None:
+        """On the event loop: a chat event for the API's clients, moderated the way the overlays show it."""
+        if isinstance(event, ChatComment) and self.moderation.blocked_user(event.user):
+            return
+        shown = self.moderation.shown(event, "overlay")
+        payload = api.event_payload(shown) if shown is not None else None
+        if payload is not None:
+            self.api.emit(*payload, simulated=self.simulating)
+
+    def _api_clients_changed(self, count: int) -> None:
+        if count:
+            self._status("api", ConnectionState.CONNECTED, f"{count} widget{'s' if count != 1 else ''} or app"
+                                                            f"{'s' if count != 1 else ''} connected")
+        else:
+            self._status("api", ConnectionState.OFFLINE, "Nothing connected (API tab)")
+
+    def new_api_key(self) -> None:
+        """A new control key: whatever had the old one can't run commands any more."""
+        self.settings.api_key = self.overlay.api_key = api.new_key()
+        settings_store.save(self.settings, self.settings_path)
+        self.settings_changed.emit(self.settings)
 
     def _statuses_payload(self) -> dict:
         return {source: {"name": SOURCES.get(source, source), "state": change.state.value, "detail": change.detail}
@@ -2403,28 +2549,50 @@ class Controller(QObject):
             "health": asdict(studio.health),
         }
 
-    async def _remote_command(self, name: str, args: dict) -> str:
-        """A command from the web dashboard (already checked against relay.COMMANDS). Runs like the button would."""
+    async def _run_command(self, name: str, args: dict) -> str:
+        """A command from the API (or the web dashboard through the relay), already checked against its list
+        of commands. Runs like the button in the app; returns a short result, or raises ValueError to refuse."""
         studio = self.studio
         ui = self.runtime.to_ui
-        if name in ("toggle_stream", "toggle_record", "save_replay", "switch_scene") and not studio.connected:
+        needs_obs = {"toggle_stream", "start_stream", "stop_stream", "send_key", "toggle_record", "pause_record",
+                     "toggle_replay", "save_replay", "switch_scene", "toggle_vertical_record",
+                     "toggle_vertical_backtrack", "save_vertical_clip", "toggle_virtualcam", "screenshot",
+                     "relaunch_live"}
+        if name in needs_obs and not studio.connected:
             raise ValueError("OBS isn't connected to Ignite right now.")
-        if name == "toggle_stream":
-            start = not self.obs_streaming
+        simple = {  # No arguments: the method, and what to say.
+            "panic": (self.panic, "Panic mode on."),
+            "resume": (self.resume, "Panic mode off."),
+            "send_key": (self.send_key_to_obs, "Sending the key to OBS…"),
+            "end_live": (self.end_live, "Ending the LIVE…"),
+            "pause_record": (self.toggle_record_pause, "Pausing or resuming the recording…"),
+            "toggle_replay": (self.toggle_replay, "Starting or stopping the replay buffer…"),
+            "save_replay": (self.save_replay, "Saving a clip…"),
+            "toggle_vertical_record": (self.toggle_vertical_recording, "Starting or stopping the vertical recording…"),
+            "toggle_vertical_backtrack": (self.toggle_vertical_backtrack, "Starting or stopping the vertical backtrack…"),
+            "save_vertical_clip": (self.save_vertical_clip, "Saving a vertical clip…"),
+            "toggle_virtualcam": (self.toggle_virtualcam, "Starting or stopping the virtual camera…"),
+            "screenshot": (self.take_screenshot, "Taking a screenshot…"),
+            "refresh_overlays": (self.refresh_overlays, "Reloading the overlays."),
+            "connect_chat": (self.connect_all_chats, "Connecting chat…"),
+            "clear_chats": (self.clear_chats, "Chat cleared."),
+            "skip_tts": (self.skip_tts, "Skipped."),
+            "skip_song": (self.skip_song, "Skipped."),
+            "previous_song": (self.previous_song, "Going back."),
+            "clear_queue": (self.clear_queue, "Queue cleared."),
+            "stop_playlist": (self.stop_playlist, "Playlist stopped."),
+        }
+        if name in simple:
+            method, said = simple[name]
+            ui(method)
+            return said
+        if name in ("toggle_stream", "start_stream", "stop_stream"):
+            start = not self.obs_streaming if name == "toggle_stream" else name == "start_stream"
             ui(self.set_obs_streaming, start)
             return "Starting the stream…" if start else "Stopping the stream…"
-        if name == "panic":
-            ui(self.panic)
-            return "Panic mode on."
-        if name == "resume":
-            ui(self.resume)
-            return "Panic mode off."
         if name == "toggle_record":
             ui(self.toggle_recording)
             return "Stopping the recording…" if studio.recording else "Starting a recording…"
-        if name == "save_replay":
-            ui(self.save_replay)
-            return "Saving a clip…"
         if name == "switch_scene":
             scene = str(args.get("name", ""))
             vertical = studio.vertical
@@ -2435,29 +2603,83 @@ class Controller(QObject):
             else:
                 raise ValueError(f"OBS has no scene called “{scene[:60]}”.")
             return f"Switching to {scene}."
-        if name == "skip_song":
-            ui(self.skip_song)
-            return "Skipped."
-        if name == "remove_song":
-            item = args.get("item_id")
-            if not isinstance(item, int) or isinstance(item, bool):
-                raise ValueError("Pick a song in the queue.")
-            ui(self.remove_song, item)
-            return "Removed from the queue."
+        if name == "relaunch_live":
+            title = api.text_arg(args, "title", 200) or self.settings.stream_title
+            if not title:
+                raise ValueError("Give a title.")
+            ui(self.relaunch_live, title, api.text_arg(args, "category_id", 60))
+            return "Restarting the LIVE with the new title and category…"
+        if name == "set_overlay_theme":
+            theme = str(args.get("theme", ""))
+            if theme not in THEMES and theme != seasons.SEASONAL:
+                raise ValueError(f"No overlay theme called “{theme[:40]}”. Themes: {', '.join(THEMES)}.")
+            ui(self.set_overlay_theme, theme)
+            return f"Overlays now use {THEMES.get(theme, 'Seasonal')}."
+        if name == "disconnect_chat":
+            platform = args.get("platform") or None
+            if platform is not None and platform not in PLATFORM_FIELDS:
+                raise ValueError(f"No chat called “{str(platform)[:20]}”. Use tiktok, twitch or youtube.")
+            ui(self.disconnect_chat, platform)
+            return "Disconnecting chat…"
+        if name == "simulate":
+            ui(self.simulate, api.simulated_event(args))
+            return "Sent a test event."
+        if name == "alert":
+            title, text = api.text_arg(args, "title", 80), api.text_arg(args, "text", 300)
+            if not title and not text:
+                raise ValueError("Give the alert a title or text.")
+            image = str(args.get("image", ""))
+            await self.overlay.alert(title, text, image if allowed_image_url(image) else "",
+                                     str(args.get("sound", "")), api.int_arg(args, "volume", 100, 0, 100))
+            return "Alert shown."
+        if name == "play_sound":
+            sound = str(args.get("name", ""))
+            if self.overlay.sound_path(sound) is None:
+                raise ValueError(f"No sound called “{sound[:60]}” in Ignite's sounds folder.")
+            await self.overlay.play_sound(sound, api.int_arg(args, "volume", 100, 0, 100))
+            return f"Playing {sound}."
+        if name == "say":
+            text = api.text_arg(args, "text", self.settings.tts_max_chars or 300)
+            if not text:
+                raise ValueError("Give some text to read aloud.")
+            ui(self._speak_action, text)
+            return "Reading it aloud."
+        if name == "mute_tts":
+            muted = args.get("muted") is True if "muted" in args else not self.tts_muted
+            ui(self.set_tts_muted, muted)
+            return "Text to speech muted." if muted else "Text to speech on."
         if name == "request_song":
-            text = " ".join(str(args.get("text", "")).split())[:200]
+            text = api.text_arg(args, "text", 200)
             if not text:
                 raise ValueError("Type a song and artist, or paste a YouTube link.")
             ui(self.request_song, text)
             return f"Requested {text}."
-        if name == "skip_tts":
-            ui(self.skip_tts)
-            return "Skipped."
-        if name == "mute_tts":
-            muted = args.get("muted") is True
-            ui(self.set_tts_muted, muted)
-            return "Text to speech muted." if muted else "Text to speech on."
-        raise ValueError("Ignite doesn't take that command remotely.")
+        if name == "remove_song":
+            item = args.get("item_id")
+            if not isinstance(item, int) or isinstance(item, bool):
+                raise ValueError("Pick a song in the queue (its item_id).")
+            ui(self.remove_song, item)
+            return "Removed from the queue."
+        if name == "pause_music":
+            if "paused" in args:
+                ui(self.set_music_paused, args.get("paused") is True)
+                return "Music paused." if args.get("paused") is True else "Music playing."
+            ui(self.toggle_music_pause)
+            return "Music paused or playing."
+        if name == "set_volume":
+            volume = api.int_arg(args, "volume", -1, 0, 100)
+            if volume < 0:
+                raise ValueError("Give a volume from 0 to 100.")
+            ui(self.set_volume, volume)
+            return f"Volume {volume}."
+        if name == "run_rule":
+            rule_id = str(args.get("id", ""))
+            rule = next((r for r in parse_rules(self.settings.action_rules) if r.id == rule_id), None)
+            if rule is None:
+                raise ValueError(f"No action rule with the id “{rule_id[:40]}”.")
+            ui(self.test_rule, rule)
+            return f"Running “{rule.name}”."
+        raise ValueError("Ignite doesn't take that command.")
 
     def check_backend(self, pull_settings: bool = False) -> None:
         token = keychain.load(keychain.BACKEND_TOKEN)

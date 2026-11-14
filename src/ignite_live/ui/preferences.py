@@ -39,7 +39,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from ignite_live.controller import Controller, command_aliases
+from ignite_live.controller import REMOTE_CONTROL, Controller, command_aliases
 from ignite_live.core import keychain
 from ignite_live.core.events import PLATFORMS
 from ignite_live.core.settings import COMMAND_DEFAULTS, ROLES, Settings
@@ -366,17 +366,21 @@ class PreferencesDialog(QDialog):
         form.addRow("Server &URL:", self.backend_url)
         self.backend_token = _secret(keychain.BACKEND_TOKEN)
         form.addRow("Device &token:", self.backend_token)
-        self.remote_control = QCheckBox("Allow remote control from this server's web dashboard")
+        self.remote_control = QCheckBox("Allow remote control")
         self.remote_control.setChecked(s.remote_control)
+        remote_note = note("Lets you run Ignite from a browser or phone when you're signed in to the server, and lets "
+                           "hosted widgets that have your control key run commands: go live, Panic, scenes, "
+                           "recording, clips, music and text to speech. Ignite connects out to the server, so "
+                           "nothing on this PC is opened to the internet. Stream keys, tokens and passwords are "
+                           "never sent. Hosted widget links (Overlays tab) work without this.")
         form.addRow("", self.remote_control)
-        form.addRow(note("Lets you run Ignite from a browser or phone when you're signed in to the server: go live, "
-                         "Panic, scenes, recording, clips, music and text to speech. Ignite connects out to the "
-                         "server, so nothing on this PC is opened to the internet. Stream keys, tokens and "
-                         "passwords are never sent."))
+        form.addRow(remote_note)
+        # REMOTE_CONTROL (controller.py) can hide it; the setting itself is kept.
+        self.remote_control.setVisible(REMOTE_CONTROL)
+        remote_note.setVisible(REMOTE_CONTROL)
         form.addRow(note("Optional. Keeps your stream key for 48 hours when the app is closed, syncs settings "
-                         "between computers, runs song search, and with remote control on, lets you run Ignite from "
-                         "a browser. On an Ignite Web server, get both values from Connect a PC; on a plain Ignite "
-                         "server, from: ignite-server add-user NAME"))
+                         "between computers and runs song search. On an Ignite Web server, get both values from "
+                         "Connect a PC; on a plain Ignite server, from: ignite-server add-user NAME"))
 
         form = _tab(self.tabs, "Song requests")
         self.request_role = _choice({r: ROLE_NAMES[r] for r in ROLES}, s.request_role)

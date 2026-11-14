@@ -43,6 +43,12 @@ from ignite_live.ui.pages.stream import disclosure, note
 from ignite_live.ui.theme import colors
 from ignite_live.viewers.points import clean_config as clean_points
 
+
+def guide_note(text: str):
+    """The guide is a walkthrough: its explanations stay on the page."""
+    return note(text, inline=True)
+
+
 STEPS = ("Welcome", "Your PC", "Connect OBS", "Tune OBS", "TikTok", "Overlays", "Extras", "Done")
 # What each step is for, shown under its title.
 SUBTITLES = {
@@ -102,7 +108,7 @@ class SetupGuide(QDialog):
             self.steps.addItem(QListWidgetItem(step))
         self.stack = QStackedWidget()
         right = QVBoxLayout()
-        self.counter = note("")
+        self.counter = guide_note("")
         right.addWidget(self.counter)
         self.progress = QProgressBar()
         self.progress.setRange(0, len(STEPS) - 1)
@@ -135,7 +141,7 @@ class SetupGuide(QDialog):
             page = QWidget()
             layout = QVBoxLayout(page)
             layout.setSpacing(10)
-            layout.addWidget(note(SUBTITLES[step]))
+            layout.addWidget(guide_note(SUBTITLES[step]))
             build(layout)
             layout.addStretch(1)
             scroll = QScrollArea()  # Long steps scroll instead of squashing on small screens.
@@ -256,7 +262,7 @@ class SetupGuide(QDialog):
         self.upload.currentIndexChanged.connect(lambda _i: self._show_tier())
         form.addRow("Your upload speed:", self.upload)
         layout.addLayout(form)
-        layout.addWidget(note("Upload speed decides how much video you can send. A speed test website shows it; "
+        layout.addWidget(guide_note("Upload speed decides how much video you can send. A speed test website shows it; "
                               "Ignite doesn't run one, so it never contacts other services for this."))
 
     def _detected(self, hw: Hardware) -> None:
@@ -418,7 +424,7 @@ class SetupGuide(QDialog):
         self.username.setPlaceholderText("your TikTok username")
         form.addRow("Username:", self.username)
         layout.addLayout(form)
-        layout.addWidget(note("Reads your LIVE chat, gifts and follows. It connects by itself once you're live."))
+        layout.addWidget(guide_note("Reads your LIVE chat, gifts and follows. It connects by itself once you're live."))
         layout.addWidget(body("<b>Stream key.</b> Sign in with Streamlabs, then get a key: Ignite reuses it for "
                               "48 hours, or until you end the LIVE."))
         self.account = body("")
@@ -491,7 +497,7 @@ class SetupGuide(QDialog):
         layout.addWidget(self.add_overlays, 0, Qt.AlignmentFlag.AlignLeft)
         self.overlay_result = body("")
         layout.addWidget(self.overlay_result)
-        layout.addWidget(note("For Now Playing (it plays the music), open its properties in OBS and tick <b>Control audio via "
+        layout.addWidget(guide_note("For Now Playing (it plays the music), open its properties in OBS and tick <b>Control audio via "
                               "OBS</b>, so the music reaches your stream."))
 
     def _tick_overlays(self) -> None:
@@ -540,7 +546,7 @@ class SetupGuide(QDialog):
         self.brb.lineEdit().setPlaceholderText("Stay on the current scene")
         form.addRow("Panic button scene:", self.brb)
         layout.addLayout(form)
-        layout.addWidget(note("The panic button (toolbar, Ctrl+Shift+P) mutes text to speech, holds alerts, pauses "
+        layout.addWidget(guide_note("The panic button (toolbar, Ctrl+Shift+P) mutes text to speech, holds alerts, pauses "
                               "music and switches to this scene; Resume undoes it."))
 
     def _done(self, layout: QVBoxLayout) -> None:

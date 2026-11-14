@@ -49,7 +49,8 @@ ST.on("sound", (m) => play(m.sound, m.volume));
 
 function play(name, volume) {
   if (!playSounds || !name || quiet) return;
-  const audio = new Audio(`/sounds/${encodeURIComponent(name)}?token=${encodeURIComponent(ST.params.get("token") || "")}`);
+  // Next to the page (an Ignite server fetches it from the PC), or from the PC while a hosted page uses it.
+  const audio = new Audio(ST.file(`sounds/${encodeURIComponent(name)}`));
   audio.volume = Math.max(0, Math.min(100, volume ?? 100)) / 100;
   audio.play().catch(() => {}); // A missing or unplayable file just stays silent.
 }

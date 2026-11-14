@@ -25,7 +25,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QEasingCurve, QEvent, QObject, QRectF, Qt, QTemporaryDir, QVariantAnimation, Signal
-from PySide6.QtGui import QColor, QFont, QGuiApplication, QIcon, QPainter, QPalette
+from PySide6.QtGui import QColor, QFont, QGuiApplication, QPainter, QPalette
 from PySide6.QtWidgets import (
     QApplication,
     QProxyStyle,
@@ -514,12 +514,3 @@ def state_color(state: ConnectionState, widget: QWidget) -> QColor:
 def warn_color(_widget: QWidget | None = None) -> QColor:
     """Yellow for "needs attention" values (e.g. OBS dropping frames), readable in either mode."""
     return QColor(_active.warning)
-
-
-def icon(theme_name: str, fallback: QStyle.StandardPixmap, widget: QWidget | None = None) -> QIcon:
-    """Icon from the desktop's icon theme (Linux), else the style's standard icon (Windows/macOS)."""
-    found = QIcon.fromTheme(theme_name)
-    if not found.isNull():
-        return found
-    style = widget.style() if widget is not None else QApplication.style()
-    return style.standardIcon(fallback)

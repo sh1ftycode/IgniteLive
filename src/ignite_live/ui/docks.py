@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from collections import deque
 
-from PySide6.QtCore import QByteArray, QEvent, QObject, QRectF, Qt
+from PySide6.QtCore import QByteArray, QEvent, QObject, QRectF, Qt, Signal
 from PySide6.QtGui import QBrush, QCloseEvent, QColor, QPainter, QPen
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -28,13 +28,14 @@ from PySide6.QtWidgets import (
     QWidgetAction,
 )
 
-from ignite_live.controller import SOURCES, Controller
+from ignite_live.controller import HIDDEN_SOURCES, SOURCES, Controller
 from ignite_live.core import settings as settings_store
 from ignite_live.core.events import ChatEvent, ConnectionState, LiveStatus, StatusChange, ViewerCount
 from ignite_live.ui.actions import AppActions
-from ignite_live.ui.chat_feed import ChatFeed, fades
+from ignite_live.ui.chat_feed import TEXT_SIZE_MAX, TEXT_SIZE_MIN, TEXT_SIZE_STEP, ChatFeed, fades
 from ignite_live.ui.live_widgets import AudienceList, MusicBar, StatsBar
 from ignite_live.ui.pages.music import read_only_table
+from ignite_live.ui.flow_layout import FlowLayout
 from ignite_live.ui.icons import glyph
 from ignite_live.ui.theme import RADIUS, STATE_TEXT, colors, state_color, theme_changed, tint, tint_color
 
@@ -44,15 +45,47 @@ FILTERS = (("comments", "Comments"), ("gifts", "Gifts"), ("follows", "Follows"),
 NOT_CHAT_LINES = (ViewerCount, LiveStatus)  # Shown in the stats row, not in the feed.
 
 
-def filter_checks(feed: ChatFeed) -> QHBoxLayout:
-    row = QHBoxLayout()
+def filter_checks(feed: ChatFeed) -> FlowLayout:
+    """What the feed shows, and its text size. Wraps onto a second line in a narrow panel rather than
+    making the panel wider (the window's smallest size must still fit it beside the tabs)."""
+    row = FlowLayout()
     row.addWidget(QLabel("Show:"))
     for kind, name in FILTERS:
         check = QCheckBox(name)
         check.setChecked(feed.filters[kind])
         check.toggled.connect(lambda shown, k=kind: feed.set_filter(k, shown))
         row.addWidget(check)
-    row.addStretch(1)
+    sizes = QWidget()
+    sizes_layout = text_size_buttons(feed)
+    sizes_layout.setContentsMargins(0, 0, 0, 0)
+    sizes.setLayout(sizes_layout)
+    row.addWidget(sizes)
+    return row
+
+
+def text_size_buttons(feed: ChatFeed) -> QHBoxLayout:
+    """Smaller / size / bigger for the chat text (Ctrl + mouse wheel over the chat does the same)."""
+    row = QHBoxLayout()
+    row.setSpacing(2)
+    smaller, bigger, size = QToolButton(), QToolButton(), QToolButton()
+    smaller.setText("A−")
+    bigger.setText("A+")
+    smaller.setToolTip("Smaller chat text (Ctrl + mouse wheel over the chat)")
+    bigger.setToolTip("Bigger chat text (Ctrl + mouse wheel over the chat)")
+    size.setToolTip("Chat text size; click for the normal size")
+    smaller.clicked.connect(lambda: feed.set_text_size(feed.text_size - TEXT_SIZE_STEP))
+    bigger.clicked.connect(lambda: feed.set_text_size(feed.text_size + TEXT_SIZE_STEP))
+    size.clicked.connect(lambda: feed.set_text_size(100))
+
+    def show(percent: int) -> None:
+        size.setText(f"{percent} %")
+        smaller.setEnabled(percent > TEXT_SIZE_MIN)
+        bigger.setEnabled(percent < TEXT_SIZE_MAX)
+
+    feed.text_size_changed.connect(show)
+    show(feed.text_size)
+    for button in (smaller, size, bigger):
+        row.addWidget(button)
     return row
 
 
@@ -101,10 +134,18 @@ class ChatPanel(QWidget):
 
         top = QHBoxLayout()
         top.addStretch(1)
-        for action in (actions.connect_chat, actions.disconnect_chat, actions.clear_chats, actions.popout_chat):
+        # The app's own line icons (no stock icons: those are colourful and look like emoji).
+        self.chat_buttons = []
+        for action, picture in ((actions.connect_chat, "connect"), (actions.disconnect_chat, "disconnect"),
+                                (actions.clear_chats, "clear"), (actions.popout_chat, "popout")):
             button = QToolButton()
             button.setDefaultAction(action)
+            button.setAutoRaise(True)
+            button.setToolTip(action.text().replace("&", ""))
             top.addWidget(button)
+            self.chat_buttons.append((button, picture))
+        self._icons()
+        theme_changed().connect(self._icons)
         layout.addLayout(top)
         self.stats = StatsBar(controller)  # Live or not, and viewers, followers and likes per platform.
         layout.addWidget(self.stats)
@@ -112,7 +153,8 @@ class ChatPanel(QWidget):
         self.state.setWordWrap(True)
         self.state.hide()
         layout.addWidget(self.state)
-        self.feed = ChatFeed()
+        self.feed = ChatFeed(size=controller.settings.chat_text_size)
+        self.feed.text_size_changed.connect(self._text_size)
         chat = QWidget()
         chat_layout = QVBoxLayout(chat)
         chat_layout.setContentsMargins(0, 4, 0, 0)
@@ -172,6 +214,14 @@ class ChatPanel(QWidget):
         self.history.clear()
         self.feed.clear()
 
+    def _icons(self, _palette=None) -> None:
+        for button, picture in self.chat_buttons:
+            button.setIcon(glyph(picture))
+
+    def _text_size(self, percent: int) -> None:
+        self.controller.settings.chat_text_size = percent
+        settings_store.save(self.controller.settings, self.controller.settings_path)
+
     def _status(self, change: StatusChange) -> None:
         if change.source not in self.names:
             return
@@ -192,9 +242,12 @@ class ChatPopout(QWidget):
     through; chat, the stats row, the viewer list and the music buttons stay fully drawn on top, each
     readable without a panel behind it (text with an edge, numbers on small backed pills).
 
-    Drag it by its top bar and resize it from the corner. Locked, it stays put and can't be moved, resized,
-    scrolled or closed; only the lock button and the music buttons still take clicks.
+    Drag it by its top bar and resize it from the corner. Locked, it's click-through: every click goes to the
+    game or app behind it, so it can sit over the action. Unlock it from Chat → Lock Pop-out Chat or the tray
+    icon's menu (nothing on the window itself takes clicks then).
     """
+
+    locked_changed = Signal(bool)
 
     def __init__(self, controller: Controller, history: list[ChatEvent]) -> None:
         flags = Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint
@@ -244,7 +297,7 @@ class ChatPopout(QWidget):
         self.stats.installEventFilter(self)  # Dragging the numbers moves the window too.
         layout.addWidget(self.stats)
 
-        self.feed = ChatFeed(see_through=True)
+        self.feed = ChatFeed(see_through=True, size=controller.settings.chat_popout_text_size)
         self.audience = AudienceList(controller, see_through=True)
         self.stack = QStackedWidget()
         self.stack.addWidget(self.feed)
@@ -322,6 +375,30 @@ class ChatPopout(QWidget):
         slider.setDefaultWidget(row)
         menu.addAction(slider)
         self.set_opacity(self.opacity)
+        # Text size: big enough to read over a game from across the room, or small to stay out of the way.
+        row = QWidget()
+        row_layout = QHBoxLayout(row)
+        row_layout.setContentsMargins(12, 4, 12, 4)
+        row_layout.addWidget(QLabel("Text size:"))
+        self.text_slider = QSlider(Qt.Orientation.Horizontal)
+        self.text_slider.setRange(TEXT_SIZE_MIN, TEXT_SIZE_MAX)
+        self.text_slider.setSingleStep(TEXT_SIZE_STEP)
+        self.text_slider.setPageStep(TEXT_SIZE_STEP)
+        self.text_slider.setMinimumWidth(120)
+        self.text_slider.setValue(self.feed.text_size)
+        self.text_slider.setToolTip("Also: Ctrl + mouse wheel over the chat (unlocked)")
+        text_value = QLabel(f"{self.feed.text_size} %")
+        text_value.setMinimumWidth(text_value.fontMetrics().horizontalAdvance("200 %"))
+        # Steps of 10 %, so the slider and the wheel land on the same sizes.
+        self.text_slider.valueChanged.connect(
+            lambda value: self.feed.set_text_size(round(value / TEXT_SIZE_STEP) * TEXT_SIZE_STEP))
+        self.feed.text_size_changed.connect(lambda percent: (text_value.setText(f"{percent} %"),
+                                                             self.text_slider.setValue(percent)))
+        row_layout.addWidget(self.text_slider, 1)
+        row_layout.addWidget(text_value)
+        sizer = QWidgetAction(menu)
+        sizer.setDefaultWidget(row)
+        menu.addAction(sizer)
         return menu
 
     def set_opacity(self, percent: int) -> None:
@@ -344,11 +421,15 @@ class ChatPopout(QWidget):
         painter.drawRoundedRect(QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5), RADIUS + 2, RADIUS + 2)
 
     def set_locked(self, locked: bool) -> None:
+        changed = locked != self.locked
         self.locked = locked
+        if self.lock.isChecked() != locked:
+            self.lock.setChecked(locked)  # Locked from the Chat or tray menu.
         self.lock.setIcon(glyph("lock" if locked else "unlock", colors().accent_text if locked else None))
-        self.lock.setToolTip("Unlock to move, resize, scroll or close the chat" if locked
-                             else "Lock the chat in place: it can't be moved, resized, scrolled or closed "
-                                  "(the music buttons still work)")
+        self.lock.setToolTip("Locked: clicks go through to what's behind. Unlock from Chat → Lock Pop-out Chat "
+                             "or the tray icon" if locked
+                             else "Lock the chat in place and make it click-through: every click goes to your "
+                                  "game. Unlock it from Chat → Lock Pop-out Chat or the tray icon")
         # The lists and everything on them (the "new messages" pill, the scroll bars) stop taking the mouse.
         for widget in (self.feed, self.audience):
             widget.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, locked)
@@ -357,7 +438,21 @@ class ChatPopout(QWidget):
         self.header.setCursor(Qt.CursorShape.ArrowCursor if locked else Qt.CursorShape.SizeAllCursor)
         if locked:
             self.feed.jump_to_latest()  # Locked, it can't be scrolled back down: follow new messages.
+        self._click_through()
         self.update()  # The edge is drawn differently.
+        if changed:
+            self.locked_changed.emit(locked)
+
+    def _click_through(self) -> None:
+        """Locked: the window takes no mouse input at all, so clicks reach the game under it. Set on the
+        window that's already showing, so it doesn't blink or move (Windows, X11 and Wayland do this live)."""
+        handle = self.windowHandle()
+        if handle is not None and bool(handle.flags() & Qt.WindowType.WindowTransparentForInput) != self.locked:
+            handle.setFlag(Qt.WindowType.WindowTransparentForInput, self.locked)
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt override
+        super().showEvent(event)
+        self._click_through()  # Opened locked (remembered): click-through from the start.
 
     def _restyle(self, _palette=None) -> None:
         """Icons and the bar are drawn in the mode's colours: redraw them when it changes."""
@@ -394,6 +489,7 @@ class ChatPopout(QWidget):
         s.chat_popout_opacity = self.opacity
         s.chat_popout_stats = not self.stats.isHidden()
         s.chat_popout_music = not self.music.isHidden()
+        s.chat_popout_text_size = self.feed.text_size
         settings_store.save(s, self.controller.settings_path)
         super().closeEvent(event)
 
@@ -410,8 +506,9 @@ class ConnectionsPanel(QWidget):
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
-        self.rows = {source: row for row, source in enumerate(SOURCES)}
-        self.table.setRowCount(len(SOURCES))
+        shown = [source for source in SOURCES if source not in HIDDEN_SOURCES]
+        self.rows = {source: row for row, source in enumerate(shown)}
+        self.table.setRowCount(len(shown))
         for source, row in self.rows.items():
             self.table.setItem(row, 0, QTableWidgetItem(SOURCES[source]))
             self.table.setItem(row, 1, QTableWidgetItem(""))
@@ -422,7 +519,9 @@ class ConnectionsPanel(QWidget):
             self.update_status(change)
 
     def update_status(self, change: StatusChange) -> None:
-        row = self.rows[change.source]
+        row = self.rows.get(change.source)
+        if row is None:
+            return  # Hidden (remote control, while it's switched off in the code).
         state = self.table.item(row, 1)
         state.setText(STATE_TEXT[change.state])
         state.setForeground(QBrush(state_color(change.state, self.table)))

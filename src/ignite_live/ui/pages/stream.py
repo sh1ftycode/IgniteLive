@@ -6,6 +6,8 @@ under "More options", closed by default.
 
 from __future__ import annotations
 
+import html
+import re
 import time
 
 from PySide6.QtCore import Qt, QTimer
@@ -25,6 +27,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QToolButton,
+    QToolTip,
     QVBoxLayout,
     QWidget,
 )
@@ -54,11 +57,142 @@ def buttons(*widgets: QWidget) -> QHBoxLayout:
     return layout
 
 
-def note(text: str) -> QLabel:
+HELP_AFTER = 70  # Longer explanations fold away behind a "?" button.
+
+
+def note(text: str, inline: bool = False) -> QWidget:
+    """A short note in the secondary text colour; a longer explanation becomes a "?" at the end of the
+    section that shows it on click or hover (``inline`` keeps it as text, e.g. in the setup guide)."""
+    if len(text) >= HELP_AFTER and not inline:
+        return HelpNote(text)
     label = QLabel(text)
     label.setWordWrap(True)
     label.setEnabled(False)  # Drawn in the style's secondary text colour.
     return label
+
+
+def _rich(text: str) -> str:
+    """As rich text, so Qt wraps it (one long line otherwise). Notes may already use <b>…</b>."""
+    paragraphs = text.split("\n\n")
+    if not RICH.search(text):
+        paragraphs = [html.escape(part) for part in paragraphs]
+    return "".join(f"<p>{part}</p>" for part in paragraphs)
+
+
+RICH = re.compile(r"<(b|i|a|br)\b[^>]*>", re.IGNORECASE)
+
+
+def help_button(text: str) -> QToolButton:
+    """A small "?" that shows ``text``: on hover, and on click (for touch screens and the keyboard)."""
+    button = QToolButton()
+    button.setText("?")
+    button.setAutoRaise(True)
+    button.setCursor(Qt.CursorShape.WhatsThisCursor)
+    button.setAccessibleName("Help")
+    set_help(button, text)
+    button.clicked.connect(lambda: QToolTip.showText(button.mapToGlobal(button.rect().bottomLeft()),
+                                                     button.toolTip(), button))
+    return button
+
+
+def set_help(button: QToolButton, text: str) -> None:
+    button.setToolTip(_rich(text))
+    button.setAccessibleDescription(RICH.sub("", text))
+
+
+class HelpNote(QWidget):
+    """A "?" in place of a paragraph of explanation. In a form it moves to the end of the row before it (the
+    setting it explains) and its own row goes; two in a row share one "?". Otherwise it's a row of its own."""
+
+    def __init__(self, text: str) -> None:
+        super().__init__()
+        self.text = text
+        self.moved = False
+        self._checked = False
+        self._row = QHBoxLayout(self)
+        self._row.setContentsMargins(0, 0, 0, 0)
+        self._row.addStretch(1)
+        self.button = help_button(text)
+        self._row.addWidget(self.button)
+
+    def add(self, text: str) -> None:
+        self.text += "\n\n" + text
+        set_help(self.button, self.text)
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt override
+        super().showEvent(event)
+        if not self._checked:
+            self._checked = True
+            QTimer.singleShot(0, self, self._place)  # After showing: changing the form while Qt shows it crashes.
+
+    def _place(self) -> None:
+        parent = self.parentWidget()
+        layout = parent.layout() if parent is not None else None
+        previous = _previous_widget(self)
+        if isinstance(previous, HelpNote) and (previous.moved or previous.isVisible()):
+            previous.add(self.text)
+            self._hide_row(layout)
+            return
+        if not isinstance(layout, QFormLayout):
+            return
+        row, _role = layout.getWidgetPosition(self)
+        if row <= 0:
+            return
+        field = layout.itemAt(row - 1, QFormLayout.ItemRole.FieldRole)
+        spanning = layout.itemAt(row - 1, QFormLayout.ItemRole.SpanningRole)
+        item = field or spanning
+        if item is None:
+            return
+        if item.layout() is not None and isinstance(item.layout(), QBoxLayout):
+            item.layout().addWidget(self.button)  # A row of controls: the "?" goes last.
+        elif item.widget() is not None:
+            # A single control: put it and the "?" side by side in that row.
+            label_item = layout.itemAt(row - 1, QFormLayout.ItemRole.LabelRole)
+            label = label_item.widget() if label_item is not None else None
+            taken = layout.takeRow(row - 1)
+            control = item.widget()
+            holder = QWidget()
+            line = QHBoxLayout(holder)
+            line.setContentsMargins(0, 0, 0, 0)
+            line.addWidget(control, 1)
+            line.addWidget(self.button)
+            if label is not None:
+                layout.insertRow(row - 1, label, holder)
+            elif taken.fieldItem is None:  # It was a spanning row.
+                layout.insertRow(row - 1, holder)
+            else:
+                layout.insertRow(row - 1, "", holder)
+        else:
+            return
+        self.moved = True
+        self._hide_row(layout)
+
+    def _hide_row(self, layout) -> None:
+        if isinstance(layout, QFormLayout):
+            row, _role = layout.getWidgetPosition(self)
+            if row >= 0:
+                layout.setRowVisible(row, False)
+                return
+        self.hide()
+
+
+def _previous_widget(widget: QWidget) -> QWidget | None:
+    """The widget just before ``widget`` in its parent's layout (a spanning form row, or a box layout item)."""
+    parent = widget.parentWidget()
+    layout = parent.layout() if parent is not None else None
+    if isinstance(layout, QFormLayout):
+        row, _role = layout.getWidgetPosition(widget)
+        for earlier in range(row - 1, -1, -1):
+            item = layout.itemAt(earlier, QFormLayout.ItemRole.SpanningRole)
+            if item is not None and item.widget() is not None:
+                return item.widget()
+            if layout.itemAt(earlier, QFormLayout.ItemRole.FieldRole) is not None:
+                return None  # A normal row in between: not neighbours.
+        return None
+    if layout is not None and layout.indexOf(widget) > 0:
+        item = layout.itemAt(layout.indexOf(widget) - 1)
+        return item.widget() if item is not None else None
+    return None
 
 
 def scrolling(page: QWidget, layout_type: type[QBoxLayout] | type[QGridLayout] = QVBoxLayout):
@@ -133,9 +267,9 @@ class StreamPage(QWidget):
         top.addStretch(1)
         self.state = QLabel()
         top.addWidget(self.state)
+        top.addWidget(help_button("Get a stream key, then send it to OBS and start streaming. Video goes straight "
+                                  "from OBS to TikTok."))
         page.addLayout(top)
-        page.addWidget(note("Get a stream key, then send it to OBS and start streaming. Video goes straight from "
-                            "OBS to TikTok."))
 
         # 1. Stream key.
         key_box = QGroupBox("1   Stream key")

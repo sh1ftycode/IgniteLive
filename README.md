@@ -54,14 +54,17 @@ good-looking live setup. Ignite puts all of that into one program.
   **Chat → Clear All Chats** empties the chat panel, the pop-out and the chat
   overlay. Optionally forward it to a Discord channel through a webhook (File →
   Preferences → Discord).
+- **Chat text size:** the **A− / A+** buttons over the chat, or Ctrl + mouse
+  wheel over it. The pop-out has its own size in its ☰ menu. Both are
+  remembered.
 - **Pop-out chat over your game:** Chat → Pop Out Chat (Ctrl+Shift+C) is a
   small always-on-top window with a see-through background: set how solid it
   is from 0 % (only the chat floats over the game) to 100 % in its ☰ menu.
   Text keeps an edge and numbers sit on small pills, so they read over
   anything. It also has the stats row, a **Viewers** tab, and the music
-  buttons, each of which can be turned off there. Lock it in place so it
-  can't be moved, scrolled or closed by a stray click (the music buttons
-  still work). Games must run windowed or borderless: nothing can draw over
+  buttons, each of which can be turned off there. Lock it to make it
+  click-through: every click goes to the game behind it. Unlock it from
+  Chat → Lock Pop-out Chat or the tray icon's menu. Games must run windowed or borderless: nothing can draw over
   exclusive fullscreen.
 - **Viewers, followers, likes:** the Chat panel and the pop-out show whether
   you're live, the totals, and a chip per platform: watching now, followers
@@ -217,18 +220,34 @@ good-looking live setup. Ignite puts all of that into one program.
   `https://` for a server on the internet; plain `http://` only works for this
   PC and your local network. If the server doesn't keep stream keys, Ignite
   keeps yours in this PC's keychain instead.
-- **Remote control (optional, off by default):** Preferences → Server → *Allow
-  remote control from this server's web dashboard*. Ignite connects out to the
-  server, so nothing is port-forwarded; the server's dashboard can then start
-  and stop the stream, switch scenes, hit Panic and run the music queue. With
-  no Now Playing overlay open, a dashboard tab can play the music itself. The
-  status bar shows **Remote** while it's connected.
+- **Hosted links:** API tab → Hosted links → Turn On. Every overlay gets
+  a link on the Ignite server, like a TikFinity widget link, to paste into any
+  streaming app on any PC. There's no sign-up: Ignite makes your account when
+  you turn it on.
+- **API for widgets and other apps:** API tab. Your own widgets,
+  other streaming apps (Streamlabs Desktop, TikTok LIVE Studio, Meld, vMix…),
+  Stream Deck buttons and bots can use Ignite on this PC. They get every chat
+  event and Ignite's live state over a WebSocket, and with the control key they
+  can run what the app's buttons do: go live, scenes, clips, music, alerts, text
+  to speech, Panic. See [docs/API.md](docs/API.md).
 
 > Streamlabs key generation uses undocumented routes and may break without
 > notice. Manual keys always work.
 
 See [docs/DESIGN.md](docs/DESIGN.md) for the research, architecture, risks,
 and what's been verified.
+
+## Releasing
+
+1. Set `__version__` in `src/ignite_live/__init__.py` and add a `## X.Y.Z`
+   section at the top of [CHANGELOG.md](CHANGELOG.md). The release page
+   starts with it.
+2. Commit both as `Ignite X.Y.Z`.
+3. Run `python packaging/release.py --push`. It checks that `main` is clean and
+   up to date, that the changelog has the version, and that the tag is new,
+   runs the tests, then tags `vX.Y.Z` and pushes. GitHub Actions builds
+   Windows and Linux and publishes the release, which Ignite's auto-updater
+   then offers to everyone. Without `--push`, it only checks and tags.
 
 ## Credits
 

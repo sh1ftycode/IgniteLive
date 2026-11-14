@@ -38,6 +38,7 @@ from ignite_live.ui.pages.viewers import ViewersPage
 from ignite_live.ui.docks import ActivityPanel, ChatPanel, ChatPopout, ConnectionsPanel, dock
 from ignite_live.integrations.obs_studio import Studio, clock
 from ignite_live.ui.pages.music import MusicPage
+from ignite_live.ui.pages.api import ApiPage
 from ignite_live.ui.pages.overlays import OverlaysPage
 from ignite_live.ui.pages.stream import StreamPage
 from ignite_live.ui.checklist import ChecklistDialog, go_live
@@ -63,6 +64,7 @@ PAGE_TITLES = {
     "stream": "&Stream",
     "music": "&Music",
     "overlays": "&Overlays",
+    "api": "A&PI",
     "actions": "Ac&tions",
     "streams": "Str&eams",
     "viewers": "Vie&wers",
@@ -80,9 +82,10 @@ STATUS_NAMES = {
     "discord": "Discord",
     "tts": "TTS",
     "remote": "Remote",
+    "api": "API",
 }
 # Shown in the status bar only while in use, so unused extras don't crowd it.
-OPTIONAL_STATUS = {"twitch", "youtube", "tts", "remote"}
+OPTIONAL_STATUS = {"twitch", "youtube", "tts", "remote", "api"}
 INFO_SECONDS = 8
 ERROR_SECONDS = 20
 MIN_WIDTH, MIN_HEIGHT = 720, 480
@@ -139,6 +142,7 @@ class MainWindow(QMainWindow):
             "stream": StreamPage(controller, self.actions),
             "music": MusicPage(controller, self.actions),
             "overlays": OverlaysPage(controller),
+            "api": ApiPage(controller),
             "actions": ActionsPage(controller),
             "streams": StreamsPage(controller),
             "viewers": ViewersPage(controller),
@@ -217,6 +221,7 @@ class MainWindow(QMainWindow):
         a.quit.triggered.connect(self.quit)
         a.about.triggered.connect(self._about)
         a.popout_chat.triggered.connect(self.open_chat_popout)
+        a.lock_popout.toggled.connect(self.lock_chat_popout)
         a.add_all_overlays.triggered.connect(lambda: self.open_add_overlays())
         a.go_live = lambda: go_live(self, self.controller)
         a.check_stream.triggered.connect(lambda: ChecklistDialog(self.controller, self).exec())
@@ -237,7 +242,8 @@ class MainWindow(QMainWindow):
             stream.addSeparator() if item is None else stream.addAction(item)
 
         chat = bar.addMenu("&Chat")
-        for item in (a.connect_chat, a.disconnect_chat, None, a.clear_chats, a.popout_chat, None, a.skip_tts, a.mute_tts):
+        for item in (a.connect_chat, a.disconnect_chat, None, a.clear_chats, a.popout_chat, a.lock_popout, None,
+                     a.skip_tts, a.mute_tts):
             chat.addSeparator() if item is None else chat.addAction(item)
 
         obs = bar.addMenu("&OBS")
@@ -308,8 +314,8 @@ class MainWindow(QMainWindow):
         menu = QMenu(self)
         self.tray_toggle = menu.addAction("Hide Ignite", self.toggle_window)
         menu.addSeparator()
-        for item in (a.toggle_stream, a.toggle_record, a.save_replay, None, a.popout_chat, a.mute_tts, None,
-                     a.panic, None, a.quit):
+        for item in (a.toggle_stream, a.toggle_record, a.save_replay, None, a.popout_chat, a.lock_popout,
+                     a.mute_tts, None, a.panic, None, a.quit):
             menu.addSeparator() if item is None else menu.addAction(item)
         menu.aboutToShow.connect(lambda: self.tray_toggle.setText("Hide Ignite" if self.isVisible() else "Show Ignite"))
         self.tray.setContextMenu(menu)
@@ -327,9 +333,14 @@ class MainWindow(QMainWindow):
         if self.isVisible() and not self.isMinimized():
             self.hide()
         else:
+            self.bring_forward()
+
+    def bring_forward(self) -> None:
+        """Show the window (from the tray or minimised) on top. Also when Ignite is launched again."""
+        if self.isMinimized() or not self.isVisible():
             self.showNormal()
-            self.raise_()
-            self.activateWindow()
+        self.raise_()
+        self.activateWindow()
 
     def quit(self) -> None:
         """File → Quit and the tray's Quit: really close, rather than hiding to the tray."""
@@ -452,9 +463,24 @@ class MainWindow(QMainWindow):
             self.chat_popout = ChatPopout(self.controller, list(self.chat_panel.history))
             self.chat_popout.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
             self.chat_popout.destroyed.connect(lambda: setattr(self, "chat_popout", None))
+            self.chat_popout.locked_changed.connect(self._popout_locked)
         self.chat_popout.show()
         self.chat_popout.raise_()
         self.chat_popout.activateWindow()
+
+    def lock_chat_popout(self, locked: bool) -> None:
+        """Chat → Lock Pop-out Chat, or the tray menu: the only way back once it's click-through."""
+        if self.chat_popout is not None:
+            self.chat_popout.set_locked(locked)
+        else:
+            self.controller.settings.chat_popout_locked = locked  # Opens that way next time.
+            settings_store.save(self.controller.settings, self.controller.settings_path)
+
+    def _popout_locked(self, locked: bool) -> None:
+        self.actions.lock_popout.setChecked(locked)
+        if locked:
+            self.controller.notice.emit("info", "Pop-out chat locked: clicks go through it to your game. Unlock it "
+                                                "from Chat → Lock Pop-out Chat or the tray icon's menu.")
 
     # Updates.
 

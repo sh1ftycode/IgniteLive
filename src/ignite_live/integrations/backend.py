@@ -44,6 +44,29 @@ def server_url_allowed(url: str) -> bool:
     return address.is_loopback or address.is_private
 
 
+def register_device(base_url: str, name: str = "", transport: Transport = urllib_transport) -> str:
+    """Hosted widgets on a server that makes accounts by itself: register this PC; returns its device token."""
+    base_url = base_url.strip().rstrip("/")
+    if not server_url_allowed(base_url):
+        raise BackendError("Use an https:// server URL (plain http only works on this PC or your local network).")
+    try:
+        status, raw = transport("POST", base_url + "/v1/register",
+                                {"Content-Type": "application/json", "Accept": "application/json"},
+                                json.dumps({"name": name[:28]}).encode())
+    except TransportError as error:
+        raise BackendError("Could not reach the Ignite server.") from error
+    try:
+        payload = json.loads(raw) if raw else {}
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        payload = {}
+    payload = payload if isinstance(payload, dict) else {}
+    if status == 404:
+        raise BackendError("This server doesn't host widgets (it's an older or plain Ignite server).")
+    if status >= 400 or not isinstance(payload.get("token"), str):
+        raise BackendError(str(payload.get("error") or f"The server returned HTTP {status}."))
+    return payload["token"]
+
+
 class BackendClient:
     def __init__(self, base_url: str, device_token: str, transport: Transport = urllib_transport) -> None:
         base_url = base_url.strip().rstrip("/")
@@ -109,6 +132,29 @@ class BackendClient:
             ),
             float(payload["expires_at"]),
         )
+
+    # Hosted widgets (Ignite Web servers).
+
+    def widgets(self) -> dict:
+        """{"base": https://server/w/<key>, "api": wss://…/api, "has_control_key": bool, "pages": {…}}."""
+        return self._hosted("GET", "/v1/widgets")
+
+    def new_widget_links(self) -> dict:
+        return self._hosted("POST", "/v1/widgets/new-links")
+
+    def new_control_key(self) -> dict:
+        """The hosted API's control key, shown once: {"control_key": "ctl_…", …links}."""
+        return self._hosted("POST", "/v1/widgets/control-key")
+
+    def login_link(self) -> str:
+        """A one-time link that opens this account on the server's website, signed in."""
+        return str(self._hosted("POST", "/v1/login-link").get("url", ""))
+
+    def _hosted(self, method: str, path: str) -> dict:
+        status, payload = self._call(method, path, {} if method == "POST" else None)
+        if status == 404:
+            raise BackendError("This server doesn't host widgets (it's an older or plain Ignite server).")
+        return payload
 
     def _call(self, method: str, path: str, body: dict | None = None) -> tuple[int, dict]:
         headers = {"Authorization": f"Bearer {self._token}", "Accept": "application/json"}

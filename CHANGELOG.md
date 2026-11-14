@@ -5,6 +5,51 @@ starts with its section from this file (see `.github/workflows/build.yml`).
 For versions before 1.6.1, see the
 [GitHub releases](https://github.com/sh1ftycode/IgniteLive/releases).
 
+## 1.6.2
+
+### New
+
+- **API tab.** A new tab with everything for widgets and other streaming
+  apps in one place: hosted links and the API on this PC.
+- **Hosted links for every overlay.** API tab → Hosted links → Turn On gives
+  each overlay a link, like a TikFinity widget link, to paste into OBS,
+  Streamlabs Desktop, TikTok LIVE Studio, Meld or vMix on any PC. There's no
+  sign-up: Ignite makes your account when you turn it on. If the server stops
+  answering, widgets on this PC switch to Ignite here by themselves, and go
+  back once it's working again.
+- **API for widgets and other streaming apps.** Your own widgets, Stream Deck
+  buttons and bots can use Ignite on this PC: every chat event (comments,
+  gifts, follows, likes, shares, joins, viewer counts) and Ignite's live state
+  over a WebSocket. With the control key they can also run commands: go live,
+  switch scenes, save clips, control the music, show alerts, use text to
+  speech and Panic. The full reference is in [docs/API.md](docs/API.md).
+- **Click-through pop-out chat.** When you lock the pop-out chat, clicks now go
+  straight through it to your game. Unlock it from Chat → Lock Pop-out Chat or
+  the tray icon's menu.
+- **Chat text size.** Make the chat text bigger or smaller with the
+  **A− / A+** buttons over the chat, or with Ctrl + mouse wheel. The pop-out
+  has its own size in its menu. Both sizes are remembered.
+
+### Changed
+
+- **Less text on screen.** Long explanations now sit behind a **?** at the
+  end of their section: hover over it or click it to read them.
+- **No emoji.** The seasonal overlay themes no longer put emoji in their
+  headings.
+
+### Fixed
+
+- **Autoplay's Start from now changes the artist.** If chat had ever
+  requested a song (requests are remembered between streams), autoplay kept
+  following those requests and ignored a new **Start from**. Now a new artist
+  plays from the next song on, until chat requests something else.
+- **Only one Ignite at a time.** Clicking Ignite in the taskbar, the Start
+  menu or a shortcut while it's already running now brings the open window
+  forward, even from the tray. Before, it started a second copy that fought the
+  first one over chat and the overlays.
+- **The chat panel shrinks with the window again.** It used to stay at a fixed
+  width when the window was made smaller.
+
 ## 1.6.1
 
 ### New
