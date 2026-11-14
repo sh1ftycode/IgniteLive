@@ -12,9 +12,9 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
-import webbrowser
 
 from ignite_live.core import keychain
+from ignite_live.core.browser import open_url
 from ignite_live.integrations.streamlabs import ProviderError, StreamlabsExperimentalProvider, StreamlabsTokenRetriever
 
 
@@ -22,7 +22,7 @@ def _open(url: str) -> bool:
     print("\nOpening the Streamlabs login in your browser. If nothing opens, copy this link into any browser:\n")
     print(f"  {url}\n")
     print("Log in with your TikTok account there. Waiting (up to 5 minutes)…", flush=True)
-    webbrowser.open(url)
+    open_url(url)
     return True  # The link is printed, so a failed auto-open is fine.
 
 

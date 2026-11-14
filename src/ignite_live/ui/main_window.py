@@ -200,6 +200,7 @@ class MainWindow(QMainWindow):
 
         controller.status_changed.connect(self._status)
         controller.notice.connect(self._notice)
+        controller.browser_link.connect(self._browser_link)
         controller.settings_changed.connect(self._settings_changed)
         self._theme = controller.settings.ui_theme  # Applied by app.py at startup.
         # "Seasonal": move on to the next season or holiday when the date gets there (checked twice an hour).
@@ -521,6 +522,19 @@ class MainWindow(QMainWindow):
             done.append(f"switched to {s.panic_scene}")
         self.panic_label.setText("Panic mode: " + (", ".join(done) or "on") + ".")
         self.panic_banner.setVisible(on)
+
+    def _browser_link(self, title: str, url: str) -> None:
+        box = QMessageBox(self)
+        box.setWindowTitle(title)
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setText("Ignite couldn't open your browser. Copy this link into a browser on this computer, "
+                    "sign in there, and Ignite will pick it up.")
+        box.setInformativeText(url)
+        box.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        copy = box.addButton("Copy Link", QMessageBox.ButtonRole.ActionRole)
+        box.addButton(QMessageBox.StandardButton.Close)
+        copy.clicked.connect(lambda: QApplication.clipboard().setText(url))
+        box.open()
 
     def _notice(self, level: str, text: str) -> None:
         self.statusBar().showMessage(text, (ERROR_SECONDS if level == "error" else INFO_SECONDS) * 1000)

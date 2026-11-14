@@ -16,6 +16,7 @@ from PySide6.QtWidgets import QApplication
 from ignite_live import __version__
 from ignite_live.controller import Controller
 from ignite_live.core import keychain, settings
+from ignite_live.core.browser import restore_host_library_path
 from ignite_live.core.bundled import import_bundled_keys
 from ignite_live.core.runtime import Runtime
 from ignite_live.ui.icons import logo
@@ -107,6 +108,7 @@ def _icon() -> QIcon:
 
 def main() -> int:
     _setup_logging()
+    restore_host_library_path()  # Packaged Linux build: host programs must not load our bundled libs.
     if sys.platform == "win32":
         # Own taskbar identity, so Windows shows our icon instead of Python's.
         import ctypes

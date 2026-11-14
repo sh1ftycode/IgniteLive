@@ -15,10 +15,10 @@ import secrets
 import socket
 import threading
 import urllib.parse
-import webbrowser
 from dataclasses import dataclass
 from typing import Callable
 
+from ignite_live.core.browser import open_url as open_in_browser
 from ignite_live.core.http import Transport, TransportError, urllib_transport
 
 
@@ -239,7 +239,7 @@ class StreamlabsTokenRetriever:
             f"&port={port}&code_challenge={self.code_challenge}&code_flow=true"
         )
 
-    def retrieve_token(self, timeout: int = 300, open_url: Callable[[str], bool] = webbrowser.open) -> str:
+    def retrieve_token(self, timeout: int = 300, open_url: Callable[[str], bool] = open_in_browser) -> str:
         """Open the login page, wait for Streamlabs to redirect back, and exchange the code.
 
         ``open_url`` returns whether a browser opened; a terminal caller can print the link too.

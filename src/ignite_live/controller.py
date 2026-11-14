@@ -43,6 +43,7 @@ from ignite_live.core.events import (
     ViewerCount,
 )
 from ignite_live.core.images import allowed_image_url
+from ignite_live.core.browser import open_url as open_in_browser
 from ignite_live.core.bundled import main_server
 from ignite_live.core.key_cache import LocalKeyCache
 from ignite_live.core.runtime import Runtime
@@ -245,6 +246,7 @@ class Controller(QObject):
     hosted_changed = Signal()  # Hosted widget links turned on or off, or new links or keys.
     queue_changed = Signal(dict)  # SongQueue.snapshot()
     notice = Signal(str, str)  # level ("info" | "error"), text
+    browser_link = Signal(str, str)  # title, URL: no browser opened, so the user copies it by hand
     key_changed = Signal(object)  # CachedKey | None
     account_changed = Signal(object)  # AccountInfo | None
     categories_loaded = Signal(list)
@@ -2185,9 +2187,15 @@ class Controller(QObject):
     def login_streamlabs(self) -> None:
         self._run(
             "streamlabs",
-            lambda: StreamlabsTokenRetriever().retrieve_token(),
+            lambda: StreamlabsTokenRetriever().retrieve_token(open_url=self._open_login_link),
             on_success=lambda token: self.use_streamlabs_token(token, remember=True),
         )
+
+    def _open_login_link(self, url: str) -> bool:
+        """Open the Streamlabs login; if no browser takes it, show the link to copy instead."""
+        if not open_in_browser(url):
+            self.browser_link.emit("Streamlabs Sign-In", url)
+        return True  # Keep waiting either way: the link works from any browser on this computer.
 
     def use_streamlabs_token(self, token: str, remember: bool) -> None:
         try:
