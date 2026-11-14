@@ -3,6 +3,8 @@
     python packaging/release.py            # check, run the tests, tag vX.Y.Z on this commit
     python packaging/release.py --push     # ...then push main and the tag: GitHub builds and publishes it
 
+Any Python 3.10+ can run it: the tests run in the project's .venv when there is one.
+
 Before running it: set __version__ in src/ignite_live/__init__.py, add a "## X.Y.Z" section at the top of
 CHANGELOG.md (the release page starts with it), and commit both ("Ignite X.Y.Z").
 
@@ -78,11 +80,27 @@ def check(ver: str, run_tests: bool) -> str:
     if not changelog_section(ver):
         raise ReleaseError(f"CHANGELOG.md has no \"## {ver}\" section: add what's new (the release page shows it).")
     if run_tests and (ROOT / "tests").is_dir():
-        print("Running the tests…")
-        result = subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", "tests", "-q"], cwd=ROOT)
+        python = test_python()
+        print(f"Running the tests ({python})…")
+        result = subprocess.run([python, "-m", "unittest", "discover", "-s", "tests", "-q"], cwd=ROOT)
         if result.returncode != 0:
             raise ReleaseError("The tests failed. Fix them, or pass --skip-tests if you're sure.")
     return tag
+
+
+def test_python() -> str:
+    """The project's own environment (.venv), whichever Python started this: a plain `python` is often the
+    system one, without PySide6, aiohttp and the rest, and then every test fails to even import."""
+    for candidate in (ROOT / ".venv" / "bin" / "python", ROOT / ".venv" / "Scripts" / "python.exe"):
+        if candidate.exists():
+            return str(candidate)
+    probe = subprocess.run([sys.executable, "-c", "import ignite_live, PySide6, aiohttp"], cwd=ROOT,
+                           capture_output=True)
+    if probe.returncode != 0:
+        raise ReleaseError("This Python doesn't have Ignite's packages, and there's no .venv in the project. "
+                           "Install them (pip install -e \".[desktop,build]\") or run this with the Python that has "
+                           "them.")
+    return sys.executable
 
 
 def main(argv: list[str] | None = None) -> int:
