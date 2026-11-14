@@ -5,6 +5,17 @@ starts with its section from this file (see `.github/workflows/build.yml`).
 For versions before 1.6.1, see the
 [GitHub releases](https://github.com/sh1ftycode/IgniteLive/releases).
 
+## 1.6.3
+
+### Fixed
+
+- **Ignite servers behind Cloudflare work again.** Ignite's requests to an
+  Ignite server (checking the connection, turning on hosted links, the links
+  themselves, syncing the stream key) were refused with "Backend returned
+  HTTP 403" when the server was behind a Cloudflare Tunnel, because
+  Cloudflare blocks Python's default request signature. Ignite now
+  identifies itself as Ignite.
+
 ## 1.6.2
 
 ### New
