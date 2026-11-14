@@ -5,6 +5,17 @@ starts with its section from this file (see `.github/workflows/build.yml`).
 For versions before 1.6.1, see the
 [GitHub releases](https://github.com/sh1ftycode/IgniteLive/releases).
 
+## 1.6.5
+
+### Changed
+
+- **Ignite always uses the main Ignite server.** Hosted links, remote
+  control and settings sync now always go through the official Ignite
+  server, and Preferences → Server shows its address read-only. If you had
+  set a different server, Ignite switches over on its next start: turn
+  Hosted links on again (API tab) to get your new links, then paste them
+  into OBS or your streaming app in place of the old ones.
+
 ## 1.6.4
 
 ### Fixed
