@@ -5,6 +5,19 @@ starts with its section from this file (see `.github/workflows/build.yml`).
 For versions before 1.6.1, see the
 [GitHub releases](https://github.com/sh1ftycode/IgniteLive/releases).
 
+## 1.6.4
+
+### Fixed
+
+- **Streamlabs sign-in opens your browser on Linux again.** On some Linux
+  systems (for example Bazzite or Fedora with GNOME, where Firefox is a
+  Flatpak), clicking Sign In did nothing: the AppImage and tar.gz builds
+  passed their own bundled libraries to the system's link opener, which
+  crashed before reaching a browser. Ignite now starts the browser with your
+  system's own settings. If no browser opens anyway, it shows the sign-in
+  link with a Copy Link button, and you can paste it into any browser on the
+  same computer. The other buttons that open links or folders work again too.
+
 ## 1.6.3
 
 ### Fixed
