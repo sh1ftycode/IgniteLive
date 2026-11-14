@@ -12,12 +12,15 @@ import urllib.error
 import urllib.request
 from typing import TYPE_CHECKING, Any, Callable
 
+from ignite_live import __version__
+
 if TYPE_CHECKING:
     import aiohttp
 
 Transport = Callable[[str, str, dict[str, str], bytes | None], tuple[int, bytes]]
 
 _tls: ssl.SSLContext | None = None
+USER_AGENT = f"Ignite/{__version__}"
 
 
 class TransportError(Exception):
@@ -77,6 +80,9 @@ def reason(error: BaseException) -> str:
 def urllib_transport(
     method: str, url: str, headers: dict[str, str], body: bytes | None
 ) -> tuple[int, bytes]:
+    # Python's default "Python-urllib/3.x" is blocked by Cloudflare's Browser Integrity Check (error 1010), so an
+    # Ignite server behind a Cloudflare Tunnel answered 403. Say who we are; a caller's own User-Agent still wins.
+    headers = {"User-Agent": USER_AGENT, **headers}
     request = urllib.request.Request(url, data=body, headers=headers, method=method)
     context = tls_context() if url.lower().startswith("https:") else None
     try:
