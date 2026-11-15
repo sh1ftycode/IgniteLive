@@ -30,6 +30,9 @@ GIFT_TINT = 0.09  # Gifts, subs and Super Chats: a faint orange wash on the row.
 EVENT_ROLE = Qt.ItemDataRole.UserRole
 KIND_ROLE = Qt.ItemDataRole.UserRole + 1
 FADE_ROLE = Qt.ItemDataRole.UserRole + 2  # time.monotonic() when a fading row arrived; None: the row stays.
+# Comment rows' wrapped heights by (text, text width, scale): Qt asks for every row's size whenever the list lays
+# out, and wrapping text is the slow part, so each is worked out once. Enough for the rows a feed keeps.
+HEIGHTS_KEPT = 4096
 
 # Gift combo ticks and "joined" rows flood in, then fade away: shown this long, then faded out over FADE_OUT_S.
 SHOWN_S = 6.0
@@ -154,6 +157,9 @@ class ChatDelegate(QStyledItemDelegate):
         self.small_font = _font(base, 11 * self.scale)
         self.pad = round(10 * self.scale)
         self.avatar = round(32 * self.scale)
+        self.text_metrics = QFontMetrics(self.text_font)
+        self.name_height = QFontMetrics(self.name_font).height()
+        self._heights: dict[tuple[str, int, float], int] = {}  # See HEIGHTS_KEPT; a new size starts afresh.
 
     # Colours follow the app palette, so the feed works with light and dark themes.
 
@@ -207,11 +213,17 @@ class ChatDelegate(QStyledItemDelegate):
         event = index.data(EVENT_ROLE)
         width = self.view.viewport().width()
         if isinstance(event, ChatComment):
-            text = QFontMetrics(self.text_font).boundingRect(
-                QRect(0, 0, self._text_width(), 100_000), Qt.TextFlag.TextWordWrap, event.text
-            )
-            name_h = QFontMetrics(self.name_font).height()
-            return QSize(width, max(self.avatar, name_h + 2 + text.height()) + 2 * round(7 * self.scale))
+            text_width = max(80, width - self.avatar - 3 * self.pad)
+            key = (event.text, text_width, self.scale)
+            height = self._heights.get(key)
+            if height is None:
+                text = self.text_metrics.boundingRect(QRect(0, 0, text_width, 100_000), Qt.TextFlag.TextWordWrap,
+                                                      event.text)
+                height = max(self.avatar, self.name_height + 2 + text.height()) + 2 * round(7 * self.scale)
+                self._heights[key] = height
+                if len(self._heights) > HEIGHTS_KEPT:
+                    self._heights.pop(next(iter(self._heights)))  # The oldest.
+            return QSize(width, height)
         if isinstance(event, ChatGift):
             return QSize(width, round(58 * self.scale))
         return QSize(width, round(34 * self.scale))
@@ -417,6 +429,10 @@ class ChatFeed(QListWidget):
         self._fading: list[QListWidgetItem] = []  # Rows that fade away, oldest first.
         self._fade_timer = QTimer(self, interval=FADE_TICK_MS)
         self._fade_timer.timeout.connect(self._fade_step)
+        # Following the chat: one scroll to the latest row once the lines that arrived together are in, not one
+        # per line (each scroll lays out every row; a busy LIVE sends dozens of lines a second).
+        self._scroll_timer = QTimer(self, singleShot=True, interval=0)
+        self._scroll_timer.timeout.connect(self.scrollToBottom)
 
     def _image_loaded(self, _url: str) -> None:
         self.viewport().update()
@@ -425,7 +441,7 @@ class ChatFeed(QListWidget):
         kind = kind_of(event)
         if kind is None:
             return
-        following = self._at_bottom()
+        following = self._scroll_timer.isActive() or self._at_bottom()
         platform = event.user.platform
         if platform not in self.platforms:
             self.platforms.add(platform)
@@ -444,7 +460,7 @@ class ChatFeed(QListWidget):
             if gone is not None and gone.data(FADE_ROLE) is not None:
                 self._fading.remove(gone)
         if following:
-            self.scrollToBottom()
+            self._scroll_timer.start()
         elif not item.isHidden():
             self._unseen += 1
             self._show_pill()
@@ -517,6 +533,8 @@ class ChatFeed(QListWidget):
         if self._at_bottom():
             self._unseen = 0
             self.new_pill.hide()
+        else:
+            self._scroll_timer.stop()  # Scrolled up to read: stay there.
 
     def _show_pill(self) -> None:
         self.new_pill.setText(f"{self._unseen} new message{'s' if self._unseen != 1 else ''}  ↓")

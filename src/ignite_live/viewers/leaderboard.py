@@ -65,9 +65,15 @@ class Leaderboards:
         else:
             return []
         self._users[user.key] = user
-        self._stream[name][user.key] += amount
+        counts = self._stream[name]
+        counts[user.key] += amount
         board = f"{name}:stream"
-        rows = [self._row(key, value) for key, value in self._stream[name].most_common(ROWS)]
+        shown = self.boards[board]
+        # Most events are from someone far down a full board: they can't change it, so don't sort everyone.
+        # (Strictly below the last row: on a tie, whoever was counted first ranks higher, and that may be them.)
+        if len(shown) == ROWS and counts[user.key] < shown[-1]["value"] and all(r["key"] != user.key for r in shown):
+            return []
+        rows = [self._row(key, value) for key, value in counts.most_common(ROWS)]
         return self._set(board, rows)
 
     def refresh_alltime(self, announce: bool = True) -> list[LeaderChanged]:

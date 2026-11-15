@@ -352,11 +352,12 @@ class OverlayServer:
     async def _broadcast(self, message: dict, skip: web.WebSocketResponse | None = None) -> None:
         if self.on_broadcast is not None:
             self.on_broadcast(message)
+        text = json.dumps(message)  # Once, for every overlay open.
         for ws in list(self._sockets):
             if ws is skip:
                 continue
             try:
-                await ws.send_json(message)
+                await ws.send_str(text)
             except ConnectionError:
                 self._sockets.discard(ws)
                 self._previews.discard(ws)
