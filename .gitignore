@@ -12,3 +12,7 @@ packaging/bundled_config.json
 # Kept locally, not published.
 tests/
 maindoc/
+
+# Android signing keys: never in the repository.
+*.keystore
+*.jks

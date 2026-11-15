@@ -42,14 +42,16 @@ def _shape(shape, rect: QRectF) -> QPainterPath:
     return path
 
 
-def paint_logo(painter: QPainter, rect: QRectF) -> None:
-    """The app icon: a flame with a hollow core, cyan at the tip to violet at the base, on a midnight tile."""
+def paint_logo(painter: QPainter, rect: QRectF, tile: bool = True) -> None:
+    """The app icon: a flame with a hollow core, cyan at the tip to violet at the base, on a midnight tile.
+    ``tile=False``: the flame alone (phone icons put it on a full-bleed LOGO_TILE that the phone shapes itself)."""
     s = rect.width()
     painter.save()
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.setPen(QPen(QColor(LOGO_EDGE), max(1.0, s / 128)))  # An edge on dark backgrounds.
-    painter.setBrush(QColor(LOGO_TILE))
-    painter.drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), s * 0.22, s * 0.22)
+    if tile:
+        painter.setPen(QPen(QColor(LOGO_EDGE), max(1.0, s / 128)))  # An edge on dark backgrounds.
+        painter.setBrush(QColor(LOGO_TILE))
+        painter.drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), s * 0.22, s * 0.22)
     painter.setPen(Qt.PenStyle.NoPen)
     fire = QLinearGradient(rect.x(), rect.y() + s * 0.11, rect.x(), rect.y() + s * 0.89)
     fire.setColorAt(0, QColor(LOGO_TIP))

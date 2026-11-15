@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The desktop's dark palette (core/palettes.py): window #0E1015, accent #FF7A3D. -->
+    <color name="window">#FF0E1015</color>
+    <color name="accent">#FFFF7A3D</color>
+
+    <style name="Ignite" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/window</item>
+        <item name="android:statusBarColor">@color/window</item>
+        <item name="android:navigationBarColor">@color/window</item>
+        <item name="android:colorAccent">@color/accent</item>
+        <item name="android:colorPrimary">@color/window</item>
+    </style>
+</resources>

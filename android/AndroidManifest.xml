@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Ignite for Android: the web dashboard of your Ignite server in its own app (see android/README.md).
+     Version and package name are filled in by packaging/build_apk.py. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="io.github.sh1ftycode.ignite">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- usesCleartextTraffic: plain http:// is allowed only for a server on this phone's own network
+         (MainActivity.allowed), like the desktop app; anything on the internet needs https://. -->
+    <application
+        android:label="Ignite"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:theme="@style/Ignite"
+        android:allowBackup="false"
+        android:usesCleartextTraffic="true"
+        android:supportsRtl="true">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|uiMode"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

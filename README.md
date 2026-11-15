@@ -17,6 +17,10 @@ Get the latest build from [Releases](https://github.com/sh1ftycode/IgniteLive/re
 - **Windows:** `Ignite-Setup-<version>.exe` (installer) or the `-windows.zip`.
 - **Linux:** `Ignite-<version>-x86_64.AppImage`: `chmod +x` it and run it. Or
   unpack the `-linux.tar.gz` and run `Ignite/Ignite`.
+- **Android:** `Ignite-<version>.apk`, a remote for Ignite on your PC through
+  your Ignite server (see [android/README.md](android/README.md)).
+- **iPhone:** open your Ignite server's dashboard in Safari, then **Share →
+  Add to Home Screen**.
 
 ## Why
 
