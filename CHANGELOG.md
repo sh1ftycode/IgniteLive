@@ -5,6 +5,51 @@ starts with its section from this file (see `.github/workflows/build.yml`).
 For versions before 1.6.1, see the
 [GitHub releases](https://github.com/sh1ftycode/IgniteLive/releases).
 
+## 1.7.0
+
+### New
+
+- **Sign in to Ignite.** File → Preferences → Server → **Sign In…** opens
+  the Ignite website with a short code: log in there with a password or
+  Discord, check the code matches, and approve. No more copying a device
+  token. Each signed-in PC is listed on the website under Account, where you
+  can sign it out; **Sign Out** in Ignite signs it out there too.
+- **TikTok chat through the Ignite server.** Once you're signed in, Ignite
+  gets TikTok chat, gifts, likes, follows, shares, joins and viewer counts
+  from the Ignite server (through Euler Stream) instead of running its own
+  TikTok connection. If the server can't take it right now, Ignite connects
+  to TikTok itself as before.
+- **More of Ignite in the web dashboard.** With remote control on, the Ignite
+  website's dashboard now has Viewers, Actions, Games, Overlays, Streams and
+  Settings next to Stream and Music: turn rules on and off, start games,
+  change the overlay theme, see your last streams, and change song request,
+  text to speech, OBS, moderation and panic settings from any browser. On a
+  phone it shows one panel at a time.
+- **Ignite on your phone.** An Android app (`Ignite-<version>.apk` on the
+  release page) and, on iPhone, the dashboard on your Home Screen (Safari →
+  Share → Add to Home Screen): a remote for Ignite on your PC, through the
+  Ignite server. It opens full screen, starts fast, and says so when your
+  phone is offline.
+
+### Faster
+
+- **Busy LIVEs don't make chat fall behind any more.** Each new chat line
+  made the chat panel measure every line again, so the more chat there was,
+  the slower Ignite got: about 90 events a second at most, and a big LIVE
+  sends more than that in likes and joins alone, so chat ran further and
+  further behind. Lines are now measured once and the panel scrolls once per
+  batch: about 5,600 to 8,600 events a second with the main window, the
+  overlays and the leaderboards running. The leaderboards also skip
+  re-sorting when an event can't change them, and the overlays and the
+  server send each message to all their pages without re-encoding it for
+  each.
+
+### Fixed
+
+- **Running Ignite from source on Python 3.15 works.** Anything it did in
+  the background (saving viewer stats, song search, OBS, the server) failed
+  with "'lazy_import' object is not callable".
+
 ## 1.6.5
 
 ### Changed
