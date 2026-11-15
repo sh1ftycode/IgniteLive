@@ -226,13 +226,19 @@ def normalize(message: Any) -> dict | None:
 
 
 def room_stats(info: Any) -> dict | None:
-    """Followers, likes and viewers from Euler's room info (TikTok's room details, in either case style)."""
+    """Followers (and likes and viewers, when present) from Euler's room info.
+
+    Seen from Euler (2026-11): ``{"roomInfo": {"status", "isLive", "id", "title", …}, "user": {"followers", …},
+    "uniqueId", "raw"}``: followers only; likes and viewers come from their own messages. TikTok's own room
+    details (``owner.follow_info``, ``stats``, ``user_count``) are read too, in case Euler sends them."""
     info = _dict(info)
     room = _dict(info.get("roomInfo")) or _dict(info.get("data")) or info
     owner = _dict(room.get("owner"))
     follow = _dict(_first(owner, "follow_info", "followInfo"))
     stats = _dict(room.get("stats"))
     followers = _int(_first(follow, "follower_count", "followerCount"))
+    if followers is None:
+        followers = _int(_dict(info.get("user")).get("followers"))
     likes = _int(_first(stats, "like_count", "likeCount")) or _int(_first(room, "like_count", "likeCount"))
     viewers = _int(_first(room, "user_count", "userCount"))
     if followers is None and likes is None and viewers is None:
