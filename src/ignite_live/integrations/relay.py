@@ -50,7 +50,9 @@ COMMANDS: dict[str, tuple[str, ...]] = {name: command.args for name, command in 
 FILE_CHUNK = 32 * 1024  # A fetched file goes in pieces this size (before base64), so each message stays small.
 FILE_MAX = 2 * 1024 * 1024
 # The latest of each is kept and re-sent after a reconnect; chat lines and notices are sent once, as they happen.
-STATE_KINDS = ("live", "panic", "status", "studio", "queue", "playlist", "tts_muted", "music")
+STATE_KINDS = ("live", "panic", "status", "studio", "queue", "playlist", "tts_muted", "music",
+               # The dashboard's other tabs (integrations/dashboard.py).
+               "dashboard", "goals", "leaderboards", "game", "stats", "audience", "reports")
 # What a dashboard tab that plays the music may report.
 PLAYER_EVENTS = ("ended", "error", "playing", "progress")
 MAX_PENDING = 200  # Chat lines and notices held while disconnected (the oldest go first).

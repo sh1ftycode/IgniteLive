@@ -3,6 +3,12 @@
 Stream keys are encrypted at rest with Fernet (AES-128-CBC + HMAC). Device
 tokens are stored as SHA-256 digests; they are 256-bit random values, so a
 slow password hash adds nothing.
+
+Each user has one legacy device token (``ignite-server add-user``, or an
+Ignite Web account's "Connect a PC"), and any number of signed-in devices:
+an Ignite on a PC that signed in through the website ("Sign In" in
+Preferences → Server), each with its own token, listed and revocable on its
+own. Both kinds of token work for every /v1 feature.
 """
 
 from __future__ import annotations
@@ -38,6 +44,17 @@ CREATE TABLE IF NOT EXISTS settings (
     body TEXT NOT NULL,
     updated_at REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS devices (
+    id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    token_hash TEXT NOT NULL UNIQUE,
+    name TEXT NOT NULL DEFAULT '',
+    platform TEXT NOT NULL DEFAULT '',
+    created_at REAL NOT NULL,
+    last_seen REAL NOT NULL,
+    ip TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS devices_by_user ON devices(user_id);
 CREATE TABLE IF NOT EXISTS search_cache (
     query TEXT PRIMARY KEY,
     body TEXT NOT NULL,
@@ -53,6 +70,22 @@ class StoredKey:
     session_id: str | None
     created_at: float
     expires_at: float
+
+
+@dataclass(frozen=True)
+class Device:
+    """A signed-in Ignite (never its token: only the hash is kept)."""
+
+    id: int
+    name: str
+    platform: str
+    created_at: float
+    last_seen: float
+    ip: str
+
+
+DEVICE_PREFIX = "ig_"  # Signed-in devices; legacy device tokens start with "st_".
+DEVICE_TOUCH_S = 300  # last_seen is written at most this often per device.
 
 
 def load_or_create_secret(data_dir: Path, from_env: str = "") -> bytes:
@@ -115,10 +148,59 @@ class Store:
         return [row[0] for row in self._db.execute("SELECT name FROM users ORDER BY name")]
 
     def user_for_token(self, token: str) -> int | None:
+        """The user a legacy device token or a signed-in device's token belongs to."""
+        if token.startswith(DEVICE_PREFIX):
+            found = self.device_for_token(token)
+            return found[0] if found else None
         row = self._db.execute(
             "SELECT id FROM users WHERE token_hash = ?", (_digest(token),)
         ).fetchone()
         return row[0] if row else None
+
+    # Signed-in devices.
+
+    def add_device(self, user_id: int, name: str = "", platform: str = "", ip: str = "") -> tuple[int, str]:
+        """A new signed-in device: (its id, its token). The token is shown once and only its hash is kept."""
+        token, now = DEVICE_PREFIX + secrets.token_urlsafe(32), self._clock()
+        with self._db:
+            cursor = self._db.execute(
+                "INSERT INTO devices (user_id, token_hash, name, platform, created_at, last_seen, ip)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (user_id, _digest(token), name.strip()[:60], platform.strip()[:20], now, now, ip[:64]),
+            )
+        return cursor.lastrowid, token
+
+    def device_for_token(self, token: str) -> tuple[int, int] | None:
+        """(user id, device id) for a signed-in device's token."""
+        if not token.startswith(DEVICE_PREFIX):
+            return None
+        digest = _digest(token)
+        row = self._db.execute("SELECT user_id, id, last_seen FROM devices WHERE token_hash = ?", (digest,)).fetchone()
+        if row is None:
+            return None
+        now = self._clock()
+        if now - row[2] > DEVICE_TOUCH_S:
+            with self._db:
+                self._db.execute("UPDATE devices SET last_seen = ? WHERE id = ?", (now, row[1]))
+        return row[0], row[1]
+
+    def devices(self, user_id: int) -> list[Device]:
+        return [Device(*row) for row in self._db.execute(
+            "SELECT id, name, platform, created_at, last_seen, ip FROM devices WHERE user_id = ?"
+            " ORDER BY last_seen DESC", (user_id,))]
+
+    def remove_device(self, user_id: int, device_id: int) -> bool:
+        """Sign one device out (only one of this user's own)."""
+        with self._db:
+            return self._db.execute("DELETE FROM devices WHERE id = ? AND user_id = ?",
+                                    (device_id, user_id)).rowcount > 0
+
+    def remove_devices(self, user_id: int) -> list[int]:
+        """Sign every device out; returns their ids."""
+        ids = [row[0] for row in self._db.execute("SELECT id FROM devices WHERE user_id = ?", (user_id,))]
+        with self._db:
+            self._db.execute("DELETE FROM devices WHERE user_id = ?", (user_id,))
+        return ids
 
     # Stream keys.
 

@@ -111,6 +111,11 @@ COMMANDS: dict[str, Command] = {
     "stop_playlist": Command((), "Stop the playlist"),
     # Rules and safety.
     "run_rule": Command(("id",), "Run an action rule's actions now, like its Test button"),
+    "set_rule_enabled": Command(("id", "enabled"), "Turn an action rule on or off"),
+    "start_game": Command(("kind", "seconds"), "Start a game (tug, boss, poll) with its settings from the Games tab"),
+    "stop_game": Command((), "End the game that's running"),
+    "update_settings": Command(("values",), "Change some settings (the web dashboard's Settings tab; see the list in "
+                                            "docs/API.md)"),
     "panic": Command((), "Panic: mute text to speech, clear alerts, pause music and rules, switch to BRB"),
     "resume": Command((), "End panic mode"),
 }

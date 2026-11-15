@@ -6,6 +6,7 @@ secret field keeps the saved value.
 
 from __future__ import annotations
 
+import html
 import re
 from dataclasses import replace
 
@@ -50,7 +51,7 @@ from ignite_live.music.commands import CommandKind
 from ignite_live.music.youtube import video_id_from
 from ignite_live.core.seasons import SEASONAL, SEASONAL_LABEL
 from ignite_live.overlay.server import THEMES as OVERLAY_THEMES
-from ignite_live.ui.pages.stream import note
+from ignite_live.ui.pages.stream import disclosure, note
 from ignite_live.speech.voices import PROVIDERS, tiktok_voices, valid_session
 from ignite_live.ui.theme import THEMES as APP_THEMES
 from ignite_live.ui.theme import resolve_theme
@@ -363,14 +364,39 @@ class PreferencesDialog(QDialog):
 
         form = _tab(self.tabs, "Server")
         self.backend_url = QLineEdit(s.backend_url)
-        self.backend_url.setPlaceholderText("https://ignite.example.com")
+        self.backend_url.setPlaceholderText(main_server() or "https://ignite.example.com")
         form.addRow("Server &URL:", self.backend_url)
         if main_server():  # This build always uses its main server.
             self.backend_url.setText(main_server())
             self.backend_url.setReadOnly(True)
             self.backend_url.setToolTip("This version of Ignite always uses this server.")
+        self.sign_in_state = QLabel()
+        self.sign_in_state.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.sign_in_state.setWordWrap(True)
+        self.sign_in_button = QPushButton("Sign In…")
+        self.sign_in_button.setToolTip("Opens your server's website: log in there (password or Discord) and approve "
+                                       "this PC")
+        self.sign_in_button.clicked.connect(self._sign_in)
+        self.sign_in_cancel = QPushButton("Cancel")
+        self.sign_in_cancel.clicked.connect(controller.cancel_server_sign_in)
+        self.sign_out_button = QPushButton("Sign Out")
+        self.sign_out_button.setToolTip("Signs this PC out on the server too. Hosted links stop until you sign in again")
+        self.sign_out_button.clicked.connect(controller.sign_out_of_server)
+        account_row = QHBoxLayout()
+        account_row.addWidget(self.sign_in_state, 1)
+        for button in (self.sign_in_button, self.sign_in_cancel, self.sign_out_button):
+            account_row.addWidget(button)
+        form.addRow("Account:", account_row)
+        token_box = QWidget()
+        token_form = QFormLayout(token_box)
+        token_form.setContentsMargins(0, 0, 0, 0)
         self.backend_token = _secret(keychain.BACKEND_TOKEN)
-        form.addRow("Device &token:", self.backend_token)
+        token_form.addRow("Device &token:", self.backend_token)
+        token_form.addRow(note("For a plain Ignite server (ignite-server add-user NAME), or Connect a PC on an older "
+                               "Ignite Web server. Signing in replaces it."))
+        form.addRow(disclosure("Use a device token instead", token_box))
+        controller.server_sign_in.connect(self._show_sign_in)
+        self._show_sign_in(controller.server_account())
         self.remote_control = QCheckBox("Allow remote control")
         self.remote_control.setChecked(s.remote_control)
         remote_note = note("Lets you run Ignite from a browser or phone when you're signed in to the server, and lets "
@@ -383,9 +409,10 @@ class PreferencesDialog(QDialog):
         # REMOTE_CONTROL (controller.py) can hide it; the setting itself is kept.
         self.remote_control.setVisible(REMOTE_CONTROL)
         remote_note.setVisible(REMOTE_CONTROL)
-        form.addRow(note("Optional. Keeps your stream key for 48 hours when the app is closed, syncs settings "
-                         "between computers and runs song search. On an Ignite Web server, get both values from "
-                         "Connect a PC; on a plain Ignite server, from: ignite-server add-user NAME"))
+        form.addRow(note("Optional. Sign in to keep your stream key for 48 hours when the app is closed, sync "
+                         "settings between computers, run song search, read TikTok chat through the server, and "
+                         "use Ignite from a browser or your phone. Every signed-in PC is listed on the website "
+                         "under Account, where you can sign it out."))
 
         form = _tab(self.tabs, "Song requests")
         self.request_role = _choice({r: ROLE_NAMES[r] for r in ROLES}, s.request_role)
@@ -944,6 +971,31 @@ class PreferencesDialog(QDialog):
             self.controller.apply_tts()
         self.message.setText("Saved.")
         return True
+
+    # Signing in to the server (controller.sign_in_to_server).
+
+    def _sign_in(self) -> None:
+        url = self.backend_url.text().strip().rstrip("/") or main_server()
+        if not url:
+            self.tabs.setCurrentIndex(TABS.index("Server"))
+            self.message.setText("Enter your Ignite server's address first.")
+            return
+        self.backend_url.setText(url)
+        self.controller.sign_in_to_server(url)
+
+    def _show_sign_in(self, state: dict | None) -> None:
+        waiting = bool(state and state.get("waiting"))
+        if waiting:
+            self.sign_in_state.setText(f"In your browser, approve the code <b>{html.escape(state['code'])}</b>. Waiting…")
+        elif state:
+            self.backend_url.setText(state.get("server", "") or self.backend_url.text())
+            who = state.get("username")
+            self.sign_in_state.setText(f"Signed in as <b>{html.escape(who)}</b>" if who else "Connected with a device token")
+        else:
+            self.sign_in_state.setText("Not signed in")
+        self.sign_in_button.setVisible(not waiting and not state)
+        self.sign_in_cancel.setVisible(waiting)
+        self.sign_out_button.setVisible(bool(state) and not waiting)
 
     @staticmethod
     def _command_clash(s: Settings) -> str:

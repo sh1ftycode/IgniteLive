@@ -196,8 +196,16 @@ On a **Stream Deck**, use a *Website* action with the GET address and tick *GET 
 | `clear_queue` | | Empty the song queue |
 | `stop_playlist` | | Stop the playlist |
 | `run_rule` | `id` | Run an action rule's actions now, like its Test button |
+| `set_rule_enabled` | `id`, `enabled` | Turn an action rule on (`true`) or off (`false`) |
+| `start_game` | `kind`, `seconds` | Start a game: `tug`, `boss` or `poll`, with its settings from the Games tab; `seconds` (optional) overrides its length |
+| `stop_game` | | End the game that's running |
+| `update_settings` | `values` | Change some settings: `values` is an object of setting names and new values (see below) |
 | `panic` | | Panic: mute text to speech, clear alerts, pause music and rules, switch to your BRB scene |
 | `resume` | | End panic mode |
+
+`update_settings` only changes these (others are ignored; numbers are kept in range, wrong types are
+ignored): `tiktok_username`, `twitch_channel`, `youtube_channel`, `stream_title`, `volume`, `request_role`, `skip_role`, `user_cooldown_s`, `max_queue`, `max_per_user`, `max_minutes`, `music_radio`, `music_radio_start`, `music_playlist_url`, `music_playlist_shuffle`, `refuse_explicit`, `refuse_unknown_length`, `auto_ban`, `tts_enabled`, `tts_comments`, `tts_gifts`, `tts_follows`, `tts_role`, `tts_command`, `tts_skip_commands`, `tts_skip_links`, `tts_max_chars`, `tts_volume`, `command_prefix`, `obs_record_while_live`, `obs_replay_while_live`, `obs_live_scene`, `obs_warn_dropped_pct`, `obs_chat_clip`, `obs_chat_scene`, `mod_hide_links`, `mod_chat_mode`, `blocked_words`, `panic_tts`, `panic_alerts`, `panic_music`, `panic_rules`, `panic_scene`, `panic_chat_command`, `discord_comments`, `discord_gifts`, `discord_follows`. Secrets, ports, the server address and remote control itself can only be changed in
+the app.
 
 OBS commands answer `400` while OBS isn't connected to Ignite. `GET /api/v1` with the control key
 lists every command with its arguments, so your code can check what this version of Ignite offers.

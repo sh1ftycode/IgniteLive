@@ -13,6 +13,7 @@ import logging
 import mimetypes
 import os
 import secrets
+import threading
 import time
 from urllib.parse import urlsplit
 from dataclasses import asdict, fields, replace
@@ -49,7 +50,15 @@ from ignite_live.core.key_cache import LocalKeyCache
 from ignite_live.core.runtime import Runtime
 from ignite_live.core.settings import COMMAND_DEFAULTS, PLATFORM_FIELDS, Settings
 from ignite_live.core.templates import Texts, render
-from ignite_live.integrations.backend import BackendClient, BackendError, CachedKey, register_device
+from ignite_live.integrations.backend import (
+    BackendClient,
+    BackendError,
+    CachedKey,
+    register_device,
+    start_sign_in,
+    wait_for_sign_in,
+)
+from ignite_live.integrations import dashboard
 from ignite_live.integrations.relay import RelayClient
 from ignite_live.integrations.discord_bridge import DiscordBridge, DiscordError, Forwarding, escape
 from ignite_live.integrations import obs_targets
@@ -244,6 +253,9 @@ class Controller(QObject):
     chat_event = Signal(object)  # ChatEvent
     chats_cleared = Signal()  # Clear All Chats: every chat panel empties.
     hosted_changed = Signal()  # Hosted widget links turned on or off, or new links or keys.
+    # Signing in to the Ignite server: {"waiting": True, "code", "url"} while the website is open, then
+    # {"username", "server"} when signed in, or None when signed out.
+    server_sign_in = Signal(object)
     queue_changed = Signal(dict)  # SongQueue.snapshot()
     notice = Signal(str, str)  # level ("info" | "error"), text
     browser_link = Signal(str, str)  # title, URL: no browser opened, so the user copies it by hand
@@ -432,6 +444,15 @@ class Controller(QObject):
         self.playlist_changed.connect(lambda info: self._publish("playlist", info))
         self.tts_mute_changed.connect(lambda muted: self._publish("tts_muted", muted))
         self.notice.connect(lambda level, text: self._publish("notice", {"level": level, "text": text}))
+        # The web dashboard's other tabs.
+        self.goals_changed.connect(lambda goals: self._publish("goals", goals))
+        self.game_changed.connect(lambda game: self._publish("game", game))
+        self.audience_changed.connect(
+            lambda people: self._publish("audience", dashboard.audience_payload(people, self.stats_snapshot)))
+        self.settings_changed.connect(lambda _settings: self._publish_dashboard())
+        self.hosted_changed.connect(self._publish_dashboard)
+        self.stream_report_ready.connect(lambda _path: self._publish_reports())
+        self._reports: list[dict] = []
 
     # Lifecycle.
 
@@ -463,6 +484,7 @@ class Controller(QObject):
             for kind, data in self._api_snapshot().items():  # API clients get the whole state as they connect.
                 self.api.set_state(kind, data)
             self._api_clients_changed(0)
+            self._publish_reports()
             self.music.set_radio(self.settings.music_radio, self.settings.music_radio_start)  # Starts autoplay.
         except OSError:
             self._status("overlay", ConnectionState.ERROR, f"Port {self.overlay.port} is in use. Change it in Settings.")
@@ -582,9 +604,20 @@ class Controller(QObject):
 
     def _make_chat(self, platform: str, name: str, on_status):
         if platform == "tiktok":
-            from ignite_live.integrations.tiktok_chat import TikTokChat  # TikTokLive is slow to import.
+            def own_connection():
+                from ignite_live.integrations.tiktok_chat import TikTokChat  # TikTokLive is slow to import.
 
-            return TikTokChat(name, self._on_chat_event, on_status, keychain.load(keychain.SIGN_API_KEY))
+                return TikTokChat(name, self._on_chat_event, on_status, keychain.load(keychain.SIGN_API_KEY))
+
+            token = keychain.load(keychain.BACKEND_TOKEN) or ""
+            if self.settings.tiktok_via_server and self.settings.backend_url and token:
+                # Signed in: the server reads TikTok through Euler Stream with its own key. If it can't (an older
+                # server, no key, or it's full), this PC reads TikTok itself, as before.
+                from ignite_live.integrations.euler import EulerChat
+
+                return EulerChat(name, self._on_chat_event, on_status, server=(self.settings.backend_url, token),
+                                 fallback=own_connection)
+            return own_connection()
         if platform == "twitch":
             from ignite_live.integrations.twitch_chat import TwitchChat
 
@@ -1018,7 +1051,9 @@ class Controller(QObject):
 
         def push() -> None:
             self._leaderboards_pending = False
-            self._spawn_task(self.overlay.set_leaderboards(self.leaderboards.snapshot()))
+            snapshot = self.leaderboards.snapshot()
+            self._spawn_task(self.overlay.set_leaderboards(snapshot))
+            self._publish("leaderboards", snapshot)
 
         asyncio.get_running_loop().call_later(LEADERBOARD_PUSH_SECONDS, push)
 
@@ -2484,8 +2519,109 @@ class Controller(QObject):
         url, token = self.settings.backend_url, keychain.load(keychain.BACKEND_TOKEN) or ""
         self._run("hosted", lambda: BackendClient(url, token).login_link(), on_success=open_url)
 
+    # Signing in to the Ignite server through its website (Preferences → Server → Sign In). The token it gets
+    # goes where a pasted device token went, so every server feature (keys, settings, remote control, hosted
+    # links) works the same way.
+
+    def sign_in_to_server(self, url: str = "") -> None:
+        url = (url or self.settings.backend_url or main_server()).strip().rstrip("/")
+        if not url:
+            self.notice.emit("error", "Enter your Ignite server's address first.")
+            return
+        self.cancel_server_sign_in()
+        cancelled = self._sign_in_cancel = threading.Event()
+
+        def work() -> tuple[str, str] | None:
+            code = start_sign_in(url)
+            if cancelled.is_set():
+                return None
+            self.server_sign_in.emit({"waiting": True, "code": code.user_code, "url": code.verification_uri_complete})
+            if not open_in_browser(code.verification_uri_complete):
+                self.browser_link.emit("Sign In to Ignite", code.verification_uri_complete)
+            return wait_for_sign_in(url, code, cancelled)
+
+        def done(found: tuple[str, str] | None) -> None:
+            if found is None:  # Cancelled.
+                self.server_sign_in.emit(self.server_account())
+                return
+            token, username = found
+            if not keychain.save(keychain.BACKEND_TOKEN, token):
+                self.server_sign_in.emit(None)
+                self.notice.emit("error", "No system keychain was found, so Ignite can't stay signed in.")
+                return
+            self.save_settings(replace(self.settings, backend_url=url, server_username=username))
+            self.check_backend(pull_settings=True)
+            self.server_sign_in.emit(self.server_account())
+            self.notice.emit("info", f"Signed in to {urlsplit(url).netloc} as {username}.")
+
+        def failed(error: BaseException) -> None:
+            self.busy_changed.emit("sign-in", False)
+            self.server_sign_in.emit(self.server_account())
+            self._error(error)
+
+        self.busy_changed.emit("sign-in", True)
+        self.runtime.blocking(work, on_success=lambda found: (self.busy_changed.emit("sign-in", False), done(found)),
+                              on_error=failed)
+
+    def cancel_server_sign_in(self) -> None:
+        if getattr(self, "_sign_in_cancel", None) is not None:
+            self._sign_in_cancel.set()
+
+    def server_account(self) -> dict | None:
+        """Who this Ignite is signed in as, from what's saved (no network): None when it isn't."""
+        if not (self.settings.backend_url and keychain.load(keychain.BACKEND_TOKEN)):
+            return None
+        return {"username": self.settings.server_username, "server": self.settings.backend_url}
+
+    def sign_out_of_server(self) -> None:
+        """Ends this Ignite's sign-in on the server too, then forgets it here. Hosted links stop with it."""
+        url, token = self.settings.backend_url, keychain.load(keychain.BACKEND_TOKEN) or ""
+
+        def work() -> None:
+            if url and token.startswith("ig_"):  # A signed-in device; a legacy device token has nothing to end.
+                try:
+                    BackendClient(url, token).sign_out()
+                except BackendError:
+                    pass  # Offline: it's forgotten here anyway, and can be signed out on the website.
+
+        def done(_result) -> None:
+            keychain.forget(keychain.BACKEND_TOKEN)
+            self.save_settings(replace(self.settings, server_username="", hosted_widgets=False))
+            self.check_backend()
+            self.hosted_changed.emit()
+            self.server_sign_in.emit(None)
+            self.notice.emit("info", "Signed out of your Ignite server.")
+
+        self._run("sign-in", work, on_success=done)
+
+    def _dashboard_payload(self) -> dict:
+        hosted = self.settings.hosted_base if self.settings.hosted_widgets else ""
+        # Links only when they're hosted ones: the local ones carry this PC's overlay token.
+        pages = {page: {"title": title, "url": f"{hosted}/{page}" if hosted else ""}
+                 for page, (title, _w, _h) in PAGES.items()}
+        return dashboard.dashboard_payload(self.settings, pages, {**THEMES, seasons.SEASONAL: "Seasonal"},
+                                           self._sound_names())
+
+    def _publish_dashboard(self) -> None:
+        self._publish("dashboard", self._dashboard_payload())
+
+    def _publish_reports(self) -> None:
+        def done(reports: list[dict]) -> None:
+            self._reports = reports
+            self._publish("reports", reports)
+
+        self.runtime.blocking(lambda: dashboard.report_summaries(self.saved_streams()), on_success=done,
+                              on_error=lambda error: log.info("Stream reports unreadable: %s", error))
+
     def _relay_snapshot(self) -> dict:
         return {
+            "dashboard": self._dashboard_payload(),
+            "goals": self.goal_snapshot,
+            "leaderboards": self.leaderboards.snapshot(),
+            "game": self.games.snapshot(),
+            "stats": self.stats_snapshot,
+            "audience": dashboard.audience_payload(self.audience_snapshot, self.stats_snapshot),
+            "reports": self._reports,
             "live": self.obs_streaming,
             "panic": self.panicking,
             "status": self._statuses_payload(),
@@ -2518,8 +2654,9 @@ class Controller(QObject):
             self._relay.publish(kind, data)  # Chat lines too ("chat"): the API gets those as events.
 
     def _api_snapshot(self) -> dict:
-        return {**self._relay_snapshot(), "tts_muted": self.tts_muted, "stats": self.stats_snapshot,
-                "leaderboards": self.leaderboards.snapshot(), "game": self.games.snapshot()}
+        snapshot = {**self._relay_snapshot(), "tts_muted": self.tts_muted, "stats": self.stats_snapshot,
+                    "leaderboards": self.leaderboards.snapshot(), "game": self.games.snapshot()}
+        return {kind: data for kind, data in snapshot.items() if kind in api.STATE_KINDS}
 
     def _api_event(self, event: ChatEvent) -> None:
         """On the event loop: a chat event for the API's clients, moderated the way the overlays show it."""
@@ -2681,6 +2818,33 @@ class Controller(QObject):
                 raise ValueError("Give a volume from 0 to 100.")
             ui(self.set_volume, volume)
             return f"Volume {volume}."
+        if name == "set_rule_enabled":
+            rule_id, on = str(args.get("id", "")), args.get("enabled") is True
+            rules = [dict(raw) for raw in self.settings.action_rules if isinstance(raw, dict)]
+            found = next((raw for raw in rules if raw.get("id") == rule_id), None)
+            if found is None:
+                raise ValueError(f"No action rule with the id “{rule_id[:40]}”.")
+            found["enabled"] = on
+            ui(self.save_settings, replace(self.settings, action_rules=rules))
+            return f"“{found.get('name') or 'Rule'}” {'on' if on else 'off'}."
+        if name == "start_game":
+            kind = str(args.get("kind", ""))
+            if kind not in GAMES:
+                raise ValueError(f"No game called “{kind[:20]}”. Games: {', '.join(GAMES)}.")
+            seconds = api.int_arg(args, "seconds", 0, 0, 3600) or None
+            ui(self.start_game, kind, seconds)
+            return f"Starting {GAMES[kind]}."
+        if name == "stop_game":
+            if not self.games.running:
+                raise ValueError("No game is running.")
+            ui(self.stop_game)
+            return "Game over."
+        if name == "update_settings":
+            new, changed = dashboard.apply_remote(self.settings, args.get("values"))
+            if not changed:
+                return "Nothing changed."
+            ui(self.save_settings, new)
+            return f"Saved {len(changed)} setting{'s' if len(changed) != 1 else ''}."
         if name == "run_rule":
             rule_id = str(args.get("id", ""))
             rule = next((r for r in parse_rules(self.settings.action_rules) if r.id == rule_id), None)

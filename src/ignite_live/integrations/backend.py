@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-import json
-from dataclasses import dataclass
-
 import ipaddress
+import json
+import socket
+import sys
+import threading
 import urllib.parse
-
+from dataclasses import dataclass
 
 from ignite_live.core.http import Transport, TransportError, urllib_transport
 from ignite_live.integrations.streamlabs import StreamCredentials
@@ -16,6 +17,10 @@ from ignite_live.music.youtube import Track
 
 class BackendError(Exception):
     """A safe-to-display backend error (never includes the device token)."""
+
+
+class BackendUnreachable(BackendError):
+    """The server didn't answer (offline, DNS, TLS): worth trying again."""
 
 
 @dataclass(frozen=True)
@@ -65,6 +70,95 @@ def register_device(base_url: str, name: str = "", transport: Transport = urllib
     if status >= 400 or not isinstance(payload.get("token"), str):
         raise BackendError(str(payload.get("error") or f"The server returned HTTP {status}."))
     return payload["token"]
+
+
+# Signing in (Ignite Web servers): like signing in a TV. Ignite asks for a code, opens the website's /link page
+# and shows the code; the streamer logs in there (password or Discord) and approves; Ignite gets its own token.
+
+
+@dataclass(frozen=True)
+class SignInCode:
+    device_code: str  # Ignite's secret for asking whether it's approved yet: never shown.
+    user_code: str  # Shown in Ignite, and on the website, so the streamer can check they match.
+    verification_uri: str
+    verification_uri_complete: str  # /link?code=…: opens with the code filled in.
+    expires_in: float
+    interval: float
+
+
+def device_name() -> str:
+    """What the website lists this Ignite as."""
+    try:
+        return socket.gethostname().split(".")[0][:60] or "Ignite"
+    except OSError:
+        return "Ignite"
+
+
+def device_platform() -> str:
+    return {"win32": "windows", "darwin": "macos"}.get(sys.platform, "linux" if sys.platform.startswith("linux") else sys.platform)
+
+
+def _post(base_url: str, path: str, body: dict, transport: Transport) -> tuple[int, dict]:
+    base_url = base_url.strip().rstrip("/")
+    if not server_url_allowed(base_url):
+        raise BackendError("Use an https:// server URL (plain http only works on this PC or your local network).")
+    try:
+        status, raw = transport("POST", base_url + path, {"Content-Type": "application/json",
+                                                          "Accept": "application/json"}, json.dumps(body).encode())
+    except TransportError as error:
+        raise BackendUnreachable("Could not reach the Ignite server.") from error
+    try:
+        payload = json.loads(raw) if raw else {}
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        payload = {}
+    return status, payload if isinstance(payload, dict) else {}
+
+
+def start_sign_in(base_url: str, name: str = "", platform: str = "",
+                  transport: Transport = urllib_transport) -> SignInCode:
+    status, payload = _post(base_url, "/v1/auth/device",
+                            {"name": name or device_name(), "platform": platform or device_platform()}, transport)
+    if status == 404:
+        raise BackendError("This server doesn't have sign-in (it's a plain Ignite server: use a device token).")
+    if status >= 400 or not isinstance(payload.get("device_code"), str):
+        raise BackendError(str(payload.get("message") or payload.get("error") or f"The server returned HTTP {status}."))
+    try:
+        return SignInCode(payload["device_code"], str(payload["user_code"]), str(payload["verification_uri"]),
+                          str(payload["verification_uri_complete"]), float(payload.get("expires_in", 600)),
+                          max(2.0, float(payload.get("interval", 5))))
+    except (KeyError, TypeError, ValueError) as error:
+        raise BackendError("The server's sign-in answer didn't make sense.") from error
+
+
+def poll_sign_in(base_url: str, device_code: str, transport: Transport = urllib_transport) -> tuple[str, str] | None:
+    """(token, username) once approved; None while waiting. Raises BackendError when refused or expired."""
+    status, payload = _post(base_url, "/v1/auth/token", {"device_code": device_code}, transport)
+    if status == 200 and isinstance(payload.get("token"), str):
+        return payload["token"], str(payload.get("username", ""))
+    if payload.get("error") in ("authorization_pending", "slow_down"):
+        return None
+    if payload.get("error") == "access_denied":
+        raise BackendError("The sign-in was refused on the website.")
+    if payload.get("error") == "expired_token":
+        raise BackendError("The sign-in code expired before it was approved. Click Sign In again.")
+    raise BackendError(str(payload.get("message") or f"The server returned HTTP {status}."))
+
+
+def wait_for_sign_in(base_url: str, code: SignInCode, cancelled: threading.Event,
+                     transport: Transport = urllib_transport) -> tuple[str, str] | None:
+    """Blocking: polls until approved (token, username), cancelled (None), or refused/expired (BackendError)."""
+    waited = 0.0
+    while waited < code.expires_in:
+        if cancelled.wait(code.interval):
+            return None
+        waited += code.interval
+        try:
+            found = poll_sign_in(base_url, code.device_code, transport)
+        except BackendUnreachable:  # A dropped connection mid-wait: keep trying until the code expires.
+            continue
+        if found is not None:
+            return found
+    raise BackendError("The sign-in code expired before it was approved. Click Sign In again.")
 
 
 class BackendClient:
@@ -149,6 +243,17 @@ class BackendClient:
     def login_link(self) -> str:
         """A one-time link that opens this account on the server's website, signed in."""
         return str(self._hosted("POST", "/v1/login-link").get("url", ""))
+
+    def me(self) -> dict:
+        """Who this Ignite is signed in as: {"username", "site", "device": {"id", "name"} | None}."""
+        status, payload = self._call("GET", "/v1/me")
+        if status == 404:
+            raise BackendError("This server doesn't have sign-in (it's a plain Ignite server).")
+        return payload
+
+    def sign_out(self) -> None:
+        """End this Ignite's sign-in on the server: its token stops working everywhere."""
+        self._call("POST", "/v1/auth/sign-out", {})
 
     def _hosted(self, method: str, path: str) -> dict:
         status, payload = self._call(method, path, {} if method == "POST" else None)

@@ -126,6 +126,8 @@ class Settings:
     obs_chat_scene: bool = False  # Moderators: !scene <name> switches scenes.
     obs_screenshot_dir: str = ""  # Empty: Pictures/Ignite.
     backend_url: str = ""
+    server_username: str = ""  # The account this Ignite signed in to on backend_url (shown in Preferences → Server).
+    tiktok_via_server: bool = True  # Signed in: read TikTok chat through the server (Euler Stream), not TikTokLive.
     overlay_port: int = 17_845
     overlay_token: str = ""
     api_key: str = ""  # The local API's control key (overlay/api.py): runs commands. Never synced.
