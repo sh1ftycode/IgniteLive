@@ -74,17 +74,20 @@ public class MainActivity extends Activity {
 
     /** Android 15 draws apps under the status and navigation bars: keep the page clear of them. */
     private static void fitSystemBars(View view) {
-        view.setOnApplyWindowInsetsListener((v, insets) -> {
-            int left, top, right, bottom;
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                android.graphics.Insets bars = insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.ime());
-                left = bars.left; top = bars.top; right = bars.right; bottom = bars.bottom;
-            } else {
-                left = insets.getSystemWindowInsetLeft(); top = insets.getSystemWindowInsetTop();
-                right = insets.getSystemWindowInsetRight(); bottom = insets.getSystemWindowInsetBottom();
+        view.setOnApplyWindowInsetsListener(new View.OnApplyWindowInsetsListener() {
+            @Override
+            public WindowInsets onApplyWindowInsets(View v, WindowInsets insets) {
+                int left, top, right, bottom;
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    android.graphics.Insets bars = insets.getInsets(WindowInsets.Type.systemBars() | WindowInsets.Type.ime());
+                    left = bars.left; top = bars.top; right = bars.right; bottom = bars.bottom;
+                } else {
+                    left = insets.getSystemWindowInsetLeft(); top = insets.getSystemWindowInsetTop();
+                    right = insets.getSystemWindowInsetRight(); bottom = insets.getSystemWindowInsetBottom();
+                }
+                v.setPadding(left, top, right, bottom);
+                return insets;
             }
-            v.setPadding(left, top, right, bottom);
-            return insets;
         });
     }
 
@@ -172,21 +175,32 @@ public class MainActivity extends Activity {
         buttonSize.topMargin = dp(20);
         card.addView(connect, buttonSize);
 
-        Runnable go = () -> {
-            String url = allowed(field.getText().toString());
-            if (url == null) {
-                problem.setText("Use an https:// address. Plain http:// only works for a server on your own network.");
-                problem.setVisibility(View.VISIBLE);
-                return;
+        final Runnable go = new Runnable() {
+            @Override
+            public void run() {
+                String url = allowed(field.getText().toString());
+                if (url == null) {
+                    problem.setText("Use an https:// address. Plain http:// only works for a server on your own network.");
+                    problem.setVisibility(View.VISIBLE);
+                    return;
+                }
+                server = url;
+                getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString(SERVER, url).apply();
+                showDashboard(null);
             }
-            server = url;
-            getSharedPreferences(PREFS, MODE_PRIVATE).edit().putString(SERVER, url).apply();
-            showDashboard(null);
         };
-        connect.setOnClickListener(v -> go.run());
-        field.setOnEditorActionListener((v, action, event) -> {
-            go.run();
-            return true;
+        connect.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                go.run();
+            }
+        });
+        field.setOnEditorActionListener(new TextView.OnEditorActionListener() {
+            @Override
+            public boolean onEditorAction(TextView v, int action, KeyEvent event) {
+                go.run();
+                return true;
+            }
         });
 
         FrameLayout.LayoutParams place = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,

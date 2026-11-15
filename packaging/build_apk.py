@@ -67,8 +67,12 @@ def sdk() -> tuple[Path, Path]:
     if not home or not Path(home).is_dir():
         raise SystemExit("Set ANDROID_HOME to the Android SDK (see the top of this file).")
     tools = sorted((Path(home) / "build-tools").glob("*"), key=lambda p: [int(x) for x in re.findall(r"\d+", p.name)])
-    jars = sorted((Path(home) / "platforms").glob("android-*/android.jar"),
-                  key=lambda p: int(re.sub(r"\D", "", p.parent.name) or 0))
+    # The platform the app targets, else the newest stable one: never a preview (android-37.2-beta3 and the like
+    # come with GitHub's runners, and their android.jar can't build Java 8 code).
+    stable = [p for p in (Path(home) / "platforms").glob("android-*/android.jar")
+              if re.fullmatch(r"android-\d+(\.\d+)?", p.parent.name)]
+    jars = sorted(stable, key=lambda p: (p.parent.name == f"android-{TARGET_SDK}",
+                                         [int(x) for x in re.findall(r"\d+", p.parent.name)]))
     if not tools or not jars:
         raise SystemExit('Install a platform and build-tools: sdkmanager "platforms;android-35" "build-tools;35.0.0"')
     return tools[-1], jars[-1]
