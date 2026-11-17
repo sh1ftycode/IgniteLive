@@ -160,6 +160,9 @@ def build_flatpak(app_dir: Path, dist: Path, ver: str) -> None:
         "modules": [{
             "name": "ignite",
             "buildsystem": "simple",
+            # Already built (PyInstaller): don't strip it. Stripping the Ignite executable would cut off the
+            # archive PyInstaller appends to it, and needs eu-strip, which build machines may not have.
+            "build-options": {"strip": False, "no-debuginfo": True},
             "build-commands": [
                 "mkdir -p /app/lib/ignite",
                 "cp -a Ignite/. /app/lib/ignite/",
