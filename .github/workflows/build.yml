@@ -62,10 +62,11 @@ jobs:
       - name: Install flatpak-builder
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get install -y --no-install-recommends flatpak
+          sudo apt-get install -y --no-install-recommends flatpak dbus  # dbus: dbus-run-session (Build)
           flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
           # Flathub's flatpak-builder: Ubuntu's (1.2) runs appstream-compose, which current SDKs no longer have.
-          flatpak install --user -y --noninteractive flathub org.flatpak.Builder
+          flatpak install --user -y --noninteractive flathub org.flatpak.Builder \
+            org.freedesktop.Sdk//26.08 org.freedesktop.Platform//26.08
           echo "FLATPAK_BUILDER=flatpak run org.flatpak.Builder" >> "$GITHUB_ENV"
 
       - name: Install appimagetool
@@ -91,7 +92,13 @@ jobs:
           print("Main server bundled." if url else "No IGNITE_MAIN_SERVER secret: Hosted links need a server set by hand.")
 
       - name: Build
+        if: runner.os != 'Linux'
         run: python packaging/build.py
+
+      # Flathub's flatpak-builder reaches the system's Flatpak over D-Bus: runners have no session bus of their own.
+      - name: Build (Linux)
+        if: runner.os == 'Linux'
+        run: dbus-run-session -- python packaging/build.py
 
       # Launch the real app and check its log: catches modules or files that
       # PyInstaller missed, which unit tests can't see.
