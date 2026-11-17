@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Ignite
+Comment=Run your TikTok LIVE from OBS: stream keys, chat, music, overlays
+Exec=ignite
+Icon=io.github.sh1ftycode.Ignite
+Categories=AudioVideo;Video;
+Keywords=TikTok;LIVE;OBS;stream;chat;overlay;
+StartupWMClass=Ignite
+Terminal=false

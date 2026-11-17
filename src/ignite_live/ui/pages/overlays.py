@@ -52,6 +52,9 @@ DESCRIPTIONS = {
     ),
     "game": "Whichever viewer game is running (Games tab): tug-of-war, boss fight, or poll, then the winner. "
             "Hides itself when no game runs.",
+    "commands": "Every chat command viewers can use, as you've set them up: song requests, points (with their "
+                "price), text to speech and your action rules, plus how to play while a game runs. A long list "
+                "scrolls slowly.",
 }
 OPTIONS = {
     "nowplaying": [],
@@ -84,6 +87,12 @@ OPTIONS = {
         ("callout=0", "no “new #1” callout"),
     ],
     "game": [],
+    "commands": [
+        ("mods=1", "also list the moderator-only commands"),
+        ("group=Music", "show one group only: Music, Points, Text to speech, Moderators or More"),
+        ("aliases=0", "hide other names for the same command"),
+        ("speed=40", "how fast a long list scrolls, in pixels a second (5–200, default 30)"),
+    ],
 }
 
 

@@ -15,8 +15,14 @@ speech, all in one place.
 Get the latest build from [Releases](https://github.com/sh1ftycode/IgniteLive/releases):
 
 - **Windows:** `Ignite-Setup-<version>.exe` (installer) or the `-windows.zip`.
-- **Linux:** `Ignite-<version>-x86_64.AppImage`: `chmod +x` it and run it. Or
-  unpack the `-linux.tar.gz` and run `Ignite/Ignite`.
+- **Linux:** the Flatpak (recommended): open
+  [ignite.flatpakref](https://sh1ftycode.github.io/IgniteLive/flatpak/ignite.flatpakref)
+  in your software centre, or `flatpak install --user
+  https://sh1ftycode.github.io/IgniteLive/flatpak/ignite.flatpakref` (the
+  release's `Ignite-<version>.flatpak` works too). It updates like any other
+  Flatpak, or with Ignite's Update button. Or
+  `Ignite-<version>-x86_64.AppImage`: `chmod +x` it and run it. Or unpack the
+  `-linux.tar.gz` and run `Ignite/Ignite`.
 - **Android:** `Ignite-<version>.apk`, a remote for Ignite on your PC through
   your Ignite server (see [android/README.md](android/README.md)).
 - **iPhone:** open your Ignite server's dashboard in Safari, then **Share →
@@ -173,6 +179,10 @@ good-looking live setup. Ignite puts all of that into one program.
   (this stream or all time) or the most points. When first place changes it
   shows a "takes the top spot" callout, and "New #1" rules can add a sound or
   TTS.
+- **Commands overlay:** every chat command viewers can use, in one overlay:
+  song requests, points (with their price), text to speech and your action
+  rules' commands, with any names you changed, plus how to play while a game
+  runs. Moderator commands only with `&mods=1`. A long list scrolls slowly.
 - **Viewer games (Games tab):** a gift-powered **tug-of-war** (each team has its
   own gifts, or viewers `!join` a team), a **boss fight** where likes and gifts
   deal damage and each defeated boss comes back stronger, and **chat polls**
@@ -210,12 +220,14 @@ good-looking live setup. Ignite puts all of that into one program.
   season (Spring, Summer, Autumn, Winter), a holiday (Halloween, Thanksgiving,
   Christmas), or Seasonal, which follows the calendar like the overlays
   (Preferences → Appearance).
-- **Updates:** Ignite checks its GitHub releases every few hours and downloads a
-  new version in the background, checked against the release's SHA-256 list. It
-  installs when you quit Ignite, or right away from the banner ("Restart and
-  Update"), never mid-stream. Works for the Windows installer and the Linux
-  AppImage; the zip and tar.gz show a download link instead. Turn it off in
-  Preferences → Advanced; Help → Check for Updates checks now.
+- **Updates, inside Ignite:** Ignite checks its GitHub releases every few hours
+  and downloads a new version in the background, checked against the release's
+  SHA-256 list. It installs when you quit Ignite, or right away from the
+  **Update** button in the status bar or the banner ("Restart and Update"),
+  never mid-stream. Every build updates itself: the Windows installer and zip,
+  the AppImage and tar.gz, and the Flatpak (through Flatpak). **What's New**
+  shows the release notes in Ignite. Turn automatic updates off in Preferences
+  → Advanced; the Update button still checks and installs when you click it.
 - **Logs:** everything goes to `logs/ignite.log` in the Ignite folder (File →
   Open Log Folder), rotated at 2 MB, never to a terminal or console window. Set
   `IGNITE_DEBUG=1` to also see it in the terminal.

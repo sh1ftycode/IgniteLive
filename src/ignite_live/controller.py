@@ -99,6 +99,7 @@ from ignite_live.music.youtube import (
 )
 from ignite_live.overlay import api
 from ignite_live.overlay.chat import chat_payload
+from ignite_live.overlay.command_list import command_list
 from ignite_live.overlay.server import PAGES, THEMES, OverlayServer
 from ignite_live.speech.rules import TtsRules, clean, shorten
 from ignite_live.moderation.filter import Moderation
@@ -480,6 +481,7 @@ class Controller(QObject):
             await self._push_overlay_texts()
             await self.overlay.set_style(overlay_style_of(self.settings))
             await self.overlay.set_goals(self.goal_snapshot)
+            await self._push_commands()
             self._overlay_clients_changed(0)
             for kind, data in self._api_snapshot().items():  # API clients get the whole state as they connect.
                 self.api.set_state(kind, data)
@@ -3180,8 +3182,15 @@ class Controller(QObject):
                 lambda: BackendClient(new.backend_url, token).save_settings(synced), on_error=self._error
             )
 
+    async def _push_commands(self) -> None:
+        """The Commands overlay: every chat command as the settings have them now."""
+        await self.overlay.set_commands(command_list(self.settings), command_config(self.settings).prefix,
+                                        points_config(self.settings.points).currency)
+
     def _apply_settings(self) -> None:
         settings_store.save(self.settings, self.settings_path)
+        if self.runtime.loop.is_running():
+            self.runtime.submit(self._push_commands())
         self.moderation = Moderation.from_settings(self.settings)
         config, rules = command_config(self.settings), queue_rules(self.settings)
         actions = action_engine_config(self.settings)

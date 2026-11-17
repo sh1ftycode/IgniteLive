@@ -45,7 +45,7 @@ from ignite_live.ui.checklist import ChecklistDialog, go_live
 from ignite_live.ui.preferences import PreferencesDialog
 from ignite_live.ui.profiles import ProfilesMenu
 from ignite_live.ui.simulate import SimulateDialog
-from ignite_live.ui.updates import UpdateBanner, UpdateManager
+from ignite_live.ui.updates import UpdateBanner, UpdateButton, UpdateManager, show_notes
 from ignite_live.ui.theme import (
     STATE_TEXT,
     apply_theme,
@@ -273,6 +273,9 @@ class MainWindow(QMainWindow):
         help_menu = bar.addMenu("&Help")
         help_menu.addAction("&Setup Guide…", self.open_setup_guide).setShortcut("F1")
         help_menu.addAction("Check for &Updates…", lambda: self.updates.check(manual=True))
+        whats_new = help_menu.addAction("&What's New…", lambda: show_notes(self.updates, self))
+        whats_new.setEnabled(False)
+        self.updates.changed.connect(lambda: whats_new.setEnabled(self.updates.release is not None))
         help_menu.addSeparator()
         help_menu.addAction(a.about)
 
@@ -355,6 +358,9 @@ class MainWindow(QMainWindow):
         self.health_label.setTextFormat(Qt.TextFormat.RichText)
         self.health_label.setFont(tabular(self.health_label.font()))  # Fixed-width digits: no jitter.
         self.health_label.setContentsMargins(8, 0, 16, 0)
+        # Always there: what the update is doing, and one click to check, download or restart into it.
+        self.update_button = UpdateButton(self.updates, self)
+        self.statusBar().addPermanentWidget(self.update_button)
         self.statusBar().addPermanentWidget(self.health_label)
         self.controller.studio_changed.connect(self._health)
         self.status_labels: dict[str, QLabel] = {}

@@ -15,7 +15,7 @@ from PySide6.QtWidgets import QApplication
 
 from ignite_live import __version__
 from ignite_live.controller import Controller
-from ignite_live.core import keychain, settings
+from ignite_live.core import keychain, settings, updates
 from ignite_live.core.browser import restore_host_library_path
 from ignite_live.core.bundled import import_bundled_keys
 from ignite_live.core.runtime import Runtime
@@ -120,6 +120,7 @@ def main() -> int:
     app.setWindowIcon(_icon())
     log = logging.getLogger("ignite")
     # One copy at a time: launched again (taskbar, Start menu, a shortcut), the running one comes forward.
+    updates.wait_for_previous()  # Restarted by an update: the old copy is still closing.
     instance = SingleInstance(server_name(settings.default_path()), app)
     if instance.already_running():
         log.info("Ignite is already running: brought its window forward instead of starting another copy")

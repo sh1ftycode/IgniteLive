@@ -131,6 +131,7 @@ TEMPLATES: tuple[Template, ...] = (
     Template("overlay.request_hint", "Overlays", "How to request", "Type {command} in chat", ("command",)),
     Template("overlay.next", "Overlays", "Next song prefix", "Next: ", ()),
     Template("overlay.up_next", "Overlays", "Queue title", "Up next", ()),
+    Template("overlay.commands", "Overlays", "Commands title", "Commands", ()),
     Template("overlay.queue_empty", "Overlays", "Empty queue", "Request a song: {command}", ("command",)),
     Template("overlay.chat_gift", "Overlays", "Chat: gift line", "sent {gift}{times}{value}",
              ("gift", "count", "times", "value", "amount", "message", "platform")),

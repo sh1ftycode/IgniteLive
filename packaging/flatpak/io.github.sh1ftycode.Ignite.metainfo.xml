@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- AppStream data for software centers (GNOME Software, KDE Discover). packaging/build.py fills in the release. -->
+<component type="desktop-application">
+  <id>io.github.sh1ftycode.Ignite</id>
+  <name>Ignite</name>
+  <summary>Run your TikTok LIVE from OBS</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>LicenseRef-proprietary</project_license>
+  <developer id="io.github.sh1ftycode">
+    <name>sh1ftycode</name>
+  </developer>
+  <description>
+    <p>One app for running a TikTok LIVE from OBS: stream keys, OBS setup, TikTok, Twitch and YouTube chat in one
+      feed, chat-requested music, text to speech, overlays and viewer games.</p>
+  </description>
+  <launchable type="desktop-id">io.github.sh1ftycode.Ignite.desktop</launchable>
+  <url type="homepage">https://github.com/sh1ftycode/IgniteLive</url>
+  <content_rating type="oars-1.1"/>
+  <releases>
+    <release version="{{VERSION}}" date="{{DATE}}"/>
+  </releases>
+</component>

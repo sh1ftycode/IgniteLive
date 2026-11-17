@@ -10,6 +10,9 @@ Outputs in dist/ (or DIR):
                                        (found on PATH, in Program Files, or via $ISCC)
     Ignite-<version>-x86_64.AppImage   Linux single-file app, if appimagetool is installed
                                        (on PATH or via $APPIMAGETOOL)
+    Ignite-<version>.flatpak       Linux Flatpak bundle, if flatpak-builder is installed (on PATH, or the
+                                       org.flatpak.Builder Flatpak); also flatpak-repo/, the repository Ignite's
+                                       Flatpak updates from (the release workflow publishes it on GitHub Pages)
 
 --bundle-keys bakes your API keys (YouTube, Euler) into the build, so a fresh
 install doesn't ask for them. Anyone with that build can extract them: keep it
@@ -21,6 +24,8 @@ To build the Windows version from Linux, use packaging/build-windows-on-linux.sh
 from __future__ import annotations
 
 import argparse
+import datetime
+import json
 import os
 import re
 import shutil
@@ -82,6 +87,106 @@ def build_appimage(app_dir: Path, dist: Path, ver: str) -> None:
     print(f"AppImage:   {out}")
 
 
+FLATPAK_ID = "io.github.sh1ftycode.Ignite"  # Also in src/ignite_live/core/updates.py.
+FLATPAK_RUNTIME = "26.08"  # org.freedesktop.Platform: what the bundled Qt and Python need from the system.
+FLATPAK_PAGES_URL = "https://sh1ftycode.github.io/IgniteLive/flatpak/"  # Where the release workflow publishes it.
+# What Ignite needs from outside its sandbox. Each line is why.
+FLATPAK_FINISH_ARGS = [
+    "--share=network",  # Chat, OBS (its WebSocket), the Ignite server, music.
+    "--share=ipc",  # X11 shared memory (Qt).
+    "--socket=wayland",
+    "--socket=fallback-x11",
+    "--socket=pulseaudio",  # Text to speech and alert sounds.
+    "--device=dri",  # GPU drawing.
+    "--talk-name=org.freedesktop.secrets",  # The keychain: stream keys and tokens stay in the system keyring.
+    "--talk-name=org.kde.StatusNotifierWatcher",  # The tray icon.
+    "--talk-name=org.freedesktop.Flatpak",  # Updates: Ignite runs "flatpak update" on the host (core/updates.py).
+    "--filesystem=xdg-pictures/Ignite:create",  # Screenshots (Preferences → OBS), the default folder.
+]
+
+
+def flatpak_repo_url() -> str:
+    """Where an installed Flatpak updates from: the main Ignite server's /flatpak/ (it forwards to the copy on
+    GitHub Pages), so it's on the server everything else goes through; without one, GitHub Pages itself."""
+    url = os.environ.get("IGNITE_MAIN_SERVER", "").strip()
+    if not url:
+        try:
+            data = json.loads((ROOT / "packaging" / "bundled_config.json").read_text("utf-8"))
+            url = str(data.get("main_server", "")).strip()
+        except (OSError, ValueError, AttributeError):
+            url = ""
+    return url.rstrip("/") + "/flatpak/" if url else FLATPAK_PAGES_URL
+
+
+def flatpak_builder() -> list[str] | None:
+    """flatpak-builder on PATH, else the org.flatpak.Builder Flatpak (Bazzite, Silverblue: no packages)."""
+    if os.environ.get("FLATPAK_BUILDER"):
+        return os.environ["FLATPAK_BUILDER"].split()
+    if shutil.which("flatpak-builder"):
+        return ["flatpak-builder"]
+    if shutil.which("flatpak"):
+        found = subprocess.run(["flatpak", "info", "org.flatpak.Builder"], capture_output=True)
+        if found.returncode == 0:
+            return ["flatpak", "run", "org.flatpak.Builder"]
+    return None
+
+
+def build_flatpak(app_dir: Path, dist: Path, ver: str) -> None:
+    """The app folder as a Flatpak: dist/Ignite-<version>.flatpak to install by hand, and dist/flatpak-repo, the
+    repository installed copies update from (Ignite's Update button runs "flatpak update"). The bundled build is
+    copied in as it is: the Freedesktop runtime has the system libraries it expects (glibc, X11, Wayland, GL)."""
+    builder = flatpak_builder()
+    if not builder:
+        print("flatpak-builder not found: skipped the Flatpak (flatpak install flathub org.flatpak.Builder).")
+        return
+    here = ROOT / "packaging" / "flatpak"
+    work = ROOT / "build" / "flatpak"
+    shutil.rmtree(work, ignore_errors=True)
+    source = work / "source"
+    shutil.copytree(app_dir, source / "Ignite", symlinks=True)
+    for name in ("ignite.sh", f"{FLATPAK_ID}.desktop"):
+        shutil.copy(here / name, source / name)
+    shutil.copy(ROOT / "packaging" / "icon.png", source / "icon.png")
+    metainfo = (here / f"{FLATPAK_ID}.metainfo.xml").read_text("utf-8")
+    (source / f"{FLATPAK_ID}.metainfo.xml").write_text(
+        metainfo.replace("{{VERSION}}", ver).replace("{{DATE}}", datetime.date.today().isoformat()), "utf-8")
+    manifest = {
+        "id": FLATPAK_ID,
+        "runtime": "org.freedesktop.Platform",
+        "runtime-version": FLATPAK_RUNTIME,
+        "sdk": "org.freedesktop.Sdk",
+        "command": "ignite",
+        "finish-args": FLATPAK_FINISH_ARGS,
+        "modules": [{
+            "name": "ignite",
+            "buildsystem": "simple",
+            "build-commands": [
+                "mkdir -p /app/lib/ignite",
+                "cp -a Ignite/. /app/lib/ignite/",
+                "install -Dm755 ignite.sh /app/bin/ignite",
+                f"install -Dm644 {FLATPAK_ID}.desktop /app/share/applications/{FLATPAK_ID}.desktop",
+                f"install -Dm644 icon.png /app/share/icons/hicolor/512x512/apps/{FLATPAK_ID}.png",
+                f"install -Dm644 {FLATPAK_ID}.metainfo.xml /app/share/metainfo/{FLATPAK_ID}.metainfo.xml",
+            ],
+            "sources": [{"type": "dir", "path": "source"}],
+        }],
+    }
+    manifest_path = work / f"{FLATPAK_ID}.json"
+    manifest_path.write_text(json.dumps(manifest, indent=2), "utf-8")
+    repo = dist / "flatpak-repo"
+    sign = ["--gpg-sign=" + os.environ["IGNITE_FLATPAK_GPG_KEY"]] if os.environ.get("IGNITE_FLATPAK_GPG_KEY") else []
+    subprocess.run([*builder, "--user", "--install-deps-from=flathub", "--force-clean", "--disable-rofiles-fuse",
+                    "--default-branch=stable", f"--repo={repo}", *sign,
+                    "--state-dir", str(work / ".flatpak-builder"), str(work / "app"), str(manifest_path)],
+                   check=True, cwd=work)
+    bundle = dist / f"Ignite-{ver}.flatpak"
+    repo_url = flatpak_repo_url()
+    subprocess.run(["flatpak", "build-bundle", *sign, f"--repo-url={repo_url}",
+                    "--runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo",
+                    str(repo), str(bundle), FLATPAK_ID, "stable"], check=True)
+    print(f"Flatpak:    {bundle}\nRepository: {repo} (installs update from {repo_url})")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dist", type=Path, default=ROOT / "dist", help="output folder")
@@ -113,6 +218,7 @@ def main() -> int:
     print(f"\nApp folder: {app_dir}\nArchive:    {packed}")
     if linux:
         build_appimage(app_dir, dist, ver)
+        build_flatpak(app_dir, dist, ver)
 
     if sys.platform == "win32":
         iscc = find_iscc()

@@ -5,6 +5,37 @@ starts with its section from this file (see `.github/workflows/build.yml`).
 For versions before 1.6.1, see the
 [GitHub releases](https://github.com/sh1ftycode/IgniteLive/releases).
 
+## 1.8.0
+
+### New
+
+- **Commands overlay.** One overlay that lists every chat command viewers
+  can use: song requests, points (with their price), text to speech and
+  your action rules' commands, as you've named them, plus how to play while
+  a game runs. Add it from the Overlays tab like the others.
+- **An Update button in the status bar.** It shows what an update is doing
+  (with the download's progress) and takes you to the next step in one
+  click: check, download, or restart into the new version. **What's New**
+  (Help menu, or the update banner) shows the release notes in Ignite.
+- **Ignite as a Flatpak** for Linux, from Ignite's own Flatpak repository: it
+  updates with the Update button, or like any other Flatpak.
+- **The Ignite server's home page.** The server's address now opens a page
+  to download Ignite for Windows, Linux and Android (or add it to an
+  iPhone's Home Screen). The control panel moved to `/control/`; old links
+  and bookmarks still lead there.
+
+### Changed
+
+- **Everything goes through the Ignite server.** Ignite checks for updates
+  there first (GitHub only if the server doesn't answer), the Android app
+  opens `/control/app`, and the Flatpak updates from the server's
+  `/flatpak/`. The files themselves still come from GitHub, checked against
+  each release's checksums.
+
+- **Every copy of Ignite updates itself.** The Windows zip and the Linux
+  tar.gz now download, check and install updates like the installer and the
+  AppImage do, instead of sending you to the download page.
+
 ## 1.7.0
 
 ### New

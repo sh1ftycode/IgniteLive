@@ -39,6 +39,7 @@ PAGES = {
     "goals": ("Goals", 800, 220),
     "leaderboard": ("Leaderboard", 460, 520),
     "game": ("Game", 800, 420),
+    "commands": ("Commands", 520, 640),
 }
 THEMES = {
     "minimal": "Minimal",
@@ -141,6 +142,7 @@ class OverlayServer:
         self._goals: dict = {"type": "goals", "goals": []}
         self._leaderboards: dict = {"type": "leaderboards", "boards": {}}
         self._game: dict = {"type": "game", "game": None}
+        self._commands: dict = {"type": "commands", "commands": [], "prefix": "!", "currency": "points"}
         self._runner: web.AppRunner | None = None
         # The local API (overlay/api.py): events, state and commands for any widget or app on this PC.
         self.api = ApiHub()
@@ -248,6 +250,14 @@ class OverlayServer:
         self.api.set_state("goals", bars)
         await self._broadcast(self._goals)
 
+    async def set_commands(self, commands: list[dict], prefix: str = "!", currency: str = "points") -> None:
+        """The chat commands (overlay/command_list.py); pages opened later get the latest copy."""
+        message = {"type": "commands", "commands": commands, "prefix": prefix, "currency": currency}
+        if message == self._commands:
+            return  # Settings saved without touching commands: the overlays needn't redraw.
+        self._commands = message
+        await self._broadcast(self._commands)
+
     async def set_leaderboards(self, boards: dict) -> None:
         """Leaderboards.snapshot(); pages opened later get the latest copy."""
         self._leaderboards = {"type": "leaderboards", "boards": boards}
@@ -346,7 +356,7 @@ class OverlayServer:
 
     def snapshot(self) -> list[dict]:
         """What an overlay opened now is sent first: for hosted widgets, after the relay (re)connects."""
-        sticky = [self._state, self._progress, self._goals, self._leaderboards, self._game]
+        sticky = [self._state, self._progress, self._goals, self._leaderboards, self._game, self._commands]
         return [message for message in sticky if message]
 
     async def _broadcast(self, message: dict, skip: web.WebSocketResponse | None = None) -> None:
@@ -451,6 +461,8 @@ class OverlayServer:
                 await ws.send_json(self._leaderboards)
             if self._game["game"] is not None:
                 await ws.send_json(self._game)
+            if self._commands["commands"]:
+                await ws.send_json(self._commands)
             async for message in ws:
                 if message.type != WSMsgType.TEXT:
                     continue

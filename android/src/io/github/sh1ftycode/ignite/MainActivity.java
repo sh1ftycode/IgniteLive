@@ -226,7 +226,7 @@ public class MainActivity extends Activity {
         web.setWebViewClient(new Client());
         root.addView(web, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         if (state == null || web.restoreState(state) == null) {
-            web.loadUrl(server + "/app");
+            web.loadUrl(server + "/control/app");
         }
     }
 
