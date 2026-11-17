@@ -62,8 +62,11 @@ jobs:
       - name: Install flatpak-builder
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get install -y --no-install-recommends flatpak flatpak-builder
+          sudo apt-get install -y --no-install-recommends flatpak
           flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          # Flathub's flatpak-builder: Ubuntu's (1.2) runs appstream-compose, which current SDKs no longer have.
+          flatpak install --user -y --noninteractive flathub org.flatpak.Builder
+          echo "FLATPAK_BUILDER=flatpak run org.flatpak.Builder" >> "$GITHUB_ENV"
 
       - name: Install appimagetool
         if: runner.os == 'Linux'
