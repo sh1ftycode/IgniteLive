@@ -113,14 +113,6 @@ good-looking live setup. Ignite puts all of that into one program.
   (Ctrl+Left, Ctrl+Space, Ctrl+Right) and on the pop-out chat, with the song's
   time and the volume. Previous starts the song over; pressed again in its
   first seconds, it goes back a song.
-- **Your YouTube Music account (experimental):** Music tab → YouTube Music →
-  **Connect…** lets your own playlists and Liked Music be the background
-  music. YouTube Music has no sign-in for other apps, so you paste the cookie
-  of a signed-in music.youtube.com tab (the dialog shows how). Treat it like a
-  password: Ignite keeps it in this PC's keychain only, sends it to
-  music.youtube.com only, and only reads your playlists; Disconnect removes
-  it. Songs still play through the YouTube player, so your own uploads don't
-  play. Unofficial: it can break when YouTube changes its site.
 - **Actions:** rules that react to your LIVE. Pick a trigger (a gift, optionally
   by name or coin value; a follow; every N likes; a share; a chat command; a
   viewer milestone) and what happens: show an alert, play a sound, read a

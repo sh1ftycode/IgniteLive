@@ -11,9 +11,9 @@ from typing import Callable
 
 from ignite_live.core.events import ChatComment, ChatUser
 from ignite_live.music.commands import Command, CommandEngine, CommandKind, Denied, Role, role_of
-from ignite_live.music.queue import QueueRejected, SongQueue
+from ignite_live.music.queue import QueueItem, QueueRejected, SongQueue
 from ignite_live.music.spotify import Playlist, PlaylistSong
-from ignite_live.music.youtube import Track, TrackLookupError, parse_request
+from ignite_live.music.youtube import SearchRequest, Track, TrackLookupError, parse_request
 from ignite_live.overlay.server import OverlayServer
 
 log = logging.getLogger(__name__)
@@ -28,6 +28,7 @@ MAX_PLAYLIST_MISSES = 5
 RADIO_SEEDS = 20
 RADIO_NO_REPEAT = 100
 MAX_RADIO_MISSES = 8
+MAX_OTHER_VERSIONS = 2  # A request that won't play: other uploads of the same song tried.
 
 # Player error codes that mean "this video will never play here".
 _UNPLAYABLE = {
@@ -48,13 +49,16 @@ class MusicSession:
         queue: SongQueue | None = None,
         clock: Callable[[], float] = time.monotonic,
         radio: Callable[[str], list[Track]] | None = None,
+        alternative: Callable[[str, frozenset[str]], Track] | None = None,
     ) -> None:
-        """``resolve`` and ``radio`` (songs like a video ID) are blocking; they run off-loop."""
+        """``resolve``, ``radio`` (songs like a video ID) and ``alternative`` (another match for a search, leaving
+        out videos that didn't play) are blocking; they run off-loop."""
         self.overlay = overlay
         self.engine = engine or CommandEngine()
         self.queue = queue or SongQueue()
         self._resolve = resolve
         self._radio = radio
+        self._alternative = alternative
         self._clock = clock
         self._tasks: set[asyncio.Task] = set()
         self.queue.on_change = self._queue_changed
@@ -318,8 +322,9 @@ class MusicSession:
                 self._pay(user, "request")
             try:
                 track = await asyncio.to_thread(self._resolve, command.args)
+                search = command.args if isinstance(parse_request(command.args), SearchRequest) else ""
                 try:
-                    position = self.queue.add(track, user, privileged)
+                    position = self.queue.add(track, user, privileged, request=search)
                 except QueueRejected as error:
                     if error.key in AUTO_BAN and self.on_refused:
                         self.on_refused(track, error.key)
@@ -375,8 +380,28 @@ class MusicSession:
             self.queue.advance()
         elif message.get("type") == "error":
             reason = _UNPLAYABLE.get(message.get("code"), "can't be played")
-            self._spawn(self.overlay.toast(self.texts.format("music.unplayable", title=current.track.title, reason=reason)))
-            self.queue.advance()
+            if self._alternative and current.request and len(current.failed) < MAX_OTHER_VERSIONS:
+                self._spawn(self._other_version(current, reason))  # Same request, another upload of the song.
+                return
+            self._unplayable(current, reason)
+
+    def _unplayable(self, item: QueueItem, reason: str) -> None:
+        self._spawn(self.overlay.toast(self.texts.format("music.unplayable", title=item.track.title, reason=reason)))
+        self.queue.advance()
+
+    async def _other_version(self, item: QueueItem, reason: str) -> None:
+        exclude = frozenset((*item.failed, item.track.video_id))
+        try:
+            track = await asyncio.to_thread(self._alternative, item.request, exclude)
+        except TrackLookupError:
+            track = None
+        if self.queue.current is not item:
+            return  # Skipped or moved on meanwhile.
+        if track is None:
+            self._unplayable(item, reason)
+            return
+        log.info("Music: %r won't play here (%s); playing another version", item.track.title, reason)
+        self.queue.replace_current(track)
 
     def _spawn(self, coroutine) -> None:
         task = asyncio.get_running_loop().create_task(coroutine)

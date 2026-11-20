@@ -5,6 +5,27 @@ starts with its section from this file (see `.github/workflows/build.yml`).
 For versions before 1.6.1, see the
 [GitHub releases](https://github.com/sh1ftycode/IgniteLive/releases).
 
+## 1.8.1
+
+### Fixed
+
+- **TikTok chat across reconnects.** When TikTok drops the connection,
+  which happens now and then during a LIVE, the comments said while it was
+  down now come through once Ignite reconnects, instead of being thrown
+  away. Comments already shown aren't shown twice.
+- **TikTok comments in a quiet chat** reach Ignite right away through the
+  Ignite server, instead of waiting for the next like or join.
+- **A PC clock that runs fast** no longer makes Ignite skip TikTok comments.
+- **Songs that won't play outside YouTube** ("only on YouTube", removed, or
+  a player error): for a `!sr song - artist` request, Ignite now tries up
+  to two other versions of the same song before skipping it.
+
+### Removed
+
+- **Connect YouTube Music** (the pasted cookie) is gone, and a saved cookie
+  is deleted from the keychain. Song requests, autoplay and public playlist
+  links work as before.
+
 ## 1.8.0
 
 ### New

@@ -27,6 +27,8 @@ class QueueItem:
     id: int
     track: Track
     requested_by: ChatUser
+    request: str = ""  # The words chat searched with (not for links): another version can be found if it won't play.
+    failed: tuple[str, ...] = ()  # Videos of this request that wouldn't play here.
 
 
 @dataclass
@@ -55,7 +57,7 @@ class SongQueue:
         self.on_change = on_change
         self._ids = itertools.count(1)
 
-    def add(self, track: Track, user: ChatUser, privileged: bool = False) -> int:
+    def add(self, track: Track, user: ChatUser, privileged: bool = False, request: str = "") -> int:
         """Queue a track and return its position (1 = plays next)."""
         rules = self.rules
         if track.video_id in rules.banned_video_ids:
@@ -79,7 +81,7 @@ class SongQueue:
         mine = sum(1 for item in self._all() if item.requested_by.key == user.key)
         if not privileged and mine >= rules.max_per_user:
             raise self._rejected("queue.per_user", count=mine)
-        self.upcoming.append(QueueItem(next(self._ids), track, user))
+        self.upcoming.append(QueueItem(next(self._ids), track, user, request))
         position = len(self.upcoming)
         if self.current is None:
             self.advance()
@@ -96,6 +98,16 @@ class SongQueue:
         if self.current is not None:
             self.history = [*self.history, self.current][-MAX_HISTORY:]
         self.current = self.upcoming.pop(0) if self.upcoming else None
+        self._changed()
+        return self.current
+
+    def replace_current(self, track: Track) -> QueueItem | None:
+        """Another version of the playing request, because this one won't play here (a new id: the player loads it)."""
+        current = self.current
+        if current is None:
+            return None
+        self.current = QueueItem(next(self._ids), track, current.requested_by, current.request,
+                                 (*current.failed, current.track.video_id))
         self._changed()
         return self.current
 

@@ -5,7 +5,6 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QButtonGroup,
     QCheckBox,
-    QComboBox,
     QFormLayout,
     QGridLayout,
     QGroupBox,
@@ -139,7 +138,7 @@ class MusicPage(QWidget):
         playlist = QGroupBox("Background music")
         form = self.background_form = QFormLayout(playlist)
         self.playlist_link = QLineEdit(controller.settings.music_playlist_url)
-        self.playlist_link.setPlaceholderText("Spotify, YouTube or YouTube Music playlist link")
+        self.playlist_link.setPlaceholderText("Spotify or YouTube playlist link")
         self.playlist_link.returnPressed.connect(self._load_playlist)
         form.addRow("&Playlist:", self.playlist_link)
         self.shuffle = QCheckBox("Shuffle")
@@ -151,37 +150,12 @@ class MusicPage(QWidget):
         self.load_playlist = QPushButton("Load")
         self.load_playlist.clicked.connect(self._load_playlist)
         form.addRow(buttons(action_button(actions.stop_playlist, "Stop"), self.load_playlist))
-        form.addRow(note("Plays when nobody has requested anything; viewer requests go first. Public playlists "
-                         "(or your own, with YouTube Music connected below). Spotify: about the first 50 songs, each "
-                         "looked up on YouTube Music right before it plays. YouTube: its songs play as they are."))
-        # Your own YouTube Music account: its playlists and Liked Music (music/ytmusic_account.py).
-        self.ytmusic_state = QLabel("Not connected")
-        self.ytmusic_state.setWordWrap(True)
-        form.addRow("YouTube Music:", self.ytmusic_state)
-        self.ytmusic_playlists = QComboBox()
-        self.ytmusic_playlists.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-        self.ytmusic_playlists.setMinimumContentsLength(16)
-        self.ytmusic_use = QPushButton("Use")
-        self.ytmusic_use.setToolTip("Load this playlist as the background music")
-        self.ytmusic_use.clicked.connect(self._use_ytmusic_playlist)
-        library = QHBoxLayout()
-        library.addWidget(self.ytmusic_playlists, 1)
-        library.addWidget(self.ytmusic_use)
-        self.ytmusic_library = QWidget()
-        self.ytmusic_library.setLayout(library)
-        library.setContentsMargins(0, 0, 0, 0)
-        form.addRow("My playlists:", self.ytmusic_library)
-        self.ytmusic_connect = QPushButton("Connect…")
-        self.ytmusic_connect.clicked.connect(self._connect_ytmusic)
-        self.ytmusic_refresh = QPushButton("Refresh")
-        self.ytmusic_refresh.setToolTip("Read your playlists again")
-        self.ytmusic_refresh.clicked.connect(lambda: controller.refresh_ytmusic())
-        self.ytmusic_disconnect = QPushButton("Disconnect")
-        self.ytmusic_disconnect.clicked.connect(controller.disconnect_ytmusic)
-        form.addRow(buttons(self.ytmusic_disconnect, self.ytmusic_refresh, self.ytmusic_connect))
+        form.addRow(note("Plays when nobody has requested anything; viewer requests go first. Public playlists. "
+                         "Spotify: about the first 50 songs, each looked up on YouTube right before it plays. "
+                         "YouTube: its songs play as they are."))
         self.radio = QCheckBox("Autoplay songs like chat's requests")
         self.radio.setChecked(controller.settings.music_radio)
-        self.radio.setToolTip("With nothing queued and no playlist on, plays similar songs (YouTube Music radio) "
+        self.radio.setToolTip("With nothing queued and no playlist on, plays similar songs (YouTube's radio for them) "
                               "to what chat requested most recently, so it stays in the same genre")
         self.radio.toggled.connect(lambda _on: self._save_radio())
         form.addRow("Autoplay:", self.radio)
@@ -216,44 +190,9 @@ class MusicPage(QWidget):
         controller.settings_changed.connect(self._radio_settings)
         controller.busy_changed.connect(self._busy)
         controller.settings_changed.connect(lambda s: self.volume.setValue(s.volume) if not self.volume.isSliderDown() else None)
-        controller.ytmusic_changed.connect(self._ytmusic)
         self._queue(controller.queue_snapshot)
         self._playlist(controller.playlist_info)
         self.radio_state.setText(controller.radio_status)
-        self._ytmusic(controller.ytmusic)
-
-    def _connect_ytmusic(self) -> None:
-        from ignite_live.ui.ytmusic import ConnectYouTubeMusic
-
-        dialog = ConnectYouTubeMusic(self.controller, self)
-        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)  # Nothing of it (or the pasted text) is kept.
-        dialog.exec()
-
-    def _use_ytmusic_playlist(self) -> None:
-        link = self.ytmusic_playlists.currentData()
-        if link:
-            self.playlist_link.setText(link)
-            self.controller.load_playlist(link, self.shuffle.isChecked())
-
-    def _ytmusic(self, account: dict | None) -> None:
-        connected = account is not None
-        playlists = account["playlists"] if connected else []
-        if not connected:
-            self.ytmusic_state.setText("Not connected. Connect it to use your own playlists and Liked Music.")
-        elif account["error"]:
-            self.ytmusic_state.setText(f"Connected, but: {account['error']}")
-        else:
-            who = account["name"] or "your account"
-            self.ytmusic_state.setText(f"Connected as {who} ({len(playlists)} playlists)")
-        self.ytmusic_playlists.clear()
-        for playlist in playlists:
-            self.ytmusic_playlists.addItem(playlist.name, playlist.link)
-            self.ytmusic_playlists.setItemData(self.ytmusic_playlists.count() - 1, playlist.detail or playlist.name,
-                                               Qt.ItemDataRole.ToolTipRole)
-        self.background_form.setRowVisible(self.ytmusic_library, bool(playlists))  # The row and its label.
-        self.ytmusic_connect.setText("Reconnect…" if connected else "Connect…")
-        self.ytmusic_refresh.setVisible(connected)
-        self.ytmusic_disconnect.setVisible(connected)
 
     def _commands(self, settings) -> None:
         rows = command_rows(settings)
@@ -320,7 +259,4 @@ class MusicPage(QWidget):
         if name == "playlist":
             self.load_playlist.setEnabled(not busy)
             self.load_playlist.setText("Loading…" if busy else "Load")
-            self.ytmusic_use.setEnabled(not busy)
-        elif name == "ytmusic":
-            self.ytmusic_refresh.setEnabled(not busy)
-            self.ytmusic_connect.setEnabled(not busy)
+

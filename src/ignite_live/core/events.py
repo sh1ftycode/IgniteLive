@@ -40,6 +40,7 @@ class ChatUser:
     avatar_url: str = ""
     platform: str = "tiktok"
     is_subscriber: bool = False  # Twitch subscriber or VIP, YouTube channel member.
+    user_id: str = ""  # TikTok's numeric id for this viewer: what moderator, mute and kick actions need.
 
     @property
     def key(self) -> str:
@@ -56,6 +57,7 @@ class ChatComment:
     user: ChatUser
     text: str
     created_ms: int
+    message_id: str = ""  # TikTok's id for this comment (Euler): the same comment again after a reconnect.
 
 
 @dataclass(frozen=True)

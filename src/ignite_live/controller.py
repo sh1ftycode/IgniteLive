@@ -68,7 +68,6 @@ from ignite_live.integrations.obs_targets import StreamTarget
 from ignite_live.live import analytics, checklist
 from ignite_live.live.analytics import StreamRecorder
 from ignite_live.live.audience import Audience
-from ignite_live.music.ytmusic_account import AccountError, YouTubeMusicAccount
 from ignite_live.integrations.streamlabs import (
     AccountInfo,
     ProviderError,
@@ -90,6 +89,7 @@ from ignite_live.music.session import MusicSession
 from ignite_live.music.spotify import Playlist, PlaylistSong, SpotifyError, fetch_public_playlist
 from ignite_live.music.youtube import (
     LinkRequest,
+    SearchRequest,
     Track,
     TrackLookupError,
     YouTubeClient,
@@ -161,7 +161,7 @@ RESTART_AFTER_SECONDS = 4.0  # Previous starts the song over when it's this far 
 _SAFE_ERRORS = (
     profiles.ProfileError,
     ProviderError, ObsError, BackendError, DiscordError, SpotifyError, TrackLookupError,
-    QueueRejected, AccountError, ValueError,
+    QueueRejected, ValueError,
 )
 
 
@@ -281,7 +281,6 @@ class Controller(QObject):
     audience_changed = Signal(object)  # Audience.snapshot(): who's here, as far as the platforms say
     stats_changed = Signal(object)  # Audience.stats_snapshot(): viewers, followers and likes per platform
     playback_changed = Signal(object)  # playback_state(): paused, position, duration…
-    ytmusic_changed = Signal(object)  # The connected YouTube Music account (see self.ytmusic), or None
 
     def __init__(self, runtime: Runtime, settings_path: Path | None = None) -> None:
         super().__init__()
@@ -311,10 +310,6 @@ class Controller(QObject):
         self.stats_snapshot: dict = self.audience.stats_snapshot()
         self._audience_pending = False
         self.music_paused = False  # The Pause button (panic pauses separately).
-        # A connected YouTube Music account: {"name", "playlists": [AccountPlaylist], "error"}; None: not connected.
-        self.ytmusic: dict | None = None
-        self._ytmusic_account: YouTubeMusicAccount | None = None
-        self._ytmusic_read = False  # Whether the keychain has been asked for a saved cookie yet.
         self.account: AccountInfo | None = None
         self.active_key: CachedKey | None = None
         self.obs_streaming = False
@@ -395,6 +390,7 @@ class Controller(QObject):
             CommandEngine(command_config(self.settings)),
             SongQueue(queue_rules(self.settings)),
             radio=self._radio_songs,
+            alternative=self._other_version,
         )
         # Autoplay remembers what chat requested, between runs, to follow the same genre.
         self.music.radio_seeds = [v for v in self.settings.music_radio_seeds if video_id_from(v) == v][:20]
@@ -466,7 +462,8 @@ class Controller(QObject):
         self.check_backend(pull_settings=True)
         if self.settings.music_playlist_url:
             self.load_playlist(self.settings.music_playlist_url, self.settings.music_playlist_shuffle, quiet=True)
-        self.refresh_ytmusic(quiet=True)
+        # Connecting a YouTube Music account (a pasted cookie) was removed after 1.8.0: forget a saved one.
+        self.runtime.blocking(keychain.forget_long, keychain.YTMUSIC_COOKIE)
         self.apply_tts()
 
     def shutdown(self) -> None:
@@ -2885,6 +2882,13 @@ class Controller(QObject):
 
     # Music.
 
+    def _other_version(self, text: str, exclude: frozenset[str]) -> Track:
+        """Blocking: another match for a song request whose video won't play outside YouTube (MusicSession)."""
+        request = parse_request(text)
+        if not isinstance(request, SearchRequest):
+            raise TrackLookupError("Only a search has other versions.")
+        return YouTubeClient(prefer_clean=self.settings.refuse_explicit).search(request, exclude)
+
     def _resolve_song(self, text: str) -> Track:
         """Blocking; called on a worker thread by MusicSession."""
         token = keychain.load(keychain.BACKEND_TOKEN)
@@ -2957,82 +2961,6 @@ class Controller(QObject):
         """From any thread (the overlay reports progress on the loop thread)."""
         self.playback_changed.emit(self.playback_state())
 
-    # YouTube Music account: your own playlists and Liked Music as background music (music/ytmusic_account.py).
-
-    def _ytmusic(self) -> YouTubeMusicAccount | None:
-        """The connected account, read from the keychain the first time. Blocking: call it off the GUI thread."""
-        if self._ytmusic_account is None and not self._ytmusic_read:
-            self._ytmusic_read = True
-            cookie = keychain.load_long(keychain.YTMUSIC_COOKIE)
-            if cookie:
-                try:
-                    self._ytmusic_account = YouTubeMusicAccount(cookie)
-                except AccountError:
-                    pass  # Not a usable cookie any more: treated as not connected.
-        return self._ytmusic_account
-
-    def _ytmusic_loaded(self, account: YouTubeMusicAccount | None, name: str = "", playlists: tuple = (),
-                        error: str = "") -> None:
-        self._ytmusic_account = account
-        self.ytmusic = {"name": name, "playlists": list(playlists), "error": error} if account or error else None
-        self.ytmusic_changed.emit(self.ytmusic)
-
-    def connect_ytmusic(self, cookie: str) -> None:
-        """Check a pasted music.youtube.com cookie by reading the library, then keep it in the keychain."""
-
-        def connect():
-            account = YouTubeMusicAccount(cookie)
-            playlists = account.playlists()  # Raises unless YouTube Music treats the cookie as signed in.
-            saved = keychain.save_long(keychain.YTMUSIC_COOKIE, account.cookie)
-            return account, account.name(), playlists, saved
-
-        def connected(result) -> None:
-            account, name, playlists, saved = result
-            self._ytmusic_read = True
-            self._ytmusic_loaded(account, name, playlists)
-            who = f" as {name}" if name else ""
-            self.notice.emit("info", f"YouTube Music connected{who}: {len(playlists)} playlists. Pick one on the "
-                                     "Music tab to use it as background music.")
-            if not saved:
-                self.notice.emit("error", "No OS keychain found (or the cookie is too long for it), so you'll "
-                                          "need to connect YouTube Music again next time.")
-
-        self._run("ytmusic", connect, on_success=connected)
-
-    def refresh_ytmusic(self, quiet: bool = False) -> None:
-        """Read the connected account's playlists again (also at startup, quietly, if one was saved)."""
-
-        def refresh():
-            account = self._ytmusic()
-            if account is None:
-                return None
-            try:
-                return account, account.name(), account.playlists(), ""
-            except AccountError as error:
-                return account, "", (), str(error)
-
-        def done(result) -> None:
-            if result is None:
-                if not quiet:
-                    self.notice.emit("error", "YouTube Music isn't connected.")
-                return
-            account, name, playlists, error = result
-            if not error:
-                self._ytmusic_loaded(account, name, playlists)
-                return
-            # Keep the account: it may be a network hiccup, and a saved playlist link can still be tried.
-            self._ytmusic_loaded(account, error=error)
-            if not quiet:
-                self.notice.emit("error", error)
-
-        self._run("ytmusic", refresh, on_success=done)
-
-    def disconnect_ytmusic(self) -> None:
-        keychain.forget_long(keychain.YTMUSIC_COOKIE)
-        self._ytmusic_read = True
-        self._ytmusic_loaded(None)
-        self.notice.emit("info", "YouTube Music disconnected: its cookie was removed from this PC's keychain.")
-
     def remove_song(self, item_id: int) -> None:
         self.runtime.loop.call_soon_threadsafe(self.music.queue.remove, item_id)
 
@@ -3062,9 +2990,7 @@ class Controller(QObject):
         playlist_id = playlist_id_from(link)
         if playlist_id is None:
             return fetch_public_playlist(link)  # Refuses anything that isn't a Spotify playlist either.
-        account = self._ytmusic()  # Signed in, the account's private playlists and Liked Music load too.
-        name, tracks = YouTubeClient(prefer_clean=self.settings.refuse_explicit,
-                                     account_headers=account.headers if account else None).playlist(playlist_id)
+        name, tracks = YouTubeClient(prefer_clean=self.settings.refuse_explicit).playlist(playlist_id)
         songs = tuple(PlaylistSong(t.title, t.channel, (t.duration_s or 0) * 1000, track=t) for t in tracks)
         return Playlist(playlist_id, name, songs)
 

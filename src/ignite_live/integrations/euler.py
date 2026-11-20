@@ -38,6 +38,7 @@ Ignite server can read TikTok chat for its accounts.
 from __future__ import annotations
 
 import asyncio
+import collections
 import json
 import logging
 import time
@@ -71,6 +72,8 @@ SCHEMA_VERSION = "v2"
 OFFLINE_RETRY_S = 60.0
 BUSY_RETRY_S = 120.0
 MAX_TEXT = 500
+REPLAY_WINDOW_MS = 5000  # TikTok's replay of recent comments comes within this long of connecting.
+SEEN_COMMENTS = 2000  # Comment ids remembered, to recognise TikTok's replay after a reconnect.
 
 # Euler's close codes (its WebSocket SDK's ClientCloseCode).
 STREAM_END = 4005
@@ -151,8 +154,10 @@ def _user(raw: Any, identity: Any = None) -> dict:
         avatar = _image(user.get(key))
         if avatar:
             break
+    numeric = str(_first(user, "userId", "id_str", "id") or "")
     return {
         "id": unique_id,
+        "uid": numeric if numeric.isdigit() and len(numeric) <= 25 else "",
         "name": str(user.get("nickname") or unique_id)[:64],
         "avatar": avatar,
         "mod": bool(who.get("isModeratorOfAnchor")),
@@ -180,9 +185,11 @@ def normalize(message: Any) -> dict | None:
         text = str(_first(data, "comment", "content") or "").strip()
         if not text:
             return None
-        created = _int(_dict(data.get("common")).get("createTime")) or 0
+        common = _dict(data.get("common"))
+        created = _int(common.get("createTime")) or 0
+        message_id = str(common.get("msgId") or "")
         return {"kind": "comment", "user": _user(data.get("user"), data.get("userIdentity")), "text": text[:MAX_TEXT],
-                "ts": created}
+                "ts": created, "mid": message_id if message_id.isdigit() and len(message_id) <= 25 else ""}
     if kind == "WebcastGiftMessage":
         gift = _dict(_first(data, "giftDetails", "gift"))
         name = str(_first(gift, "giftName", "name") or "").strip()
@@ -263,14 +270,15 @@ def _chat_user(raw: Any) -> ChatUser:
     return ChatUser(unique_id=unique_id, nickname=str(user.get("name") or unique_id)[:64],
                     is_moderator=user.get("mod") is True, is_follower=user.get("follower") is True,
                     is_host=user.get("host") is True, avatar_url=str(user.get("avatar") or "")[:500],
-                    is_subscriber=user.get("sub") is True)
+                    is_subscriber=user.get("sub") is True, user_id=str(user.get("uid") or "")[:25])
 
 
 def to_event(wire: Any, now_ms: int = 0) -> ChatEvent | None:
     wire = _dict(wire)
     kind = wire.get("kind")
     if kind == "comment" and isinstance(wire.get("text"), str) and wire["text"].strip():
-        return ChatComment(_chat_user(wire.get("user")), wire["text"][:MAX_TEXT], _int(wire.get("ts")) or now_ms)
+        return ChatComment(_chat_user(wire.get("user")), wire["text"][:MAX_TEXT], _int(wire.get("ts")) or now_ms,
+                           str(wire.get("mid") or "")[:25])
     if kind == "gift" and isinstance(wire.get("name"), str):
         return ChatGift(_chat_user(wire.get("user")), wire["name"][:64], max(1, _int(wire.get("count")) or 1),
                         str(wire.get("image") or "")[:500], _int(wire.get("diamonds")) or 0,
@@ -349,6 +357,11 @@ class EulerChat:
         self._handed_over: Any = None
         self._connected_at_ms = 0
         self._likes = -1
+        # Every comment, across reconnects (comment_is_new): which were handled, and where Ignite started reading.
+        self._connections = 0
+        self._seen: collections.deque[str] = collections.deque(maxlen=SEEN_COMMENTS)
+        self._seen_set: set[str] = set()
+        self._started_ts = 0  # TikTok's time of the newest comment from before Ignite started reading.
 
     @property
     def via_server(self) -> bool:
@@ -425,6 +438,7 @@ class EulerChat:
         self._status(ConnectionState.OFFLINE)
 
     def _connected(self) -> None:
+        self._connections += 1
         self._connected_at_ms = int(self._clock() * 1000)
         self._likes = -1
         self._status(ConnectionState.CONNECTED, f"Reading chat for @{self.unique_id}")
@@ -474,17 +488,39 @@ class EulerChat:
         else:
             self._status(state, str(frame.get("detail", ""))[:200])
 
+    def _comment_is_new(self, wire: dict) -> bool:
+        """Every comment once, including the ones said while the connection was down.
+
+        Each time it connects, TikTok first replays the room's recent comments. The first time, those are from before
+        Ignite started reading: they're skipped, so an old !sr or !skip doesn't run. After a reconnect the replay also
+        holds what was said while disconnected: those are shown, and only comments already handled are skipped (by
+        TikTok's message id, or its author, time and text). Times are TikTok's own, never this PC's clock, except
+        for the first burst before any comment has been seen.
+        """
+        created = _int(wire.get("ts")) or 0
+        user = _dict(wire.get("user"))
+        key = str(wire.get("mid") or "") or f"{user.get('id')}|{created}|{wire.get('text')}"
+        if key in self._seen_set:
+            return False
+        if len(self._seen) == self._seen.maxlen:
+            self._seen_set.discard(self._seen[0])
+        self._seen.append(key)
+        self._seen_set.add(key)
+        if self._connections <= 1:
+            now_ms = int(self._clock() * 1000)
+            replay = bool(created) and created < self._connected_at_ms and now_ms - self._connected_at_ms < REPLAY_WINDOW_MS
+            if replay:
+                self._started_ts = max(self._started_ts, created)
+            return not replay
+        return not (created and self._started_ts and created <= self._started_ts)
+
     def _emit(self, wire: Any) -> None:
         wire = _dict(wire)
         if wire.get("kind") == "end":
             self._status(ConnectionState.DEGRADED, f"@{self.unique_id} ended the LIVE.")
             return
-        if wire.get("kind") == "comment":
-            # TikTok replays recent comments right after connecting: dropping them stops a reconnect from
-            # re-running old !sr / !skip commands.
-            created = _int(wire.get("ts")) or 0
-            if created and created < self._connected_at_ms:
-                return
+        if wire.get("kind") == "comment" and not self._comment_is_new(wire):
+            return
         if wire.get("kind") == "like":
             total = _int(wire.get("total"))
             if total and total != self._likes:

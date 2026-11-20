@@ -851,7 +851,6 @@ than 48h, the app must detect the OBS connection failure and offer
 | **Viewers and numbers** | Audience logic, Twitch membership lines, DecAPI text and TikTok room details unit-tested; YouTube's counts parsed from a real live page and a real `updated_metadata` answer; DecAPI's two endpoints answered live. Offscreen run of the real app: events from all three platforms through the controller into the stats row and Viewers tab, and a disconnect clearing them. | Every platform on a real stream: TikTok `JoinEvent` volume and `fetch_room_info`'s field names, Twitch membership on a channel with chatters, YouTube's poll over hours. |
 | **Pop-out chat** | Offscreen run at 0, 35 and 100 % in dark and light, composited over a busy picture: layout, text edges, lock, saved settings. | On a real desktop over a real game: translucency, click handling at 0 %, dragging, the lock. |
 | **Playback buttons** | Offscreen run with a pretend Now Playing socket: pause reaches the overlay and survives a skip, Previous seeks, then goes back a song, panic's pause stays separate. | The real YouTube player in OBS obeying `seek` and pause. |
-| **YouTube Music account** | Cookie parsing, the SAPISIDHASH header, library parsing and signed-in playlist loading against a fake transport; the cookie never appears in errors or reprs; long secrets split across keychain entries. | **Everything against a real account**: no signed-in session was available, so the library response's shape is from the `ytmusicapi` project's description of it, not from a live answer. |
 
 ## 7. Build plan
 
