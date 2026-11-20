@@ -252,6 +252,10 @@ jobs:
           source: ./
           destination: ./_site
 
+      # The Jekyll step leaves _site owned by root: the next steps add to it.
+      - name: Own the site folder
+        run: sudo chown -R "$USER" _site
+
       - uses: actions/download-artifact@v4
         with:
           name: flatpak-repo
@@ -260,7 +264,6 @@ jobs:
       # One-click install: software centres open .flatpakref files.
       - name: Flatpak install file
         run: |
-          sudo chown -R "$USER" _site
           cat > _site/flatpak/ignite.flatpakref <<'REF'
           [Flatpak Ref]
           Title=Ignite

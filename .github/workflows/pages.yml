@@ -1,0 +1,81 @@
+# Publishes the GitHub Pages site again (the README plus the Flatpak repository at /flatpak) from the newest
+# release's build, without a new release: Actions tab → "Publish Pages" → Run workflow. The release build
+# (build.yml) publishes it by itself; this is for when that step failed or the site needs redoing.
+name: Publish Pages
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Build run to take the Flatpak repository from (empty: the newest release's)"
+        required: false
+
+permissions:
+  contents: read
+  actions: read  # The release build's flatpak-repo artifact.
+  pages: write
+  id-token: write  # (Required by actions/deploy-pages.)
+
+jobs:
+  pages:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Which build
+        id: run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run_id }}
+        run: |
+          if [ -z "$RUN_ID" ]; then
+            tag=$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName -q .tagName)
+            RUN_ID=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow build.yml --branch "$tag" --limit 1 \
+                       --json databaseId -q '.[0].databaseId')
+            echo "Newest release: $tag (build run $RUN_ID)"
+          fi
+          [ -n "$RUN_ID" ] || { echo "::error::No build run found."; exit 1; }
+          echo "id=$RUN_ID" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/jekyll-build-pages@v1
+        with:
+          source: ./
+          destination: ./_site
+
+      # The Jekyll step leaves _site owned by root: the next steps add to it.
+      - name: Own the site folder
+        run: sudo chown -R "$USER" _site
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: flatpak-repo
+          path: _site/flatpak
+          run-id: ${{ steps.run.outputs.id }}
+          github-token: ${{ github.token }}
+
+      # One-click install: software centres open .flatpakref files.
+      - name: Flatpak install file
+        run: |
+          cat > _site/flatpak/ignite.flatpakref <<'REF'
+          [Flatpak Ref]
+          Title=Ignite
+          Name=io.github.sh1ftycode.Ignite
+          Branch=stable
+          Url=https://sh1ftycode.github.io/IgniteLive/flatpak/
+          IsRuntime=false
+          RuntimeRepo=https://dl.flathub.org/repo/flathub.flatpakrepo
+          REF
+          sed -i 's/^ *//' _site/flatpak/ignite.flatpakref
+          touch _site/.nojekyll
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      - id: deploy
+        uses: actions/deploy-pages@v4
