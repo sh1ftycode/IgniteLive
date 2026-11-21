@@ -21,6 +21,8 @@ For versions before 1.6.1, see the
   makes a viewer a moderator (or not), mutes them (30 seconds, 5 minutes or
   the rest of the LIVE), or kicks them out, and lets them back in. It works
   for viewers who've chatted, liked, gifted or joined since Ignite started.
+  The button shows once your Ignite server's Euler Stream plan includes
+  moderation (Euler's Webcast Premium add-on).
 
 ## 1.8.1
 

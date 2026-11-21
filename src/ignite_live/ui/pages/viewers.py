@@ -158,6 +158,9 @@ class ViewersPage(QWidget):
             menu.addAction(label).triggered.connect(
                 lambda _checked=False, action=action, duration=duration: self._tiktok(action, duration))
         self.tiktok.setMenu(menu)
+        # Only when it works: TikTok signed in on the server, and the server's Euler plan includes moderation.
+        self.tiktok.setVisible(bool(controller.tiktok_account.get("moderation")))
+        controller.tiktok_account_changed.connect(lambda status: self.tiktok.setVisible(bool(status.get("moderation"))))
         row.addWidget(self.set_points)
         row.addWidget(self.block)
         row.addWidget(self.tiktok)

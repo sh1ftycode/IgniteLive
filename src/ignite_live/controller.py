@@ -406,6 +406,8 @@ class Controller(QObject):
         self._tiktok_ids: collections.OrderedDict[str, str] = collections.OrderedDict()
         self._tiktok_replies: collections.deque[str] = collections.deque(maxlen=TIKTOK_REPLY_BACKLOG)
         self._tiktok_replying = False
+        self.tiktok_account: dict = {}  # The latest tiktok_account_changed: "moderation" shows the Viewers tab's button.
+        self.tiktok_account_changed.connect(lambda status: setattr(self, "tiktok_account", status))
         self.radio_status = ""
         self.music.on_radio_change = lambda text: self.runtime.to_ui(self._radio_status_changed, text)
         publish = self.music.queue.on_change
@@ -475,6 +477,7 @@ class Controller(QObject):
             self.load_playlist(self.settings.music_playlist_url, self.settings.music_playlist_shuffle, quiet=True)
         # Connecting a YouTube Music account (a pasted cookie) was removed after 1.8.0: forget a saved one.
         self.runtime.blocking(keychain.forget_long, keychain.YTMUSIC_COOKIE)
+        self.refresh_tiktok_account()  # Whether TikTok moderation is available (the Viewers tab's TikTok button).
         self.apply_tts()
 
     def shutdown(self) -> None:
