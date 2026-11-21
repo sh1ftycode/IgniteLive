@@ -10,8 +10,8 @@ import html
 import re
 from dataclasses import replace
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QFontDatabase
+from PySide6.QtCore import Qt, QUrl
+from PySide6.QtGui import QColor, QDesktopServices, QFontDatabase
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -343,6 +343,27 @@ class PreferencesDialog(QDialog):
         self.tiktok = QLineEdit(s.tiktok_username)
         self.tiktok.setPlaceholderText("without the @")
         form.addRow("&TikTok username:", self.tiktok)
+        # TikTok signed in on the Ignite server's website (Euler Stream): Ignite can act as the streamer.
+        self.tiktok_account = QLabel("Checking…")
+        self.tiktok_account.setWordWrap(True)
+        tiktok_site = QPushButton("Sign In on the Website…")
+        tiktok_site.setToolTip("Opens your account on the Ignite server's website, signed in: TikTok is at the top")
+        tiktok_site.clicked.connect(lambda: controller.open_server_account(
+            lambda url: QDesktopServices.openUrl(QUrl(url))))
+        tiktok_row = QHBoxLayout()
+        tiktok_row.addWidget(self.tiktok_account, 1)
+        tiktok_row.addWidget(tiktok_site)
+        form.addRow("TikTok account:", tiktok_row)
+        self.tiktok_replies = QCheckBox("Answer song requests in TikTok chat, as you")
+        self.tiktok_replies.setChecked(s.tiktok_chat_replies)
+        self.tiktok_replies.setToolTip("“@name: added Song (#2)”, refusals and skips, said in your LIVE's chat. At most "
+                                       "one message every 3 seconds")
+        form.addRow("", self.tiktok_replies)
+        form.addRow(note("Sign your TikTok account in on the Ignite server's website (by scanning a QR code with the "
+                         "TikTok app) to let Ignite answer requests in your chat, and to make viewers moderators, "
+                         "mute them or kick them out from the Viewers tab. Your TikTok password never reaches Ignite."))
+        controller.tiktok_account_changed.connect(self._show_tiktok_account)
+        controller.refresh_tiktok_account()
         self.twitch = QLineEdit(s.twitch_channel)
         self.twitch.setPlaceholderText("channel name or twitch.tv link")
         form.addRow("T&witch channel:", self.twitch)
@@ -851,6 +872,7 @@ class PreferencesDialog(QDialog):
             tiktok_username=self.tiktok.text().strip().lstrip("@"),
             twitch_channel=self.twitch.text().strip(),
             twitch_stats=self.twitch_stats.isChecked(),
+            tiktok_chat_replies=self.tiktok_replies.isChecked(),
             youtube_channel=self.youtube.text().strip(),
             obs_url=self.obs_url.text().strip() or "ws://127.0.0.1:4455",
             obs_record_while_live=self.obs_record.isChecked(),
@@ -973,6 +995,19 @@ class PreferencesDialog(QDialog):
         return True
 
     # Signing in to the server (controller.sign_in_to_server).
+
+    def _show_tiktok_account(self, status: dict) -> None:
+        if status.get("connected"):
+            name = status.get("username")
+            self.tiktok_account.setText(f"Signed in as @{name}" if name else "Signed in")
+        elif status.get("error"):
+            self.tiktok_account.setText(f"Couldn't check: {status['error']}")
+        elif status.get("server") is False:
+            self.tiktok_account.setText("Sign in to your Ignite server first (Server tab)")
+        elif status.get("available"):
+            self.tiktok_account.setText("Not signed in")
+        else:
+            self.tiktok_account.setText("Your Ignite server doesn't offer TikTok sign-in")
 
     def _sign_in(self) -> None:
         url = self.backend_url.text().strip().rstrip("/") or main_server()

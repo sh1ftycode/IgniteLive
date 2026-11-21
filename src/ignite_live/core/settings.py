@@ -128,6 +128,8 @@ class Settings:
     backend_url: str = ""
     server_username: str = ""  # The account this Ignite signed in to on backend_url (shown in Preferences → Server).
     tiktok_via_server: bool = True  # Signed in: read TikTok chat through the server (Euler Stream), not TikTokLive.
+    # With TikTok signed in on the server's website: answer song requests in TikTok chat, as the streamer.
+    tiktok_chat_replies: bool = False
     overlay_port: int = 17_845
     overlay_token: str = ""
     api_key: str = ""  # The local API's control key (overlay/api.py): runs commands. Never synced.

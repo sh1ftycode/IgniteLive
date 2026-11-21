@@ -8,6 +8,7 @@ every failure surfaces as a ``notice`` instead of a modal dialog.
 from __future__ import annotations
 
 import asyncio
+import collections
 import json
 import logging
 import mimetypes
@@ -157,6 +158,9 @@ LEADERBOARD_PUSH_SECONDS = 1.5  # Overlays get leaderboard updates at most this 
 GAME_PUSH_SECONDS = 0.25  # And game updates at most this often.
 TEST_GAME_SECONDS = 30  # A game's Test button runs it this long with simulated players.
 AUDIENCE_PUSH_SECONDS = 1.5  # The viewer list and the stats row are redrawn at most this often.
+TIKTOK_REPLY_GAP_S = 3.0  # Between Ignite's own TikTok chat messages, so the account doesn't look like a spammer.
+TIKTOK_REPLY_BACKLOG = 5  # Replies waiting to be said; older ones are dropped when chat is busier than that.
+TIKTOK_IDS_KEPT = 5000  # TikTok viewers whose numeric ids are remembered for moderation.
 RESTART_AFTER_SECONDS = 4.0  # Previous starts the song over when it's this far in; earlier, it goes back a song.
 _SAFE_ERRORS = (
     profiles.ProfileError,
@@ -254,6 +258,7 @@ class Controller(QObject):
     chat_event = Signal(object)  # ChatEvent
     chats_cleared = Signal()  # Clear All Chats: every chat panel empties.
     hosted_changed = Signal()  # Hosted widget links turned on or off, or new links or keys.
+    tiktok_account_changed = Signal(object)  # {"available", "connected", "username"}: TikTok signed in on the server.
     # Signing in to the Ignite server: {"waiting": True, "code", "url"} while the website is open, then
     # {"username", "server"} when signed in, or None when signed out.
     server_sign_in = Signal(object)
@@ -395,6 +400,12 @@ class Controller(QObject):
         # Autoplay remembers what chat requested, between runs, to follow the same genre.
         self.music.radio_seeds = [v for v in self.settings.music_radio_seeds if video_id_from(v) == v][:20]
         self.music.on_seeds_change = lambda seeds: self.runtime.to_ui(self._radio_seeds_changed, seeds)
+        self.music.on_reply = self._tiktok_reply
+        # TikTok as the streamer (signed in on the server's website): viewers' numeric ids, newest last, for
+        # moderating them from the Viewers tab; and replies to song requests, sent one at a time.
+        self._tiktok_ids: collections.OrderedDict[str, str] = collections.OrderedDict()
+        self._tiktok_replies: collections.deque[str] = collections.deque(maxlen=TIKTOK_REPLY_BACKLOG)
+        self._tiktok_replying = False
         self.radio_status = ""
         self.music.on_radio_change = lambda text: self.runtime.to_ui(self._radio_status_changed, text)
         publish = self.music.queue.on_change
@@ -707,6 +718,12 @@ class Controller(QObject):
             await asyncio.wait([task], timeout=2)
 
     def _on_chat_event(self, event: ChatEvent) -> None:
+        user = getattr(event, "user", None)
+        if isinstance(user, ChatUser) and user.platform == "tiktok" and user.user_id and not self.simulating:
+            self._tiktok_ids[user.key.lower()] = user.user_id
+            self._tiktok_ids.move_to_end(user.key.lower())
+            if len(self._tiktok_ids) > TIKTOK_IDS_KEPT:
+                self._tiktok_ids.popitem(last=False)
         self._api_event(event)  # Everything that happens, for widgets and apps (likes, joins and stats too).
         if isinstance(event, ChatJoin):
             self._audience_event(event)
@@ -1730,6 +1747,75 @@ class Controller(QObject):
 
     async def _push_overlay_texts(self) -> None:
         await self.overlay.set_texts(Texts(self.settings.texts).group("overlay."), command_config(self.settings).request_usage)
+
+    # TikTok, as the streamer (the server's website signs their account in through Euler Stream).
+
+    def refresh_tiktok_account(self) -> None:
+        """Ask the server whether TikTok is signed in on its website (tiktok_account_changed). GUI thread."""
+        token = keychain.load(keychain.BACKEND_TOKEN)
+        if not (self.settings.backend_url and token):
+            self.tiktok_account_changed.emit({"available": False, "connected": False, "server": False})
+            return
+
+        def failed(error: BaseException) -> None:
+            self.tiktok_account_changed.emit({"available": False, "connected": False, "error": friendly(error)})
+
+        self.runtime.blocking(BackendClient(self.settings.backend_url, token).tiktok_status,
+                              on_success=lambda status: self.runtime.to_ui(self.tiktok_account_changed.emit, status),
+                              on_error=lambda error: self.runtime.to_ui(failed, error))
+
+    def tiktok_user_id(self, key: str) -> str:
+        """A viewer's numeric TikTok id ("tiktok:name"), if they've done anything in chat since Ignite started."""
+        return self._tiktok_ids.get(key.lower(), "")
+
+    def tiktok_moderate(self, key: str, action: str, duration: int = 300) -> None:
+        """Make a TikTok viewer a moderator (or not), mute or unmute them, or kick them out. GUI thread."""
+        user_id, token = self.tiktok_user_id(key), keychain.load(keychain.BACKEND_TOKEN)
+        if not user_id:
+            self.notice.emit("error", "Ignite only knows TikTok viewers who've chatted, liked, gifted or joined "
+                                      "since it started. Try again once they do.")
+            return
+        if not (self.settings.backend_url and token):
+            self.notice.emit("error", "Sign in to your Ignite server first (File → Preferences → Server), then sign "
+                                      "in to TikTok on its website.")
+            return
+        name = key.split(":", 1)[-1]
+        done = {"mod": f"@{name} is now a moderator.", "unmod": f"@{name} is no longer a moderator.",
+                "mute": f"@{name} is muted.", "unmute": f"@{name} can chat again.",
+                "kick": f"@{name} was kicked from your LIVE.", "unkick": f"@{name} can join your LIVE again."}
+        client = BackendClient(self.settings.backend_url, token)
+        self._run("tiktok", client.tiktok_action, action, user_id, "", duration,
+                  on_success=lambda _result: self.notice.emit("info", done.get(action, "Done.")))
+
+    def _tiktok_reply(self, user: ChatUser, text: str) -> None:
+        """A song request's answer, said in TikTok chat as the streamer (one at a time). Asyncio loop."""
+        if not self.settings.tiktok_chat_replies or user.platform != "tiktok" or self.simulating:
+            return
+        self._tiktok_replies.append(text)
+        if not self._tiktok_replying:
+            self._tiktok_replying = True
+            self._spawn_task(self._send_tiktok_replies())
+
+    async def _send_tiktok_replies(self) -> None:
+        try:
+            while self._tiktok_replies:
+                text = self._tiktok_replies.popleft()
+                token = keychain.load(keychain.BACKEND_TOKEN)
+                if not (self.settings.backend_url and token):
+                    self._tiktok_replies.clear()
+                    return
+                try:
+                    await asyncio.to_thread(BackendClient(self.settings.backend_url, token).tiktok_action, "chat",
+                                            text=text)
+                except BackendError as error:
+                    log.info("TikTok: couldn't reply in chat: %s", error)
+                    if "sign in" in str(error).lower() or "can't act" in str(error).lower():
+                        self._tiktok_replies.clear()
+                        self.runtime.to_ui(self.notice.emit, "error", f"TikTok replies stopped: {error}")
+                        return
+                await asyncio.sleep(TIKTOK_REPLY_GAP_S)
+        finally:
+            self._tiktok_replying = False
 
     def _spawn_task(self, coroutine) -> None:
         """Run a coroutine on the loop (from the loop thread), keeping a reference until done."""

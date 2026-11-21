@@ -5,6 +5,23 @@ starts with its section from this file (see `.github/workflows/build.yml`).
 For versions before 1.6.1, see the
 [GitHub releases](https://github.com/sh1ftycode/IgniteLive/releases).
 
+## 1.8.2
+
+### New
+
+- **Sign in to TikTok** on your Ignite server's website (Account → TikTok):
+  scan a QR code with the TikTok app on Euler Stream's page. Your TikTok
+  password never reaches Ignite, and you can sign out on the website at any
+  time.
+- **Song requests answered in TikTok chat**, as you: "added", refused (and
+  why), skipped, what's playing. Turn it on in File → Preferences → Chat
+  platforms. At most one message every 3 seconds, so TikTok doesn't treat
+  your account as a spammer.
+- **Moderate your TikTok LIVE from Ignite:** the Viewers tab's TikTok button
+  makes a viewer a moderator (or not), mutes them (30 seconds, 5 minutes or
+  the rest of the LIVE), or kicks them out, and lets them back in. It works
+  for viewers who've chatted, liked, gifted or joined since Ignite started.
+
 ## 1.8.1
 
 ### Fixed

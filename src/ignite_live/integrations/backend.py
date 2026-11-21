@@ -255,6 +255,18 @@ class BackendClient:
         """End this Ignite's sign-in on the server: its token stops working everywhere."""
         self._call("POST", "/v1/auth/sign-out", {})
 
+    def tiktok_status(self) -> dict:
+        """{"available", "connected", "username", "sign_in_url"}: whether the streamer signed TikTok in on the website."""
+        status, payload = self._call("GET", "/v1/tiktok/account")
+        return {"available": False, "connected": False} if status == 404 else payload
+
+    def tiktok_action(self, action: str, user_id: str = "", text: str = "", duration: int = 300) -> None:
+        """Act as the streamer in their TikTok LIVE: chat, mod, unmod, mute, unmute, kick or unkick."""
+        status, _payload = self._call("POST", "/v1/tiktok/action",
+                                      {"action": action, "user_id": user_id, "text": text, "duration": duration})
+        if status == 404:
+            raise BackendError("Your Ignite server can't act on TikTok yet (it needs updating).")
+
     def _hosted(self, method: str, path: str) -> dict:
         status, payload = self._call(method, path, {} if method == "POST" else None)
         if status == 404:
@@ -275,6 +287,8 @@ class BackendClient:
             payload = json.loads(raw) if raw else {}
         except (json.JSONDecodeError, UnicodeDecodeError):
             payload = {}
+        if status == 401 and isinstance(payload, dict) and "signed_out" in payload:
+            raise BackendError(str(payload.get("error") or "Sign in to TikTok again on the website."))
         if status == 401:
             raise BackendError("The backend rejected this device token.")
         if status >= 400 and status not in (404, 410):

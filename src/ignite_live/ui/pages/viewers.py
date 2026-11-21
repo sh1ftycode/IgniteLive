@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QInputDialog,
     QLineEdit,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSpinBox,
@@ -142,8 +143,24 @@ class ViewersPage(QWidget):
         self.block = QPushButton("Block")
         self.block.setToolTip("Ignite ignores their messages: no text to speech, commands, requests or points")
         self.block.clicked.connect(self._toggle_block)
+        # As the streamer, in their TikTok LIVE (TikTok signed in on the Ignite server's website).
+        self.tiktok = QPushButton("TikTok")
+        self.tiktok.setToolTip("Make them a moderator, mute them, or kick them out of your LIVE. Needs TikTok signed in "
+                               "on your Ignite server's website (File → Preferences → Chat platforms)")
+        menu = QMenu(self.tiktok)
+        for label, action, duration in (("Make Moderator", "mod", 0), ("Remove Moderator", "unmod", 0), (None, "", 0),
+                                        ("Mute for 30 Seconds", "mute", 30), ("Mute for 5 Minutes", "mute", 300),
+                                        ("Mute for This LIVE", "mute", -1), ("Unmute", "unmute", 0), (None, "", 0),
+                                        ("Kick from LIVE…", "kick", 0), ("Let Back In", "unkick", 0)):
+            if label is None:
+                menu.addSeparator()
+                continue
+            menu.addAction(label).triggered.connect(
+                lambda _checked=False, action=action, duration=duration: self._tiktok(action, duration))
+        self.tiktok.setMenu(menu)
         row.addWidget(self.set_points)
         row.addWidget(self.block)
+        row.addWidget(self.tiktok)
         row.addStretch(1)
         row.addWidget(reset)
         right.addLayout(row)
@@ -220,6 +237,7 @@ class ViewersPage(QWidget):
         self.set_points.setEnabled(selected is not None)
         self.block.setEnabled(selected is not None)
         self.block.setText("Unblock" if selected and self._is_blocked(selected[0]) else "Block")
+        self.tiktok.setEnabled(selected is not None and selected[0].lower().startswith("tiktok:"))
 
     def _is_blocked(self, key: str) -> bool:
         return key.lower() in {entry.lower() for entry in self.controller.settings.blocked_users}
@@ -229,6 +247,18 @@ class ViewersPage(QWidget):
         if selected is not None:
             self.controller.block_viewer(selected[0], not self._is_blocked(selected[0]))
             self._selection_changed()
+
+    def _tiktok(self, action: str, duration: int) -> None:
+        selected = self._selected()
+        if selected is None:
+            return
+        key, name, _points = selected
+        if action == "kick":
+            answer = QMessageBox.question(self, "Kick from LIVE", f"Kick {name} out of your TikTok LIVE? They can't "
+                                          "come back in until you let them (TikTok button → Let Back In).")
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        self.controller.tiktok_moderate(key, action, duration if duration else 300)
 
     def _set_points(self) -> None:
         selected = self._selected()

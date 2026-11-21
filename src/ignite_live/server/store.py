@@ -118,6 +118,18 @@ class Store:
     def close(self) -> None:
         self._db.close()
 
+    def seal(self, data: dict) -> bytes:
+        """``data`` encrypted with this server's key (for secrets kept elsewhere, such as TikTok sign-ins)."""
+        return self._fernet.encrypt(json.dumps(data).encode())
+
+    def unseal(self, blob: bytes) -> dict | None:
+        """What ``seal`` made, or None if it can't be read (the server's key changed)."""
+        try:
+            data = json.loads(self._fernet.decrypt(blob))
+        except (InvalidToken, ValueError, TypeError):
+            return None
+        return data if isinstance(data, dict) else None
+
     # Users and device tokens.
 
     def add_user(self, name: str) -> str:

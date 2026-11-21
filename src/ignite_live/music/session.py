@@ -68,6 +68,8 @@ class MusicSession:
         self._playlist_pos = 0
         self._filling = False
         self.on_playlist_change: Callable[[dict | None], None] | None = None
+        # Answers to a viewer's command (song added, refused, skipped…): Ignite can say them in that viewer's chat.
+        self.on_reply: Callable[[ChatUser, str], None] | None = None
         # Autoplay: with the queue empty and no playlist, songs like what chat requested (same genre).
         self.radio_on = False
         self.radio_start = ""  # A song or artist to start from, before chat has requested anything.
@@ -295,9 +297,14 @@ class MusicSession:
             await self._reply(user, str(error))
 
     async def _reply(self, user: ChatUser, reason: str) -> None:
-        await self.overlay.toast(
-            self.texts.format("music.reply", user=user.nickname, platform=user.platform_name, reason=reason)
-        )
+        await self._answer(user, self.texts.format("music.reply", user=user.nickname, platform=user.platform_name,
+                                                   reason=reason))
+
+    async def _answer(self, user: ChatUser, text: str) -> None:
+        """What a viewer's command did: on the overlay, and (on_reply) back in their chat if Ignite can."""
+        await self.overlay.toast(text)
+        if self.on_reply is not None:
+            self.on_reply(user, text)
 
     def _pay(self, user: ChatUser, kind: str) -> None:
         reason = self.charge(user, kind) if self.charge else ""
@@ -335,15 +342,13 @@ class MusicSession:
                 raise
             self.remember_request(track)  # Autoplay follows chat's taste (its radio is official audio only).
             values = dict(user=user.nickname, platform=user.platform_name, title=track.title, artist=track.channel)
-            await self.overlay.toast(
-                self.texts.format("music.added_now", **values) if position == 0
-                else self.texts.format("music.added_queued", position=position, **values)
-            )
+            await self._answer(user, self.texts.format("music.added_now", **values) if position == 0
+                               else self.texts.format("music.added_queued", position=position, **values))
         elif command.kind is CommandKind.SKIP:
             skipped = self.queue.current
             self.queue.skip(user, privileged=role_of(user) >= self.engine.config.skip_role)
             if skipped:
-                await self.overlay.toast(self.texts.format(
+                await self._answer(user, self.texts.format(
                     "music.skipped", title=skipped.track.title, requester=skipped.requested_by.nickname
                 ))
         elif command.kind is CommandKind.BUMP:
@@ -353,21 +358,20 @@ class MusicSession:
             except QueueRejected:
                 self._give_back(user, "bump")
                 raise
-            await self.overlay.toast(self.texts.format("points.bumped", user=user.nickname, title=item.track.title))
+            await self._answer(user, self.texts.format("points.bumped", user=user.nickname, title=item.track.title))
         elif command.kind is CommandKind.REVOKE:
             removed = self.queue.revoke(user)
-            await self.overlay.toast(self.texts.format("music.revoked", user=user.nickname, title=removed.track.title))
+            await self._answer(user, self.texts.format("music.revoked", user=user.nickname, title=removed.track.title))
         elif command.kind is CommandKind.CURRENT:
             current = self.queue.current
-            await self.overlay.toast(
-                self.texts.format("music.now_playing", title=current.track.title, artist=current.track.channel,
-                                  requester=current.requested_by.nickname)
-                if current else self.texts.format("music.nothing_playing")
-            )
+            await self._answer(user, self.texts.format("music.now_playing", title=current.track.title,
+                                                       artist=current.track.channel,
+                                                       requester=current.requested_by.nickname)
+                               if current else self.texts.format("music.nothing_playing"))
         elif command.kind is CommandKind.QUEUE:
             count = len(self.queue.upcoming)
             songs = f"{count} song{'s' if count != 1 else ''}"
-            await self.overlay.toast(self.texts.format("music.queue_count", songs=songs, count=count))
+            await self._answer(user, self.texts.format("music.queue_count", songs=songs, count=count))
         elif self.on_other_command is not None:
             self.on_other_command(command)
 
