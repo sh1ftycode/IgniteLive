@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 from ignite_live import __version__
 from ignite_live.controller import Controller
 from ignite_live.core import settings as settings_store
+from ignite_live.core.bundled import main_server
 from ignite_live.core.events import ConnectionState, StatusChange
 from ignite_live.core.seasons import SEASONAL
 from ignite_live.ui.actions import AppActions
@@ -276,6 +277,12 @@ class MainWindow(QMainWindow):
         whats_new = help_menu.addAction("&What's New…", lambda: show_notes(self.updates, self))
         whats_new.setEnabled(False)
         self.updates.changed.connect(lambda: whats_new.setEnabled(self.updates.release is not None))
+        # The Ignite server's form (web: /feedback), with this version filled in.
+        server = (self.controller.settings.backend_url or main_server()).rstrip("/")
+        if server:
+            help_menu.addAction("&Feedback && Requests…", lambda: QDesktopServices.openUrl(
+                QUrl(f"{(self.controller.settings.backend_url or main_server()).rstrip('/')}/feedback"
+                     f"?version={__version__}")))
         help_menu.addSeparator()
         help_menu.addAction(a.about)
 

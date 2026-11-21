@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ignite · Song requests</title>
+<style>
+/*{{THEMES}}*/
+html, body { height: 100%; overflow: hidden; }
+.stack { justify-content: flex-start; }
+.stack.bottom { justify-content: flex-end; }
+.line { align-items: center; border-left: 4px solid var(--muted); }
+.line.added { border-left-color: var(--accent); }
+.line.refused { border-left-color: var(--accent-2); }
+.line .what { flex: 1; min-width: 0; font-weight: 700; overflow-wrap: anywhere; }
+.line .tag { flex: none; font-size: 0.62em; font-weight: 800; letter-spacing: var(--eyebrow-spacing); text-transform: uppercase;
+  color: var(--muted); }
+.line.added .tag { color: var(--accent); }
+.line.refused .tag { color: var(--accent-2); }
+.line .where { color: var(--muted); font-size: 0.7em; font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="chat stack" id="stack" role="log" aria-live="polite"></div>
+<script>
+/*{{COMMON}}*/
+// What happened to each song request, as cards: added (and where in the queue), refused (and why), skipped. The
+// words are the app's Messages (File → Preferences → Messages). Each card stays a while, so a busy chat can read
+// every answer. Options: &seconds=4..60 (default 12) &max=1..8 cards (default 4) &from=bottom (new cards at the
+// bottom) &platform=0 (hide "TikTok", "Twitch"…).
+const seconds = Math.max(4, Math.min(60, parseInt(ST.params.get("seconds") || "12", 10)));
+const max = Math.max(1, Math.min(8, parseInt(ST.params.get("max") || "4", 10)));
+const fromBottom = ST.params.get("from") === "bottom";
+const showPlatform = ST.params.get("platform") !== "0";
+const stack = document.getElementById("stack");
+const TAGS = { added: "Added", refused: "Not added", skipped: "Skipped", info: "Music" };
+let quiet = false; // Panic mode: nothing shows until the streamer resumes.
+if (fromBottom) stack.classList.add("bottom");
+
+function card(m) {
+  const kind = TAGS[m.kind] ? m.kind : "info";
+  const line = ST.el("div", `line ${kind}`);
+  const what = ST.el("div", "what", m.text || "");
+  if (showPlatform && m.platform) { what.append(" "); what.append(ST.el("span", "where", m.platform)); }
+  line.append(what, ST.el("span", "tag", TAGS[kind]));
+  return line;
+}
+
+function add(m) {
+  if (quiet || !m.text) return;
+  const line = card(m);
+  if (fromBottom) stack.append(line); else stack.prepend(line);
+  const lines = [...stack.children].filter((el) => !el.classList.contains("gone"));
+  const extra = lines.length - max;
+  for (let i = 0; i < extra; i++) (fromBottom ? lines[i] : lines[lines.length - 1 - i]).remove();
+  setTimeout(() => {
+    line.classList.add("gone");
+    setTimeout(() => line.remove(), 700);
+  }, seconds * 1000);
+}
+
+ST.on("state", (s) => {
+  quiet = !!s.quiet;
+  if (quiet) stack.replaceChildren();
+});
+ST.on("reply", add);
+if (ST.demo) {
+  [{ kind: "added", text: "@Ember added Blinding Lights, #2 in the queue", platform: "TikTok" },
+   { kind: "refused", text: "@Nova: That song is longer than 10 minutes.", platform: "Twitch" },
+   { kind: "skipped", text: "Skipped Levitating", platform: "YouTube" }].forEach((m, i) => setTimeout(() => add(m), i * 400));
+}
+</script>
+</body>
+</html>

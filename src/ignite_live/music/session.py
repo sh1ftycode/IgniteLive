@@ -298,11 +298,15 @@ class MusicSession:
 
     async def _reply(self, user: ChatUser, reason: str) -> None:
         await self._answer(user, self.texts.format("music.reply", user=user.nickname, platform=user.platform_name,
-                                                   reason=reason))
+                                                   reason=reason), "refused")
 
-    async def _answer(self, user: ChatUser, text: str) -> None:
-        """What a viewer's command did: on the overlay, and (on_reply) back in their chat if Ignite can."""
+    async def _answer(self, user: ChatUser, text: str, kind: str = "info") -> None:
+        """What a viewer's command did: on the overlays (Now Playing's line, a Song requests card), and
+        (on_reply) back in their chat if Ignite can."""
         await self.overlay.toast(text)
+        reply = getattr(self.overlay, "reply", None)
+        if reply is not None:
+            await reply(text, user.nickname, user.platform_name, kind)
         if self.on_reply is not None:
             self.on_reply(user, text)
 
@@ -343,14 +347,14 @@ class MusicSession:
             self.remember_request(track)  # Autoplay follows chat's taste (its radio is official audio only).
             values = dict(user=user.nickname, platform=user.platform_name, title=track.title, artist=track.channel)
             await self._answer(user, self.texts.format("music.added_now", **values) if position == 0
-                               else self.texts.format("music.added_queued", position=position, **values))
+                               else self.texts.format("music.added_queued", position=position, **values), "added")
         elif command.kind is CommandKind.SKIP:
             skipped = self.queue.current
             self.queue.skip(user, privileged=role_of(user) >= self.engine.config.skip_role)
             if skipped:
                 await self._answer(user, self.texts.format(
                     "music.skipped", title=skipped.track.title, requester=skipped.requested_by.nickname
-                ))
+                ), "skipped")
         elif command.kind is CommandKind.BUMP:
             self._pay(user, "bump")
             try:
@@ -358,10 +362,12 @@ class MusicSession:
             except QueueRejected:
                 self._give_back(user, "bump")
                 raise
-            await self._answer(user, self.texts.format("points.bumped", user=user.nickname, title=item.track.title))
+            await self._answer(user, self.texts.format("points.bumped", user=user.nickname, title=item.track.title),
+                               "added")
         elif command.kind is CommandKind.REVOKE:
             removed = self.queue.revoke(user)
-            await self._answer(user, self.texts.format("music.revoked", user=user.nickname, title=removed.track.title))
+            await self._answer(user, self.texts.format("music.revoked", user=user.nickname, title=removed.track.title),
+                               "skipped")
         elif command.kind is CommandKind.CURRENT:
             current = self.queue.current
             await self._answer(user, self.texts.format("music.now_playing", title=current.track.title,

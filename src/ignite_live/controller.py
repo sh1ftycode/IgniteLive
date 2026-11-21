@@ -161,6 +161,7 @@ AUDIENCE_PUSH_SECONDS = 1.5  # The viewer list and the stats row are redrawn at 
 TIKTOK_REPLY_GAP_S = 3.0  # Between Ignite's own TikTok chat messages, so the account doesn't look like a spammer.
 TIKTOK_REPLY_BACKLOG = 5  # Replies waiting to be said; older ones are dropped when chat is busier than that.
 TIKTOK_IDS_KEPT = 5000  # TikTok viewers whose numeric ids are remembered for moderation.
+ANNOUNCE_AGAIN_S = 1800  # Without a stream stop in between, a platform isn't announced as live again sooner.
 RESTART_AFTER_SECONDS = 4.0  # Previous starts the song over when it's this far in; earlier, it goes back a song.
 _SAFE_ERRORS = (
     profiles.ProfileError,
@@ -318,6 +319,7 @@ class Controller(QObject):
         self.account: AccountInfo | None = None
         self.active_key: CachedKey | None = None
         self.obs_streaming = False
+        self._announced: dict[str, float] = {}  # Platform -> when Discord was told it went live (_announce_live).
         self.queue_snapshot: dict = {"current": None, "upcoming": []}
         self._provider: StreamlabsExperimentalProvider | None = None
         self._obs: ObsClient | None = None
@@ -651,9 +653,12 @@ class Controller(QObject):
             self._status(change.source, change.state, change.detail)
             if change.state is not ConnectionState.CONNECTED and was_connected:
                 self._platform_gone(platform)
-            # Twitch chat connects while offline too; its "went live" comes from LiveStatus instead.
+            # Twitch chat connects while offline too; its "went live" comes from LiveStatus instead. TikTok's chat
+            # connects as soon as a key makes the LIVE room: with OBS and that key, the announcement waits for
+            # OBS to actually start streaming (_set_streaming).
             if platform != "twitch" and change.state is ConnectionState.CONNECTED and not was_connected:
-                self._announce_live(platform, name)
+                if not (platform == "tiktok" and self._tiktok_goes_live_in_obs() and not self.obs_streaming):
+                    self._announce_live(platform, name)
 
         try:
             chat = self._make_chat(platform, name, on_status)
@@ -663,7 +668,17 @@ class Controller(QObject):
         current["chat"] = self._chats[platform] = chat
         self._chat_tasks[platform] = asyncio.create_task(chat.run())
 
+    def _tiktok_goes_live_in_obs(self) -> bool:
+        """OBS is connected and has this LIVE's TikTok key: TikTok is live when OBS starts streaming."""
+        return self._obs is not None and self.active_key is not None
+
     def _announce_live(self, platform: str, name: str) -> None:
+        """Discord's "went live", once per stream: a chat that reconnects mid-stream doesn't announce it again."""
+        now = time.monotonic()
+        last = self._announced.get(platform)
+        if last is not None and now - last < ANNOUNCE_AGAIN_S:
+            return
+        self._announced[platform] = now
         if self._discord is not None:
             creator = f"@{name}" if platform == "tiktok" else name
             self._discord.push_line(self._discord.texts.format(
@@ -2023,8 +2038,11 @@ class Controller(QObject):
                 self._start_report()
             else:
                 self._finish_report()
+                self._announced.clear()  # The next stream is announced again.
             self.obs_streaming = active
             self.obs_streaming_changed.emit(active)
+            if active and self.settings.tiktok_username and self.active_key is not None:
+                self._announce_live("tiktok", self.settings.tiktok_username)  # Start Streaming, with the key in.
             self._set_studio(replace(self.studio, streaming=active))
             if self._obs is not None:
                 self._spawn_task(self._stream_automations(self._obs, active))

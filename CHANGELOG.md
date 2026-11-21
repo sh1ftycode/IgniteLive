@@ -5,6 +5,32 @@ starts with its section from this file (see `.github/workflows/build.yml`).
 For versions before 1.6.1, see the
 [GitHub releases](https://github.com/sh1ftycode/IgniteLive/releases).
 
+## 1.8.3
+
+### New
+
+- **Song requests overlay:** what happened to each request, as cards that
+  stay up long enough to read: added (and where in the queue), refused (and
+  why) or skipped, coloured by outcome. Add it from the Overlays tab.
+  Options: how long cards stay, how many at once, newest at the bottom.
+
+- **Feedback & requests:** Help → Feedback & Requests opens a form on the
+  Ignite server's website for bugs and ideas (also linked from its home
+  page). The server's admins read and sort them in the control panel.
+- **`&size=` on every overlay** makes its text bigger or smaller.
+
+### Changed
+
+- **Discord's "went live" for TikTok** is sent when you press Start
+  Streaming, not when the stream key is made. A chat that reconnects
+  mid-stream no longer announces it again.
+- **Chat and leaderboard overlays have bigger, sharper text in less space:**
+  the text follows the Browser Source's width (about 21 px at the default
+  size instead of 13), so a small source stays readable. New leaderboard
+  sources are shorter (460×340).
+- **Now Playing's answers to chat** queue up instead of replacing each other,
+  so a busy chat doesn't lose them.
+
 ## 1.8.2
 
 ### New

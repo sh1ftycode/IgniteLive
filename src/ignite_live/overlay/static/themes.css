@@ -386,8 +386,13 @@
 /* Base. */
 * { box-sizing: border-box; margin: 0; padding: 0; }
 html, body { height: 100%; background: transparent; color: var(--text); font-family: var(--font);
-  font-size: clamp(13px, 2.4vmin, 22px); line-height: 1.35; overflow: hidden; }
-:root[data-theme="retro"] body { font-size: clamp(9px, 1.7vmin, 15px); line-height: 1.6; }
+  font-size: calc(clamp(13px, 2.4vmin, 22px) * var(--size, 1)); line-height: 1.35; overflow: hidden; }
+:root[data-theme="retro"] body { font-size: calc(clamp(9px, 1.7vmin, 15px) * var(--size, 1)); line-height: 1.6; }
+/* Narrow list overlays (chat, leaderboard): text follows the width with no low cap, so a small Browser Source
+   still has big, sharp text, and a bigger one has bigger text rather than empty space. */
+body.fit { font-size: calc(clamp(14px, 4.6vw, 96px) * var(--size, 1)); }
+:root[data-theme="retro"] body.fit { font-size: calc(clamp(10px, 3.3vw, 68px) * var(--size, 1)); }
+:root[data-theme="terminal"] body.fit { font-size: calc(clamp(16px, 5.5vw, 110px) * var(--size, 1)); }
 ul { list-style: none; }
 
 /* Components. */
@@ -477,7 +482,7 @@ ul { list-style: none; }
 :root[data-theme="glass"] .card, :root[data-theme="glass"] .line {
   -webkit-backdrop-filter: blur(18px) saturate(160%); backdrop-filter: blur(18px) saturate(160%); }
 
-:root[data-theme="terminal"] body { font-size: clamp(16px, 3vmin, 28px); line-height: 1.15; }
+:root[data-theme="terminal"] body { font-size: calc(clamp(16px, 3vmin, 28px) * var(--size, 1)); line-height: 1.15; }
 :root[data-theme="terminal"] .card::after, :root[data-theme="terminal"] .line::after { content: ""; position: absolute;
   inset: 0; pointer-events: none; background: repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.25) 0 1px, transparent 1px 3px); }
 :root[data-theme="terminal"] .line { position: relative; }

@@ -55,6 +55,9 @@ DESCRIPTIONS = {
     "commands": "Every chat command viewers can use, as you've set them up: song requests, points (with their "
                 "price), text to speech and your action rules, plus how to play while a game runs. A long list "
                 "scrolls slowly.",
+    "requests": "What happened to each song request: added (and where in the queue), refused (and why) or "
+                "skipped, as cards that stay up long enough to read. Your viewers' answer, on stream. The words "
+                "are your Messages (File → Preferences → Messages).",
 }
 OPTIONS = {
     "nowplaying": [],
@@ -72,6 +75,8 @@ OPTIONS = {
         ("follows=0", "hide follows"),
         ("joins=0", "hide “joined” lines"),
         ("platforms=all", "platform badge on every line (default: Twitch and YouTube only); 0 hides them"),
+        ("size=1.5", "text bigger (or smaller, e.g. 0.8): it follows the Browser Source's width, so a small "
+                     "source still has sharp text"),
     ],
     "alerts": [
         ("seconds=8", "how long each alert shows (2–15, default 5)"),
@@ -85,6 +90,8 @@ OPTIONS = {
         ("period=alltime", "all time instead of this stream (points are always all time)"),
         ("rows=3", "how many places (1–10, default 5)"),
         ("callout=0", "no “new #1” callout"),
+        ("size=1.5", "text bigger (or smaller, e.g. 0.8): it follows the Browser Source's width, so a small "
+                     "source still has sharp text"),
     ],
     "game": [],
     "commands": [
@@ -92,6 +99,12 @@ OPTIONS = {
         ("group=Music", "show one group only: Music, Points, Text to speech, Moderators or More"),
         ("aliases=0", "hide other names for the same command"),
         ("speed=40", "how fast a long list scrolls, in pixels a second (5–200, default 30)"),
+    ],
+    "requests": [
+        ("seconds=20", "how long each card stays (4–60 s, default 12)"),
+        ("max=3", "how many cards at once (1–8, default 4)"),
+        ("from=bottom", "new cards at the bottom, older ones above"),
+        ("platform=0", "hide the platform (TikTok, Twitch, YouTube)"),
     ],
 }
 

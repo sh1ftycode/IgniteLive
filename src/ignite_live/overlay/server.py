@@ -37,10 +37,13 @@ PAGES = {
     "chat": ("Chat", 460, 720),
     "alerts": ("Alerts", 900, 320),
     "goals": ("Goals", 800, 220),
-    "leaderboard": ("Leaderboard", 460, 520),
+    "leaderboard": ("Leaderboard", 460, 340),
     "game": ("Game", 800, 420),
     "commands": ("Commands", 520, 640),
+    "requests": ("Song requests", 480, 360),
 }
+# What a viewer's command did (the Song requests overlay colours its cards by it).
+REPLY_KINDS = ("added", "refused", "skipped", "info")
 THEMES = {
     "minimal": "Minimal",
     "neon": "Neon Arcade",
@@ -339,6 +342,11 @@ class OverlayServer:
     def open_pages(self) -> set[str]:
         """Overlays open right now (in OBS or a browser), not counting previews."""
         return {page for ws, page in self._pages.items() if ws in self._sockets and ws not in self._previews}
+
+    async def reply(self, text: str, user: str = "", platform: str = "", kind: str = "info") -> None:
+        """A viewer's command answered (MusicSession): one card on the Song requests overlay."""
+        await self._broadcast({"type": "reply", "text": text[:160], "user": user[:64], "platform": platform[:20],
+                               "kind": kind if kind in REPLY_KINDS else "info"})
 
     async def toast(self, text: str) -> None:
         if self.on_toast:

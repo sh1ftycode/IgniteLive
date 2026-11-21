@@ -6,6 +6,9 @@ const ST = (() => {
   const token = params.get("token") || "";
   const pinnedTheme = params.get("theme"); // &theme=… pins this overlay to one theme
   const demo = params.get("demo") === "1"; // &demo=1: sample songs and chat, for previews without going live
+  // &size=0.5..3: every overlay's text bigger or smaller than its theme's (themes.css, --size).
+  const size = parseFloat(params.get("size") || "");
+  if (size > 0) document.documentElement.style.setProperty("--size", String(Math.max(0.5, Math.min(3, size))));
   const handlers = {};
   let socket = null;
   // Hosted on an Ignite server, a page falls back to Ignite on this PC when the server doesn't answer or the PC
@@ -141,7 +144,7 @@ const ST = (() => {
         return;
       }
       if (demo && message.type === "state") message = { ...message, queue: DEMO_QUEUE };
-      if (demo && ["chat", "progress", "goals", "leaderboards", "leader", "game", "game_over"].includes(message.type)) return; // Only sample data in a preview.
+      if (demo && ["chat", "progress", "goals", "leaderboards", "leader", "game", "game_over", "reply"].includes(message.type)) return; // Only sample data in a preview.
       if (message.type === "state") {
         applyTheme(message.theme);
         applyStyle(message.style);

@@ -158,11 +158,20 @@ ST.on("progress", (p) => {
   lastProgress = p;
   if (!audio && p.item_id === currentId) showProgress(p.position, p.duration);
 });
-ST.on("toast", (message) => {
-  $("toast").textContent = message.text;
+// Answers to chat's commands, one after another (each at least 3 s), instead of the next one replacing it unread.
+const toasts = [];
+function nextToast() {
+  if (toastTimer) return;
+  const text = toasts.shift();
+  if (text === undefined) { $("toast").classList.remove("show"); return; }
+  $("toast").textContent = text;
   $("toast").classList.add("show");
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => $("toast").classList.remove("show"), 5000);
+  toastTimer = setTimeout(() => { toastTimer = null; nextToast(); }, toasts.length ? 3000 : 5000);
+}
+ST.on("toast", (message) => {
+  toasts.push(message.text);
+  if (toasts.length > 4) toasts.shift(); // A busy chat: the newest answers, not a minute-long backlog.
+  nextToast();
 });
 
 // The copy that plays reports progress, so the other copies and the visualizer can follow along.
