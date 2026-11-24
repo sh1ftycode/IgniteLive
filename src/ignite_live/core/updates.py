@@ -27,6 +27,7 @@ repository itself; only signing the builds could.
 
 from __future__ import annotations
 
+import base64
 import hashlib
 import json
 import os
@@ -44,6 +45,7 @@ from pathlib import Path
 from typing import BinaryIO, Callable
 
 from ignite_live.core.bundled import main_server
+from ignite_live.core.flatpak_key import PUBLIC_KEY_B64
 from ignite_live.core.http import Transport, TransportError, tls_context, urllib_transport
 
 REPO = "sh1ftycode/IgniteLive"
@@ -292,16 +294,54 @@ def unpack(archive: Path, how: Install, version: str) -> Path:
     return new
 
 
-def flatpak_update(run: Callable = subprocess.run) -> None:
-    """Ask Flatpak on the host to update Ignite (downloads and installs; the running copy is untouched). Blocking."""
+def flatpak_update(run: Callable = subprocess.run, key_folder: Path | None = None) -> None:
+    """Ask Flatpak on the host to update Ignite (downloads and installs; the running copy is untouched). Blocking.
+
+    Installs made before Ignite's repository was signed have no key for it, and Flatpak refuses their updates
+    ("untrusted non-gpg verified remote"): then the key is added to the remote they came from, and it tries
+    once more."""
+    result = _host(run, "update", "--noninteractive", "-y", FLATPAK_ID, timeout=600)
+    detail = (result.stderr or result.stdout or "").strip()
+    if result.returncode != 0 and _KEY_PROBLEM.search(detail) and _trust_signing_key(run, key_folder):
+        result = _host(run, "update", "--noninteractive", "-y", FLATPAK_ID, timeout=600)
+        detail = (result.stderr or result.stdout or "").strip()
+    if result.returncode != 0:
+        lines = detail.splitlines()
+        raise UpdateError("Flatpak couldn't update Ignite" + (f": {lines[-1][:200]}" if lines else "."))
+
+
+_KEY_PROBLEM = re.compile(r"(?i)gpg|untrusted|signature")
+_REMOTE_NAME = re.compile(r"^[A-Za-z0-9_.-]{1,80}$")
+
+
+def _host(run: Callable, *args: str, timeout: int = 60):
     try:
-        result = run(["flatpak-spawn", "--host", "flatpak", "update", "--noninteractive", "-y", FLATPAK_ID],
-                     capture_output=True, text=True, timeout=600)
+        return run(["flatpak-spawn", "--host", "flatpak", *args], capture_output=True, text=True, timeout=timeout)
     except (OSError, subprocess.TimeoutExpired) as error:
         raise UpdateError(f"Flatpak couldn't update Ignite: {error}.") from error
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout or "").strip().splitlines()
-        raise UpdateError("Flatpak couldn't update Ignite" + (f": {detail[-1][:200]}" if detail else "."))
+
+
+def _trust_signing_key(run: Callable, key_folder: Path | None = None) -> bool:
+    """Give the remote Ignite was installed from the repository's public key (core/flatpak_key.py)."""
+    origin = _host(run, "info", "--show-origin", FLATPAK_ID)
+    name = (origin.stdout or "").strip()
+    if origin.returncode != 0 or not _REMOTE_NAME.match(name):
+        return False
+    # In the app's own data folder: the host sees it at the same path (~/.var/app/<id>/data).
+    folder = key_folder or Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
+    key = folder / "ignite-flatpak.gpg"
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        key.write_bytes(base64.b64decode(PUBLIC_KEY_B64))
+    except OSError:
+        return False
+    # Verification on, with the key: a remote made from an unsigned bundle has it off, and Flatpak won't update a
+    # system-wide install from an unverified remote. Installed for this user first, else for everyone (Flatpak
+    # asks for the password then).
+    for scope in ("--user", "--system"):
+        if _host(run, "remote-modify", scope, "--gpg-verify", f"--gpg-import={key}", name).returncode == 0:
+            return True
+    return False
 
 
 def _restart_env() -> dict:

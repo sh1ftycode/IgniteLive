@@ -5,6 +5,15 @@ starts with its section from this file (see `.github/workflows/build.yml`).
 For versions before 1.6.1, see the
 [GitHub releases](https://github.com/sh1ftycode/IgniteLive/releases).
 
+## 1.8.5
+
+### Fixed
+
+- **Flatpak updates:** "Can't pull from untrusted non-gpg verified remote".
+  Ignite's Flatpak repository is now signed, the key comes with every
+  .flatpak and .flatpakref, and the Update button adds it to installs made
+  before (once; a system-wide install asks for your password).
+
 ## 1.8.4
 
 ### New

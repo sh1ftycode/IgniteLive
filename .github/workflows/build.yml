@@ -69,6 +69,23 @@ jobs:
             org.freedesktop.Sdk//26.08 org.freedesktop.Platform//26.08
           echo "FLATPAK_BUILDER=flatpak run org.flatpak.Builder" >> "$GITHUB_ENV"
 
+      # The Flatpak repository's signing key (a secret): Flatpak only installs updates it can verify.
+      - name: Flatpak signing key
+        if: runner.os == 'Linux'
+        env:
+          GPG_PRIVATE: ${{ secrets.IGNITE_FLATPAK_GPG_PRIVATE }}
+        run: |
+          if [ -z "$GPG_PRIVATE" ]; then
+            echo "::warning::No IGNITE_FLATPAK_GPG_PRIVATE secret: the Flatpak repository is unsigned and installs can't update."
+            exit 0
+          fi
+          home="$RUNNER_TEMP/flatpak-gnupg"
+          mkdir -m 700 "$home"
+          printf '%s\n' "$GPG_PRIVATE" | gpg --homedir "$home" --batch --import
+          fingerprint=$(gpg --homedir "$home" --list-secret-keys --with-colons | awk -F: '/^fpr:/ {print $10; exit}')
+          echo "IGNITE_FLATPAK_GPG_KEY=$fingerprint" >> "$GITHUB_ENV"
+          echo "IGNITE_FLATPAK_GPG_HOME=$home" >> "$GITHUB_ENV"
+
       - name: Install appimagetool
         if: runner.os == 'Linux'
         run: |
@@ -274,6 +291,7 @@ jobs:
           RuntimeRepo=https://dl.flathub.org/repo/flathub.flatpakrepo
           REF
           sed -i 's/^ *//' _site/flatpak/ignite.flatpakref
+          echo "GPGKey=$(base64 -w0 packaging/flatpak/ignite.gpg)" >> _site/flatpak/ignite.flatpakref
           touch _site/.nojekyll
 
       - uses: actions/upload-pages-artifact@v3

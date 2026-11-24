@@ -71,6 +71,7 @@ jobs:
           RuntimeRepo=https://dl.flathub.org/repo/flathub.flatpakrepo
           REF
           sed -i 's/^ *//' _site/flatpak/ignite.flatpakref
+          echo "GPGKey=$(base64 -w0 packaging/flatpak/ignite.gpg)" >> _site/flatpak/ignite.flatpakref
           touch _site/.nojekyll
 
       - uses: actions/upload-pages-artifact@v3

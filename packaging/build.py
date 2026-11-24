@@ -88,6 +88,7 @@ def build_appimage(app_dir: Path, dist: Path, ver: str) -> None:
 
 
 FLATPAK_ID = "io.github.sh1ftycode.Ignite"  # Also in src/ignite_live/core/updates.py.
+FLATPAK_GPG_PUBLIC = ROOT / "packaging" / "flatpak" / "ignite.gpg"  # Also in src/ignite_live/core/flatpak_key.py.
 FLATPAK_RUNTIME = "26.08"  # org.freedesktop.Platform: what the bundled Qt and Python need from the system.
 FLATPAK_PAGES_URL = "https://sh1ftycode.github.io/IgniteLive/flatpak/"  # Where the release workflow publishes it.
 # What Ignite needs from outside its sandbox. Each line is why.
@@ -180,14 +181,25 @@ def build_flatpak(app_dir: Path, dist: Path, ver: str) -> None:
     manifest_path = work / f"{FLATPAK_ID}.json"
     manifest_path.write_text(json.dumps(manifest, indent=2), "utf-8")
     repo = dist / "flatpak-repo"
-    sign = ["--gpg-sign=" + os.environ["IGNITE_FLATPAK_GPG_KEY"]] if os.environ.get("IGNITE_FLATPAK_GPG_KEY") else []
+    # Signed with Ignite's key (IGNITE_FLATPAK_GPG_KEY: its fingerprint; IGNITE_FLATPAK_GPG_HOME: the keyring
+    # holding it). Flatpak only installs updates whose signatures it can check against FLATPAK_GPG_PUBLIC.
+    key = os.environ.get("IGNITE_FLATPAK_GPG_KEY", "")
+    sign = [f"--gpg-sign={key}"] if key else []
+    if key and os.environ.get("IGNITE_FLATPAK_GPG_HOME"):
+        sign.append(f"--gpg-homedir={os.environ['IGNITE_FLATPAK_GPG_HOME']}")
+    if not key:
+        print("No IGNITE_FLATPAK_GPG_KEY: the Flatpak repository is unsigned, so installs can't update from it.")
     subprocess.run([*builder, "--user", "--install-deps-from=flathub", "--force-clean", "--disable-rofiles-fuse",
-                    "--default-branch=stable", f"--repo={repo}", *sign,
+                    "--default-branch=stable", f"--repo={repo}",
                     "--state-dir", str(work / ".flatpak-builder"), str(work / "app"), str(manifest_path)],
                    check=True, cwd=work)
+    if sign:  # Signed here, not by flatpak-builder: it may run sandboxed, away from the keyring.
+        subprocess.run(["flatpak", "build-sign", *sign, str(repo), FLATPAK_ID, "stable"], check=True)
+        # The summary (the repository's table of contents) is checked too.
+        subprocess.run(["flatpak", "build-update-repo", *sign, str(repo)], check=True)
     bundle = dist / f"Ignite-{ver}.flatpak"
     repo_url = flatpak_repo_url()
-    subprocess.run(["flatpak", "build-bundle", *sign, f"--repo-url={repo_url}",
+    subprocess.run(["flatpak", "build-bundle", *sign, f"--repo-url={repo_url}", f"--gpg-keys={FLATPAK_GPG_PUBLIC}",
                     "--runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo",
                     str(repo), str(bundle), FLATPAK_ID, "stable"], check=True)
     print(f"Flatpak:    {bundle}\nRepository: {repo} (installs update from {repo_url})")
