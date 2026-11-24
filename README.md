@@ -118,7 +118,22 @@ good-looking live setup. Ignite puts all of that into one program.
   viewer milestone) and what happens: show an alert, play a sound, read a
   message aloud, switch an OBS scene, show or hide a source for a few seconds,
   or add a song request. Alerts and sounds play in the Alerts overlay, so they
-  land in OBS's audio mix. Each rule has a **Test** button.
+  land in OBS's audio mix. Each rule has a **Test** button. Gift rules take a
+  coin range for tiers, **Wait** puts steps in order, and **Export… /
+  Import…** share rule sets as files.
+- **Minecraft (ServerTap):** a rule can run a command on your Minecraft server
+  or broadcast a message in the game, through the
+  [ServerTap](https://servertap.io) plugin: File → Preferences → Minecraft for
+  its address and key (change ServerTap's `key` from `change_me` first, and
+  keep its port closed to the internet). Viewers' names go into commands as
+  one plain word. **Add TT Interactive Rules** sets up TT Interactive Stream
+  Games (`/ttinteractive gift {each} {user}`, once per gift).
+- **Discord Rich Presence:** shows on your Discord profile that you're live,
+  where, viewers and likes, the song and the game, with up to two buttons.
+  Turn modules on or off and pick a preset or write the two lines yourself
+  (File → Preferences → Discord). Your profile shows "Playing Ignite", or your
+  own Discord application's name if you enter its ID. Needs the Discord app on
+  the same PC.
 - **Setup guide:** opens the first time (and from **Help → Setup Guide**, F1). It
   covers your PC, connecting OBS, tuning, TikTok (sign in and get a key without
   leaving the guide), overlays and extras, and ends with what's still open and a

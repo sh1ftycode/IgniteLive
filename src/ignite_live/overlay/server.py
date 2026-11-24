@@ -237,10 +237,15 @@ class OverlayServer:
         self.api.emit("chat_clear", {})
         await self._broadcast({"type": "chat_clear"})
 
-    async def alert(self, title: str, text: str, image: str = "", sound: str = "", volume: int = 100) -> None:
-        """A custom alert from an action rule, queued with the gift and follow alerts."""
-        await self._broadcast({"type": "alert", "title": title[:80], "text": text[:300], "image": image,
-                               "sound": sound if SOUND_NAME.match(sound) else "", "volume": max(0, min(100, volume))})
+    async def alert(self, title: str, text: str, image: str = "", sound: str = "", volume: int = 100,
+                    seconds: float = 0) -> None:
+        """A custom alert from an action rule, queued with the gift and follow alerts. ``seconds``: how long it
+        stays (0: the Alerts overlay's own setting)."""
+        message = {"type": "alert", "title": title[:80], "text": text[:300], "image": image,
+                   "sound": sound if SOUND_NAME.match(sound) else "", "volume": max(0, min(100, volume))}
+        if seconds:
+            message["seconds"] = max(1.0, min(60.0, float(seconds)))
+        await self._broadcast(message)
 
     async def play_sound(self, name: str, volume: int = 100) -> None:
         """Played by the alerts overlay, so it lands in OBS's audio mix."""

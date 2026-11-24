@@ -22,6 +22,7 @@ TRIGGERS = {
     "like": "Likes",
     "share": "Share",
     "command": "Chat command",
+    "first_chat": "First message",
     "viewers": "Viewer milestone",
     "goal": "Goal reached",
     "spike": "Chat spike",
@@ -38,17 +39,23 @@ ACTIONS = {
     "clip": "Save clip",
     "points": "Give points",
     "game": "Start or stop a game",
+    "minecraft": "Minecraft (ServerTap)",
+    "wait": "Wait",
 }
 SOURCE_MODES = ("show", "hide", "toggle")
+MINECRAFT_MODES = ("command", "broadcast")  # minecraft: run a console command, or tell everyone in the game.
+REPEATS = ("once", "per_gift")  # minecraft: once, or once for every gift in a combo (5 Roses: 5 times).
+MAX_REPEAT = 50  # A big combo runs a command at most this many times.
 ROLE_NAMES = ("everyone", "followers", "mods")  # The same as settings.ROLES.
 PLATFORM_KEYS = ("tiktok", "twitch", "youtube")
 # Placeholders each trigger fills in action texts.
 PLACEHOLDERS = {
-    "gift": ("user", "platform", "gift", "count", "coins", "message"),
+    "gift": ("user", "platform", "gift", "count", "coins", "each", "message"),
     "follow": ("user", "platform"),
     "like": ("user", "platform", "likes", "count"),
     "share": ("user", "platform"),
     "command": ("user", "platform", "args"),
+    "first_chat": ("user", "platform", "message"),
     "viewers": ("viewers",),
     "goal": ("goal", "current", "target", "user"),
     "spike": ("count",),
@@ -56,6 +63,7 @@ PLACEHOLDERS = {
     "game_end": ("game", "winner", "mvp", "amount"),
 }
 DEFAULT_TEXTS = {"alert": "{user} triggered {rule}", "tts": "", "song": "{args}"}
+TEXT_ACTIONS = ("alert", "tts", "song", "minecraft")  # Actions whose text is a template.
 
 MAX_RULES = 100
 MAX_ACTIONS = 8
@@ -78,6 +86,7 @@ class Trigger:
     kind: str = "gift"
     gifts: tuple[str, ...] = ()  # gift: names to match (any case); empty matches every gift.
     min_coins: int = 0  # gift: diamonds × count of this one gift event.
+    max_coins: int = 0  # gift: at most this many (0: no limit), for tiers that don't overlap.
     every: int = 0  # like: every N likes this stream; viewers: the milestone; spike: at least N in SPIKE_WINDOW_S.
     factor: int = 3  # spike: this many times the stream's usual rate.
     command: str = ""  # command: the name, without the prefix.
@@ -94,10 +103,13 @@ class Action:
     text: str = ""  # alert, tts, song: a template with {user}, {gift}, … (see PLACEHOLDERS).
     target: str = ""  # sound: file name; scene: scene name; source: source name.
     scene: str = ""  # source: the scene it's in; empty means the current scene.
-    mode: str = "show"  # source: show, hide or toggle.
-    seconds: float = 0.0  # scene: switch back after; source: undo after (0 keeps the change); clip: wait before saving.
+    mode: str = "show"  # source: show, hide or toggle. minecraft: command or broadcast.
+    # scene: switch back after; source: undo after (0 keeps the change); clip: wait before saving; wait: how long;
+    # alert: how long it stays (0: the overlay's own setting).
+    seconds: float = 0.0
     volume: int = 100  # sound: 0..100.
     amount: int = 0  # points: how many the viewer gets (negative takes them away).
+    repeat: str = "once"  # minecraft: "once" or "per_gift".
 
 
 @dataclass(frozen=True)
@@ -146,7 +158,10 @@ def parse_trigger(raw: object) -> Trigger | None:
     role = raw.get("role") if raw.get("role") in ROLE_NAMES else "everyone"
     trigger = Trigger(kind=kind, role=role, platforms=platforms if "platforms" in raw else PLATFORM_KEYS)
     if kind == "gift":
-        return replace(trigger, gifts=_strings(raw, "gifts", MAX_GIFTS), min_coins=_int(raw, "min_coins", 0, 10_000_000))
+        low = _int(raw, "min_coins", 0, 10_000_000)
+        high = _int(raw, "max_coins", 0, 10_000_000)
+        return replace(trigger, gifts=_strings(raw, "gifts", MAX_GIFTS), min_coins=low,
+                       max_coins=high if high >= max(low, 1) else 0)
     if kind in ("like", "viewers"):
         every = _int(raw, "every", 0, 100_000_000)
         if every < 1:
@@ -181,8 +196,11 @@ def parse_action(raw: object) -> Action | None:
     seconds = 0.0 if isinstance(seconds, bool) or not isinstance(seconds, (int, float)) else float(seconds)
     if kind == "clip" and "seconds" not in raw:
         seconds = CLIP_DELAY_S
-    seconds = round(max(0.0, min(MAX_CLIP_DELAY_S if kind == "clip" else MAX_SECONDS, seconds)), 1)
-    if kind in ("tts", "song") and not text:
+    seconds = round(max(0.0, min(MAX_CLIP_DELAY_S if kind == "clip" else 60.0 if kind == "alert" else MAX_SECONDS,
+                                  seconds)), 1)
+    if kind in ("tts", "song", "minecraft") and not text:
+        return None
+    if kind == "wait" and not seconds:
         return None
     if kind == "sound" and not SOUND_NAME.match(target):
         return None
@@ -193,15 +211,20 @@ def parse_action(raw: object) -> Action | None:
     amount = _int(raw, "amount", -1_000_000, 1_000_000, 0) if kind == "points" else 0
     if kind == "points" and not amount:
         return None
+    if kind == "minecraft":
+        mode = raw.get("mode") if raw.get("mode") in MINECRAFT_MODES else "command"
+    else:
+        mode = raw.get("mode") if kind == "source" and raw.get("mode") in SOURCE_MODES else "show"
     return Action(
         kind=kind,
-        text=text if kind in ("alert", "tts", "song") else "",
+        text=text.lstrip("/") if kind == "minecraft" and mode == "command" else text if kind in TEXT_ACTIONS else "",
         target=target if kind in ("sound", "scene", "source", "game") else "",
         scene=_text(raw, "scene", 120) if kind == "source" else "",
-        mode=raw.get("mode") if kind == "source" and raw.get("mode") in SOURCE_MODES else "show",
-        seconds=seconds if kind in ("scene", "source", "clip") else 0.0,
+        mode=mode,
+        seconds=seconds if kind in ("scene", "source", "clip", "wait", "alert") else 0.0,
         volume=_int(raw, "volume", 0, 100, 100) if kind == "sound" else 100,
         amount=amount,
+        repeat=raw.get("repeat") if kind == "minecraft" and raw.get("repeat") in REPEATS else "once",
     )
 
 
@@ -247,7 +270,8 @@ def to_dict(rule: Rule) -> dict:
     """JSON-ready, with only the fields that matter for each kind."""
     trigger = {"kind": rule.trigger.kind, "role": rule.trigger.role, "platforms": list(rule.trigger.platforms)}
     if rule.trigger.kind == "gift":
-        trigger.update(gifts=list(rule.trigger.gifts), min_coins=rule.trigger.min_coins)
+        trigger.update(gifts=list(rule.trigger.gifts), min_coins=rule.trigger.min_coins,
+                       max_coins=rule.trigger.max_coins)
     elif rule.trigger.kind in ("like", "viewers"):
         trigger["every"] = rule.trigger.every
     elif rule.trigger.kind == "spike":
@@ -263,14 +287,16 @@ def to_dict(rule: Rule) -> dict:
     actions = []
     for action in rule.actions:
         item: dict = {"kind": action.kind}
-        if action.kind in ("alert", "tts", "song"):
+        if action.kind in TEXT_ACTIONS:
             item["text"] = action.text
         if action.kind in ("sound", "scene", "source", "game"):
             item["target"] = action.target
         if action.kind == "source":
             item.update(scene=action.scene, mode=action.mode)
-        if action.kind in ("scene", "source", "clip"):
+        if action.kind in ("scene", "source", "clip", "wait") or (action.kind == "alert" and action.seconds):
             item["seconds"] = action.seconds
+        if action.kind == "minecraft":
+            item.update(mode=action.mode, repeat=action.repeat)
         if action.kind == "sound":
             item["volume"] = action.volume
         if action.kind == "points":
@@ -289,7 +315,11 @@ def describe_trigger(trigger: Trigger, prefix: str = "!", goal_names: dict[str, 
     """One line for the rule list, e.g. "Gift: Rose, Lion · 100+ coins"."""
     if trigger.kind == "gift":
         parts = [", ".join(trigger.gifts) or "any gift"]
-        if trigger.min_coins:
+        if trigger.min_coins and trigger.max_coins:
+            parts.append(f"{trigger.min_coins:,}–{trigger.max_coins:,} coins")
+        elif trigger.max_coins:
+            parts.append(f"up to {trigger.max_coins:,} coins")
+        elif trigger.min_coins:
             parts.append(f"{trigger.min_coins:,}+ coins")
         text = "Gift: " + " · ".join(parts)
     elif trigger.kind == "like":
@@ -320,6 +350,12 @@ def describe_actions(actions: tuple[Action, ...]) -> str:
     def target(a: Action) -> str:
         if a.kind == "game":
             return ": stop" if a.target == "stop" else f": {GAMES[a.target].lower()}"
+        if a.kind == "wait":
+            return f" {a.seconds:g} s"
+        if a.kind == "minecraft":
+            text = a.text if len(a.text) <= 40 else a.text[:39] + "…"
+            each = " (each gift)" if a.repeat == "per_gift" else ""
+            return f": /{text}{each}" if a.mode == "command" else f": say “{text}”"
         return f": {a.target}" if a.target else ""
 
     return ", ".join(ACTIONS[a.kind] + target(a) for a in actions)

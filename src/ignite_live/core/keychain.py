@@ -17,6 +17,7 @@ SIGN_API_KEY = "euler-sign-api-key"
 STREAM_KEY = "stream-key"
 TIKTOK_SESSION = "tiktok-session-id"  # Only for TikTok's text-to-speech voices.
 DISCORD_WEBHOOK = "discord-webhook-url"
+MINECRAFT_KEY = "minecraft-servertap-key"  # ServerTap's key (plugins/ServerTap/config.yml), for Minecraft actions.
 HOSTED_CONTROL_KEY = "hosted-control-key"  # Hosted widgets: runs commands through the server's API.
 YTMUSIC_COOKIE = "youtube-music-cookie"  # Up to 1.8.0: a YouTube Music session. Only forgotten now.
 

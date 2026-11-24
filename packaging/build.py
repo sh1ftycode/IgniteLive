@@ -102,6 +102,9 @@ FLATPAK_FINISH_ARGS = [
     "--talk-name=org.kde.StatusNotifierWatcher",  # The tray icon.
     "--talk-name=org.freedesktop.Flatpak",  # Updates: Ignite runs "flatpak update" on the host (core/updates.py).
     "--filesystem=xdg-pictures/Ignite:create",  # Screenshots (Preferences → OBS), the default folder.
+    # Discord Rich Presence: the Discord app's socket (installed normally, or as a Flatpak itself).
+    "--filesystem=xdg-run/discord-ipc-0",
+    "--filesystem=xdg-run/app/com.discordapp.Discord:create",
 ]
 
 

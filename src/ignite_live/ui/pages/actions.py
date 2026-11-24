@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import replace
+from pathlib import Path
 
 from PySide6.QtCore import Qt, QUrl
 from PySide6.QtGui import QDesktopServices
@@ -12,6 +14,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QDoubleSpinBox,
+    QFileDialog,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -37,6 +40,7 @@ from ignite_live.actions.rules import (
     MAX_CLIP_DELAY_S,
     SPIKE_WINDOW_S,
     MAX_ACTIONS,
+    MAX_RULES,
     PLACEHOLDERS,
     PLATFORM_KEYS,
     ROLE_NAMES,
@@ -64,6 +68,10 @@ TEXT_HINTS = {
     "alert": "Alert text, e.g. {user} sent {gift}!",
     "tts": "What to say, e.g. Thanks {user} for the {gift}",
     "song": "Song to request: {args} (from the command), a link, or song - artist",
+}
+MINECRAFT_HINTS = {
+    "command": "Console command, e.g. ttinteractive gift {each} {user}",
+    "broadcast": "Message for everyone in the game, e.g. {user} sent {gift}!",
 }
 
 
@@ -111,11 +119,21 @@ class ActionRow(QWidget):
         self.volume.setRange(0, 100)
         self.volume.setSuffix(" %")
         self.volume.setValue(action.volume)
+        # Minecraft (ServerTap): a console command or a broadcast; a command can run once per gift in a combo.
+        self.mc_mode = QComboBox()
+        self.mc_mode.addItem("Run command", "command")
+        self.mc_mode.addItem("Broadcast message", "broadcast")
+        self.mc_mode.setCurrentIndex(max(0, self.mc_mode.findData(action.mode if action.kind == "minecraft"
+                                                                  else "command")))
+        self.mc_mode.currentIndexChanged.connect(self._kind_changed)
+        self.repeat = QCheckBox("Once per gift")
+        self.repeat.setToolTip("A combo of 5 Roses runs it 5 times (at most 50). Use {each} for one gift's coins")
+        self.repeat.setChecked(action.repeat == "per_gift")
         remove = QPushButton("Remove")
         remove.clicked.connect(lambda: on_remove(self))
         # Whichever text field the kind shows takes the spare width.
-        for widget in (self.kind, self.text, self.target, self.game, self.scene, self.mode, self.seconds, self.volume,
-                       self.amount):
+        for widget in (self.kind, self.mc_mode, self.text, self.target, self.game, self.scene, self.mode, self.seconds,
+                       self.volume, self.amount, self.repeat):
             layout.addWidget(widget, 100 if widget in (self.text, self.target, self.scene) else 0)
         layout.addStretch(1)  # Takes the room when the kind has no text field (e.g. Save clip).
         layout.addWidget(remove)
@@ -126,18 +144,27 @@ class ActionRow(QWidget):
 
     def _kind_changed(self) -> None:
         kind = self.kind.currentData()
-        self.text.setVisible(kind in ("alert", "tts", "song"))
-        self.text.setPlaceholderText(TEXT_HINTS.get(kind, ""))
+        minecraft = kind == "minecraft"
+        self.text.setVisible(kind in ("alert", "tts", "song", "minecraft"))
+        self.text.setPlaceholderText(MINECRAFT_HINTS[self.mc_mode.currentData()] if minecraft
+                                     else TEXT_HINTS.get(kind, ""))
+        self.mc_mode.setVisible(minecraft)
+        self.repeat.setVisible(minecraft and self.mc_mode.currentData() == "command")
         self.target.setVisible(kind in ("sound", "scene", "source"))
         self.scene.setVisible(kind == "source")
         self.mode.setVisible(kind == "source")
-        self.seconds.setVisible(kind in ("scene", "source", "clip"))
-        clip = kind == "clip"
-        self.seconds.setMaximum(MAX_CLIP_DELAY_S if clip else 600)
-        self.seconds.setSpecialValueText("Now" if clip else "Keep")
-        self.seconds.setPrefix("Wait " if clip else "")
+        self.seconds.setVisible(kind in ("scene", "source", "clip", "wait", "alert"))
+        clip, wait, alert = kind == "clip", kind == "wait", kind == "alert"
+        self.seconds.setMaximum(MAX_CLIP_DELAY_S if clip else 60 if alert else 600)
+        self.seconds.setMinimum(0.1 if wait else 0)
+        self.seconds.setSpecialValueText("Now" if clip else "Overlay's time" if alert else "" if wait else "Keep")
+        self.seconds.setPrefix("Wait " if clip or wait else "On screen " if alert else "")
         self.seconds.setToolTip("Wait this long before saving, so the clip includes the reaction" if clip
-                                else "Undo the change after this long (Keep: leave it)")
+                                else "The actions after this one wait this long" if wait
+                                else "How long this alert stays (the overlay's own setting: 5 s unless changed)"
+                                if alert else "Undo the change after this long (Keep: leave it)")
+        if wait and not self.seconds.value():
+            self.seconds.setValue(2)
         if clip and self._last_kind not in (None, "clip") and not self.seconds.value():
             self.seconds.setValue(CLIP_DELAY_S)
         self._last_kind = kind
@@ -163,8 +190,10 @@ class ActionRow(QWidget):
         kind = self.kind.currentData()
         target = self.game.currentData() if kind == "game" else self.target.currentText().strip()
         return {"kind": kind, "text": self.text.text(), "target": target,
-                "scene": self.scene.text().strip(), "mode": self.mode.currentData(),
-                "seconds": self.seconds.value(), "volume": self.volume.value(), "amount": self.amount.value()}
+                "scene": self.scene.text().strip(),
+                "mode": self.mc_mode.currentData() if kind == "minecraft" else self.mode.currentData(),
+                "seconds": self.seconds.value(), "volume": self.volume.value(), "amount": self.amount.value(),
+                "repeat": "per_gift" if self.repeat.isChecked() else "once"}
 
 
 class RuleDialog(QDialog):
@@ -197,6 +226,11 @@ class RuleDialog(QDialog):
         self.min_coins.setRange(0, 10_000_000)
         self.min_coins.setValue(trigger.min_coins)
         self.min_coins.setToolTip("The gift's value × how many were sent at once")
+        self.max_coins = QSpinBox()
+        self.max_coins.setRange(0, 10_000_000)
+        self.max_coins.setSpecialValueText("No limit")
+        self.max_coins.setValue(trigger.max_coins)
+        self.max_coins.setToolTip("For tiers that don't overlap: e.g. 1–98 coins spawns chickens, 99–498 zombies")
         self.every = QSpinBox()
         self.every.setRange(1, 100_000_000)
         self.every.setValue(trigger.every or 100)
@@ -242,6 +276,7 @@ class RuleDialog(QDialog):
         self.rows = {
             "gifts": ("Gifts", self.gifts),
             "min_coins": ("At least (coins)", self.min_coins),
+            "max_coins": ("At most (coins)", self.max_coins),
             "every": ("Every", self.every),
             "command": (f"Command  {controller.settings.command_prefix or '!'}", self.command),
             "goal": ("Goal", self.goal),
@@ -307,8 +342,9 @@ class RuleDialog(QDialog):
 
     def _kind_changed(self) -> None:
         kind = self.kind.currentData()
-        shown = {"gift": {"gifts", "min_coins", "role"}, "like": {"every"}, "viewers": {"every"},
-                 "command": {"command", "role"}, "follow": set(), "share": {"role"}, "goal": {"goal"},
+        shown = {"gift": {"gifts", "min_coins", "max_coins", "role"}, "like": {"every"}, "viewers": {"every"},
+                 "command": {"command", "role"}, "first_chat": {"role"}, "follow": set(), "share": {"role"},
+                 "goal": {"goal"},
                  "spike": {"spike_min", "factor"}, "leader": {"board"},
                  "game_end": {"game"}}[kind]
         for key, (_label, widget) in self.rows.items():
@@ -316,7 +352,8 @@ class RuleDialog(QDialog):
         self.form.setRowVisible(self.platform_row, kind not in ("goal", "spike", "leader", "game_end"))
         self.every.setSuffix(" likes" if kind == "like" else " viewers")
         names = ", ".join(f"{{{name}}}" for name in (*PLACEHOLDERS[kind], "rule"))
-        self.placeholders.setText(f"Texts can use {names}. Alerts and sounds play in the Alerts overlay.")
+        self.placeholders.setText(f"Texts can use {names}. Alerts and sounds play in the Alerts overlay. In "
+                                  "Minecraft commands, viewers' names come through as one plain word.")
 
     def _add_row(self, action: Action) -> None:
         row = ActionRow(self.controller, action, self._remove_row)
@@ -335,7 +372,8 @@ class RuleDialog(QDialog):
         raw = {
             "id": self.rule_id, "name": self.name.text(), "enabled": self.enabled.isChecked(),
             "trigger": {"kind": kind, "gifts": [g.strip() for g in self.gifts.text().split(",") if g.strip()],
-                        "min_coins": self.min_coins.value(), "command": command, "factor": self.factor.value(),
+                        "min_coins": self.min_coins.value(), "max_coins": self.max_coins.value(),
+                        "command": command, "factor": self.factor.value(),
                         "every": self.spike_min.value() if kind == "spike" else self.every.value(),
                         "goal": self.goal.currentData(), "board": self.board.currentData(),
                         "game": self.game.currentData(),
@@ -367,6 +405,10 @@ class RuleDialog(QDialog):
                     return f"Action {number} ({label}): pick a sound file from the sounds folder."
                 if action["kind"] == "points":
                     return f"Action {number} ({label}) needs an amount other than 0."
+                if action["kind"] == "minecraft":
+                    return f"Action {number} ({label}) needs a command or a message."
+                if action["kind"] == "wait":
+                    return f"Action {number} ({label}) needs a time."
                 return f"Action {number} ({label}) needs a {'name' if action['kind'] != 'tts' else 'text'}."
         if parse_rule(raw) is None:
             return "Check the trigger's settings."
@@ -381,6 +423,22 @@ def auto_clip_rules() -> list[Rule]:
         Rule(id=new_id(), name="Chat spike → clip", trigger=Trigger("spike", every=15, factor=3), actions=(clip,),
              cooldown_s=60),
     ]
+
+
+def tt_interactive_rules() -> list[Rule]:
+    """Rules for TT Interactive Stream Games (a Minecraft plugin): its own command turns a gift's coins into an
+    in-game effect (chickens, zombies, TNT rain, a boss wave), run here through ServerTap."""
+    return [
+        Rule(id=new_id(), name="Gift → Minecraft (TT Interactive)", trigger=Trigger("gift"),
+             actions=(Action("minecraft", "ttinteractive gift {each} {user}", mode="command", repeat="per_gift"),)),
+        Rule(id=new_id(), name="Follow → Minecraft message", trigger=Trigger("follow"),
+             actions=(Action("minecraft", "{user} just followed!", mode="broadcast"),)),
+        Rule(id=new_id(), name="Every 100 likes → Minecraft chicken", enabled=False, trigger=Trigger("like", every=100),
+             actions=(Action("minecraft", "ttinteractive gift 1 {user}", mode="command"),)),
+    ]
+
+
+RULES_FILE_FILTER = "Ignite rules (*.ignite-rules.json *.json)"
 
 
 class ActionsPage(QWidget):
@@ -416,6 +474,19 @@ class ActionsPage(QWidget):
         auto_clip.setToolTip("Save a clip on big gifts (1,000+ coins) and chat spikes. Edit or delete them like any rule.")
         auto_clip.clicked.connect(self._add_auto_clip)
         buttons.addWidget(auto_clip)
+        minecraft = QPushButton("Add TT Interactive Rules")
+        minecraft.setToolTip("Gifts spawn mobs, items and events in Minecraft through TT Interactive Stream Games and "
+                             "ServerTap (set the server up in File → Preferences → Minecraft)")
+        minecraft.clicked.connect(self._add_tt_interactive)
+        buttons.addWidget(minecraft)
+        export = QPushButton("Export…")
+        export.setToolTip("Save every rule to a file, to back them up or share them")
+        export.clicked.connect(self._export)
+        buttons.addWidget(export)
+        load = QPushButton("Import…")
+        load.setToolTip("Add the rules from a file to yours (nothing you have is replaced)")
+        load.clicked.connect(self._import)
+        buttons.addWidget(load)
         play = QPushButton("Play Sound")
         play.setToolTip("Play a file from the sounds folder through the Alerts overlay")
         self.sound_menu = QMenu(play)
@@ -527,6 +598,49 @@ class ActionsPage(QWidget):
         self.controller.notice.emit("info", "Auto-clip rules added: clips are saved 10 s after a big gift or a chat "
                                             "spike. They need OBS's replay buffer running." if added
                                     else "The auto-clip rules are already there.")
+
+    def _add_tt_interactive(self) -> None:
+        rules = self._rules()
+        names = {rule.name for rule in rules}
+        added = [rule for rule in tt_interactive_rules() if rule.name not in names]
+        if added:
+            self._save(rules + added)
+        self.controller.notice.emit("info", "Minecraft rules added: gifts run TT Interactive's /ttinteractive gift. "
+                                            "Set ServerTap's address and key in File → Preferences → Minecraft."
+                                    if added else "The TT Interactive rules are already there.")
+
+    def _export(self) -> None:
+        path, _filter = QFileDialog.getSaveFileName(self, "Export rules", "my.ignite-rules.json", RULES_FILE_FILTER)
+        if not path:
+            return
+        data = {"ignite_rules": 1, "rules": [to_dict(rule) for rule in self._rules()]}
+        try:
+            Path(path).write_text(json.dumps(data, indent=2, ensure_ascii=False), "utf-8")
+        except OSError as error:
+            self.controller.notice.emit("error", f"Couldn't save the rules: {error.strerror or error}")
+            return
+        self.controller.notice.emit("info", f"Saved {len(data['rules'])} rules to {Path(path).name}.")
+
+    def _import(self) -> None:
+        path, _filter = QFileDialog.getOpenFileName(self, "Import rules", "", RULES_FILE_FILTER)
+        if not path:
+            return
+        try:
+            raw = json.loads(Path(path).read_text("utf-8")[:2_000_000])
+        except (OSError, ValueError, UnicodeDecodeError):
+            self.controller.notice.emit("error", "That file isn't an Ignite rules file.")
+            return
+        found = parse_rules(raw.get("rules") if isinstance(raw, dict) else raw)
+        rules = self._rules()
+        room = max(0, MAX_RULES - len(rules))
+        added = [replace(rule, id=new_id()) for rule in found[:room]]  # New ids: never overwrite one of yours.
+        if added:
+            self._save(rules + added)
+        skipped = len(found) - len(added)
+        self.controller.notice.emit("info" if added else "error",
+                                    f"Imported {len(added)} rules." + (f" {skipped} didn't fit (at most {MAX_RULES})."
+                                                                       if skipped else "")
+                                    if found else "No rules Ignite can use were in that file.")
 
     def _toggled(self, item: QTableWidgetItem) -> None:
         if item.column() != 0:

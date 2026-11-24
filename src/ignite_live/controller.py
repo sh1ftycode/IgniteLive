@@ -25,7 +25,7 @@ from PySide6.QtCore import QObject, QTimer, Signal
 
 from ignite_live.actions.engine import ActionEngine, Fired
 from ignite_live.actions.goals import GoalReached, GoalTracker, parse_goals
-from ignite_live.actions.rules import SOUND_NAME, Action, Rule, parse_rules
+from ignite_live.actions.rules import MAX_REPEAT, SOUND_NAME, Action, Rule, parse_rules
 from ignite_live.core import keychain, profiles, seasons, settings as settings_store
 from ignite_live.core.events import (
     PLATFORMS,
@@ -66,6 +66,10 @@ from ignite_live.integrations import obs_targets
 from ignite_live.integrations.obs import ObsClient, ObsError
 from ignite_live.integrations.obs_studio import HealthMonitor, Studio
 from ignite_live.integrations.obs_targets import StreamTarget
+from ignite_live.integrations.servertap import ServerTap, ServerTapError, command_value, message_value
+from ignite_live.integrations.discord_ipc import DiscordIpc, DiscordIpcError
+from ignite_live.live.presence import Snapshot as PresenceSnapshot
+from ignite_live.live.presence import build as build_presence, parse_config as parse_presence
 from ignite_live.live import analytics, checklist
 from ignite_live.live.analytics import StreamRecorder
 from ignite_live.live.audience import Audience
@@ -162,11 +166,14 @@ TIKTOK_REPLY_GAP_S = 3.0  # Between Ignite's own TikTok chat messages, so the ac
 TIKTOK_REPLY_BACKLOG = 5  # Replies waiting to be said; older ones are dropped when chat is busier than that.
 TIKTOK_IDS_KEPT = 5000  # TikTok viewers whose numeric ids are remembered for moderation.
 ANNOUNCE_AGAIN_S = 1800  # Without a stream stop in between, a platform isn't announced as live again sooner.
+UPDATE_PRESENCE_S = 15  # Discord accepts about 5 presence updates in 20 s.
+PRESENCE_RETRY_S = 30  # Discord not running: look again this often.
+MINECRAFT_REPEAT_GAP_S = 0.15  # Between the runs of a "per gift" Minecraft command, so the server keeps up.
 RESTART_AFTER_SECONDS = 4.0  # Previous starts the song over when it's this far in; earlier, it goes back a song.
 _SAFE_ERRORS = (
     profiles.ProfileError,
     ProviderError, ObsError, BackendError, DiscordError, SpotifyError, TrackLookupError,
-    QueueRejected, ValueError,
+    QueueRejected, ServerTapError, ValueError,
 )
 
 
@@ -259,7 +266,8 @@ class Controller(QObject):
     chat_event = Signal(object)  # ChatEvent
     chats_cleared = Signal()  # Clear All Chats: every chat panel empties.
     hosted_changed = Signal()  # Hosted widget links turned on or off, or new links or keys.
-    tiktok_account_changed = Signal(object)  # {"available", "connected", "username"}: TikTok signed in on the server.
+    tiktok_account_changed = Signal(object)
+    presence_changed = Signal(str)  # Discord Rich Presence: what it's doing, for Preferences → Discord.  # {"available", "connected", "username"}: TikTok signed in on the server.
     # Signing in to the Ignite server: {"waiting": True, "code", "url"} while the website is open, then
     # {"username", "server"} when signed in, or None when signed out.
     server_sign_in = Signal(object)
@@ -320,6 +328,10 @@ class Controller(QObject):
         self.active_key: CachedKey | None = None
         self.obs_streaming = False
         self._announced: dict[str, float] = {}  # Platform -> when Discord was told it went live (_announce_live).
+        self._presence_ipc: DiscordIpc | None = None
+        self.presence_status = "Off"  # A line for Preferences → Discord.
+        self._stream_started: float | None = None  # When OBS started streaming (Rich Presence's elapsed time).
+        self._live_since: float | None = None
         self.queue_snapshot: dict = {"current": None, "upcoming": []}
         self._provider: StreamlabsExperimentalProvider | None = None
         self._obs: ObsClient | None = None
@@ -506,6 +518,8 @@ class Controller(QObject):
         self._obs_task = asyncio.create_task(self._obs_loop())
         self._viewers_task = asyncio.create_task(self._viewers_loop())
         self._spawn_task(self._games_loop())
+        self._presence_wake = asyncio.Event()
+        self._spawn_task(self._presence_loop())
         self._restart_relay()
         for platform, field_name in PLATFORM_FIELDS.items():
             if getattr(self.settings, field_name) and platform not in self._chat_tasks:  # Not connected meanwhile.
@@ -513,6 +527,12 @@ class Controller(QObject):
         self._restart_discord()
 
     async def _stop_async(self) -> None:
+        if self._presence_ipc is not None:  # Don't leave "Live on TikTok" on the profile.
+            try:
+                await asyncio.wait_for(self._presence_ipc.set_activity(None), 2)
+            except (DiscordIpcError, asyncio.TimeoutError, OSError):
+                pass
+            await self._presence_ipc.close()
         chats = [(self._chats[p], task) for p, task in self._chat_tasks.items()]
         chats += [(chat, task) for task, chat in self._retired_chats.items() if not task.done()]
         await asyncio.gather(*(self._close_chat(chat, task) for chat, task in chats))
@@ -905,6 +925,9 @@ class Controller(QObject):
         for action in actions:
             if action is paired:
                 continue
+            if action.kind == "wait":  # Steps in order: what follows waits.
+                await asyncio.sleep(action.seconds)
+                continue
             try:
                 await self._run_action(action, fired, paired if action.kind == "alert" else None)
             except _SAFE_ERRORS as error:
@@ -921,8 +944,9 @@ class Controller(QObject):
             image = fired.image if allowed_image_url(fired.image) else ""
             shown = {key: self.moderation.clean(str(value), "rules") if key in VIEWER_VALUES else value
                      for key, value in values.items()}
+            own = {"seconds": action.seconds} if action.seconds else {}  # Its own time on screen, if set.
             await self.overlay.alert(fired.rule.name, render(action.text, shown), image,
-                                     sound.target if sound else "", sound.volume if sound else 100)
+                                     sound.target if sound else "", sound.volume if sound else 100, **own)
         elif action.kind == "sound":
             self._check_sound(action.target)
             await self.overlay.play_sound(action.target, action.volume)
@@ -947,10 +971,53 @@ class Controller(QObject):
                 self._start_game(action.target)
         elif action.kind == "clip":
             self._spawn_task(self._clip_action(action, fired))  # Its delay mustn't hold up the rule's other actions.
+        elif action.kind == "minecraft":
+            await self._minecraft_action(action, fired)
         elif action.kind == "scene":
             await self._scene_action(action)
         elif action.kind == "source":
             await self._source_action(action)
+
+    # Minecraft through ServerTap (integrations/servertap.py).
+
+    async def _servertap(self) -> ServerTap:
+        key = await asyncio.to_thread(keychain.load, keychain.MINECRAFT_KEY)
+        return ServerTap(self.settings.minecraft_url, key or "")
+
+    async def _minecraft_action(self, action: Action, fired: Fired) -> None:
+        """A console command or a broadcast; "per_gift" runs it once for every gift in a combo."""
+        server = await self._servertap()
+        if action.mode == "broadcast":
+            values = {key: message_value(self.moderation.clean(str(value), "rules") if key in VIEWER_VALUES else value)
+                      for key, value in fired.values.items()}
+            await server.broadcast(render(action.text, values))
+            return
+        command = render(action.text, {key: command_value(value) for key, value in fired.values.items()})
+        times = 1
+        if action.repeat == "per_gift":
+            count = fired.values.get("count", 1)
+            times = max(1, min(MAX_REPEAT, count if isinstance(count, int) else 1))
+        for number in range(times):
+            if number:
+                await asyncio.sleep(MINECRAFT_REPEAT_GAP_S)
+            await server.run(command)
+
+    def test_minecraft(self, on_done: Callable[[str, bool], None], url: str = "", key: str = "") -> None:
+        """Preferences → Minecraft → Test Connection, with what's typed there (else what's saved):
+        ``on_done(message, ok)`` on the GUI thread."""
+
+        async def check() -> str:
+            if url or key:
+                saved = key or await asyncio.to_thread(keychain.load, keychain.MINECRAFT_KEY) or ""
+                server = ServerTap(url or self.settings.minecraft_url, saved)
+            else:
+                server = await self._servertap()
+            info = await server.info()
+            players = ", ".join(info.players[:8]) + ("…" if len(info.players) > 8 else "")
+            return (f"Connected to {info.name}{f' ({info.version})' if info.version else ''}. "
+                    + (f"Online: {players}." if players else "Nobody is online right now."))
+
+        self.runtime.submit(check(), lambda text: on_done(text, True), lambda error: on_done(friendly(error), False))
 
     async def _clip_action(self, action: Action, fired: Fired) -> None:
         if action.seconds:
@@ -1056,6 +1123,80 @@ class Controller(QObject):
         self.runtime.submit(self.overlay.play_sound(name))
 
     # Viewers and loyalty points (loop thread).
+
+    # Discord Rich Presence (live/presence.py builds it, integrations/discord_ipc.py sends it).
+
+    def refresh_presence(self) -> None:
+        """Send the presence soon (settings changed); the loop sends it every few seconds anyway. Any thread."""
+        if self.runtime.loop is not None and hasattr(self, "_presence_wake"):
+            self.runtime.loop.call_soon_threadsafe(self._presence_wake.set)
+
+    def _presence_snapshot(self) -> PresenceSnapshot:
+        live = {key: bool(value) for key, value in self.live.items()}
+        if self.obs_streaming and self.settings.tiktok_username and self.active_key is not None:
+            live["tiktok"] = True  # Streaming to TikTok with its key, even before TikTok's chat says so.
+        if any(live.values()):
+            self._live_since = self._live_since or self._stream_started or time.time()
+        else:
+            self._live_since = None
+        stats = self.audience.stats
+
+        def total(name: str) -> int | None:  # Across the platforms you're live on.
+            return sum(row.get(name) or 0 for key, row in stats.items() if live.get(key)) or None
+
+        current = self.music.queue.current
+        game = self.games.running
+        server = main_server()
+        return PresenceSnapshot(
+            live=live, usernames={key: getattr(self.settings, name) for key, name in PLATFORM_FIELDS.items()},
+            viewers=total("viewers"), likes=total("likes"), followers=total("followers"),
+            song=current.track.title if current else "", artist=current.track.channel if current else "",
+            requester=current.requested_by.nickname if current else "",
+            game=GAMES.get(game, "") if game else "", started=self._live_since,
+            icon_url=f"{server}/static/icons/icon-512.png" if server else "")
+
+    def _presence_status(self, text: str) -> None:
+        if text != self.presence_status:
+            self.presence_status = text
+            self.presence_changed.emit(text)
+
+    async def _presence_loop(self) -> None:
+        sent: object = None  # What Discord shows now (None: nothing).
+        while True:
+            config = parse_presence(self.settings.presence)
+            activity = build_presence(config, self._presence_snapshot())
+            try:
+                if not config.enabled:
+                    if self._presence_ipc is not None:
+                        await self._presence_ipc.set_activity(None)
+                        await self._presence_ipc.close()
+                    self._presence_ipc, sent = None, None
+                    self._presence_status("Off")
+                elif activity != sent or self._presence_ipc is None:
+                    if self._presence_ipc is not None and self._presence_ipc.app_id != config.app:
+                        await self._presence_ipc.close()
+                        self._presence_ipc = None
+                    if self._presence_ipc is None:
+                        self._presence_ipc = DiscordIpc(config.app)
+                    await self._presence_ipc.set_activity(activity)
+                    sent = activity
+                    self._presence_status("Showing on your Discord profile" if activity else
+                                          "Connected to Discord (nothing to show until you go live)")
+            except DiscordIpcError as error:
+                if self._presence_ipc is not None:
+                    await self._presence_ipc.close()
+                self._presence_ipc, sent = None, None
+                self._presence_status(str(error))
+                await self._presence_sleep(PRESENCE_RETRY_S)
+                continue
+            await self._presence_sleep(UPDATE_PRESENCE_S)
+
+    async def _presence_sleep(self, seconds: float) -> None:
+        try:
+            await asyncio.wait_for(self._presence_wake.wait(), seconds)
+        except asyncio.TimeoutError:
+            pass
+        self._presence_wake.clear()
 
     async def _viewers_loop(self) -> None:
         ticks, first = 0, True
@@ -2040,6 +2181,7 @@ class Controller(QObject):
                 self._finish_report()
                 self._announced.clear()  # The next stream is announced again.
             self.obs_streaming = active
+            self._stream_started = time.time() if active else None
             self.obs_streaming_changed.emit(active)
             if active and self.settings.tiktok_username and self.active_key is not None:
                 self._announce_live("tiktok", self.settings.tiktok_username)  # Start Streaming, with the key in.
@@ -3187,6 +3329,8 @@ class Controller(QObject):
             self.runtime.submit(self.overlay.set_theme(self._overlay_season))
         if new.obs_url != old.obs_url:
             self.reconnect_obs()
+        if new.presence != old.presence:
+            self.refresh_presence()
         discord_fields = ("discord_enabled", "discord_comments", "discord_gifts", "discord_follows", "texts",
                           *PLATFORM_FIELDS.values())
         if any(getattr(new, name) != getattr(old, name) for name in discord_fields):

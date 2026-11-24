@@ -94,6 +94,7 @@ class ActionEngine:
         self._recent: deque[float] = deque()  # Chat activity in the last SPIKE_WINDOW_S.
         self._activity_total = 0
         self._activity_since: float | None = None
+        self._chatted: set[str] = set()  # Viewers who've commented this stream (first message rules).
 
     def _spikes(self, event: ChatEvent, now: float) -> list[Fired]:
         """Chat spike rules: comments, gifts and like batches in the last few seconds vs. the stream's usual rate."""
@@ -153,10 +154,11 @@ class ActionEngine:
             values.setdefault("user", "")
         elif isinstance(event, ChatGift):
             values.update(gift=event.gift_name, count=event.count, coins=event.diamonds * event.count,
-                          message=event.message)
+                          each=event.diamonds, message=event.message)
             image = event.image_url
         command, args = "", ""
         if isinstance(event, ChatComment):
+            fired += self._first_chat(event, values, now)
             text = event.text.strip()
             if not text.startswith(self.prefix):
                 return fired
@@ -184,7 +186,8 @@ class ActionEngine:
             if kind == "gift":
                 if trigger.gifts and event.gift_name.lower() not in {g.lower() for g in trigger.gifts}:
                     continue
-                if event.diamonds * event.count < trigger.min_coins:
+                coins = event.diamonds * event.count
+                if coins < trigger.min_coins or (trigger.max_coins and coins > trigger.max_coins):
                     continue
             elif kind == "like":
                 # A batch can cross several multiples at once; fire once, not a burst.
@@ -201,6 +204,23 @@ class ActionEngine:
             if kind == "viewers":
                 self._milestones.add(rule.id)
             fired.append(Fired(rule, {**values, "rule": rule.name}, user, image))
+        return fired
+
+    def _first_chat(self, event: ChatComment, values: dict, now: float) -> list[Fired]:
+        """A viewer's first comment this stream (commands too): "welcome" rules."""
+        key = event.user.key
+        if key in self._chatted:
+            return []
+        self._chatted.add(key)
+        fired = []
+        for rule in self.rules:
+            trigger = rule.trigger
+            if not rule.enabled or trigger.kind != "first_chat" or event.user.platform not in trigger.platforms:
+                continue
+            if role_of(event.user) < Role[trigger.role.upper()]:
+                continue
+            if self._cooled_down(rule, event.user, now):
+                fired.append(Fired(rule, {**values, "message": event.text, "rule": rule.name}, event.user))
         return fired
 
     def _cooled_down(self, rule: Rule, user: ChatUser | None, now: float, min_cooldown: float = 0) -> bool:

@@ -79,7 +79,7 @@ function next() {
   if (m.kind === "custom") {
     const custom = showCustom(m);
     wrap.replaceChildren(custom);
-    return finish(custom);
+    return finish(custom, m.seconds); // A rule can set its own time on screen.
   }
   const card = ST.el("section", "card alert");
   const text = ST.el("div");
@@ -112,7 +112,8 @@ function next() {
   finish(card);
 }
 
-function finish(card) {
+function finish(card, own) {
+  const shown = own > 0 ? Math.min(60, own) : seconds;
   setTimeout(() => {
     card.classList.add("fade", "hide");
     setTimeout(() => {
@@ -121,7 +122,7 @@ function finish(card) {
       busy = false;
       next();
     }, 400);
-  }, seconds * 1000);
+  }, shown * 1000);
 }
 </script>
 </body>

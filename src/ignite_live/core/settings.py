@@ -16,6 +16,7 @@ from pathlib import Path
 from ignite_live.actions.goals import clean_goals
 from ignite_live.actions.rules import clean_rules
 from ignite_live.games.manager import parse_games
+from ignite_live.live.presence import clean_presence
 from ignite_live.viewers.points import clean_config as clean_points
 
 ROLES = ("everyone", "followers", "mods")
@@ -130,6 +131,8 @@ class Settings:
     tiktok_via_server: bool = True  # Signed in: read TikTok chat through the server (Euler Stream), not TikTokLive.
     # With TikTok signed in on the server's website: answer song requests in TikTok chat, as the streamer.
     tiktok_chat_replies: bool = False
+    # Minecraft action rules go to this ServerTap address (integrations/servertap.py); its key is in the keychain.
+    minecraft_url: str = "http://localhost:4567"
     overlay_port: int = 17_845
     overlay_token: str = ""
     api_key: str = ""  # The local API's control key (overlay/api.py): runs commands. Never synced.
@@ -216,6 +219,8 @@ class Settings:
     goals: list[dict] = field(default_factory=list)
     # Loyalty points: how they're earned and spent (viewers/points.py). Balances are in viewers.sqlite3.
     points: dict = field(default_factory=lambda: clean_points(None))
+    # Discord Rich Presence (live/presence.py): on this PC only, not synced.
+    presence: dict = field(default_factory=lambda: clean_presence(None))
     # Viewer games' settings (Games tab): {"tug": {…}, "boss": {…}, "poll": {…}}; see games/.
     games: dict = field(default_factory=lambda: parse_games(None))
     # Moderation (Preferences → Moderation; moderation/filter.py). Chat itself is read-only: this covers what
@@ -267,6 +272,8 @@ class Settings:
                 value = clean_goals(value)
             elif spec.name == "points":
                 value = clean_points(value)
+            elif spec.name == "presence":
+                value = clean_presence(value)
             elif spec.name == "games":
                 value = parse_games(value)
             elif isinstance(expected, list):

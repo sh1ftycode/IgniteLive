@@ -5,6 +5,32 @@ starts with its section from this file (see `.github/workflows/build.yml`).
 For versions before 1.6.1, see the
 [GitHub releases](https://github.com/sh1ftycode/IgniteLive/releases).
 
+## 1.8.4
+
+### New
+
+- **Minecraft actions (ServerTap):** rules can run console commands on your
+  Minecraft server, or broadcast a message to everyone in the game, through
+  the ServerTap plugin. A command can run once per gift in a combo (at most
+  50). Viewers' names come through as one plain word, so they can't add
+  anything to a command. Set the server up in File → Preferences →
+  Minecraft (with Test Connection).
+- **Add TT Interactive Rules** (Actions tab): gifts spawn mobs, items and
+  events through TT Interactive Stream Games' `/ttinteractive gift`.
+- **Discord Rich Presence:** your Discord profile shows that you're live,
+  where, viewers and likes, the song playing and the game running, with up
+  to two buttons (e.g. Watch on TikTok). Built from modules you turn on or
+  off, with presets or your own two lines. Just tick it in File →
+  Preferences → Discord: it shows as "Playing Ignite" (or your own Discord
+  application, if you enter one).
+- **More in action rules:**
+  - gift rules can have a coin range ("99–498 coins") so tiers don't
+    overlap, and `{each}` gives one gift's value;
+  - a **First message** trigger welcomes viewers once a stream;
+  - a **Wait** action puts the rule's steps in order;
+  - an alert can set how long it stays on screen;
+  - **Export… and Import…** save rules to a file and add them from one.
+
 ## 1.8.3
 
 ### New

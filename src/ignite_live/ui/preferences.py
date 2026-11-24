@@ -47,6 +47,16 @@ from ignite_live.core.events import PLATFORMS
 from ignite_live.core.settings import COMMAND_DEFAULTS, ROLES, Settings
 from ignite_live.core.templates import BY_KEY, GROUPS, PLACEHOLDERS, SAMPLE, TEMPLATES, render, unknown_placeholders
 from ignite_live.integrations.discord_bridge import valid_webhook_url
+from ignite_live.integrations.servertap import DEFAULT_URL as DEFAULT_SERVERTAP_URL, ServerTapError
+from ignite_live.integrations.servertap import check_url as check_servertap_url
+from ignite_live.live.presence import MODULES as PRESENCE_MODULES, PRESETS as PRESENCE_PRESETS
+from ignite_live.live.presence import Snapshot, build as build_presence, clean_presence
+from ignite_live.live.presence import parse_config as parse_presence
+
+# The Rich Presence preview's sample values.
+PRESENCE_SAMPLE = Snapshot(live={"tiktok": True}, usernames={"tiktok": "you"}, viewers=152, likes=12_400,
+                           followers=8_100, song="Blinding Lights", artist="The Weeknd", requester="Ember",
+                           game="Tug-of-war", started=1.0, icon_url="https://example.com/icon.png")
 from ignite_live.music.commands import CommandKind
 from ignite_live.music.youtube import video_id_from
 from ignite_live.core.seasons import SEASONAL, SEASONAL_LABEL
@@ -58,7 +68,7 @@ from ignite_live.ui.theme import resolve_theme
 
 ROLE_NAMES = {"everyone": "Everyone", "followers": "Followers (Twitch subs, YouTube members)", "mods": "Moderators"}
 TABS = ("OBS", "Chat platforms", "Server", "Song requests", "Commands", "Text to speech", "Moderation", "Messages",
-        "Discord", "Appearance", "Advanced")
+        "Discord", "Minecraft", "Appearance", "Advanced")
 MOD_PLACES = {"tts": "Text to speech", "overlay": "Chat and alerts on stream", "discord": "Discord",
               "songs": "Song titles and requests", "rules": "Viewer names and text in rule alerts"}
 PANIC_STEPS = {"tts": "Mute text to speech", "alerts": "Clear and hold alerts", "music": "Pause the music",
@@ -512,6 +522,29 @@ class PreferencesDialog(QDialog):
                          "Pings and link previews are disabled; messages are batched every few seconds. "
                          "Change the line format in Messages → Discord."))
 
+        self._presence_section(form, s)
+
+        form = _tab(self.tabs, "Minecraft")
+        self.minecraft_url = QLineEdit(s.minecraft_url)
+        self.minecraft_url.setPlaceholderText(DEFAULT_SERVERTAP_URL)
+        form.addRow("ServerTap &address:", self.minecraft_url)
+        self.minecraft_key = _secret(keychain.MINECRAFT_KEY)
+        form.addRow("ServerTap &key:", self.minecraft_key)
+        self.minecraft_state = QLabel()
+        self.minecraft_state.setWordWrap(True)
+        self.minecraft_state.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        test = QPushButton("Test Connection")
+        test.clicked.connect(self._test_minecraft)
+        minecraft_row = QHBoxLayout()
+        minecraft_row.addWidget(test)
+        minecraft_row.addWidget(self.minecraft_state, 1)
+        form.addRow("", minecraft_row)
+        form.addRow(note("Gifts, follows and likes can run commands on your Minecraft server (Actions tab → "
+                         "Minecraft). The server needs the ServerTap plugin: its key is “key” in "
+                         "plugins/ServerTap/config.yml. Change it from “change_me” to a long random one there "
+                         "first, and keep port 4567 closed to the internet. For TT Interactive Stream Games, use "
+                         "Actions → Add TT Interactive Rules."))
+
         form = _tab(self.tabs, "Appearance")
         # "Seasonal" stays selected as itself; an old or unknown value shows what it looks like now.
         self.ui_theme = _choice(APP_THEMES, s.ui_theme if s.ui_theme in APP_THEMES else resolve_theme(s.ui_theme))
@@ -849,6 +882,155 @@ class PreferencesDialog(QDialog):
         if self.apply():
             self.accept()
 
+    # Discord Rich Presence (live/presence.py): modules, templates and presets; a preview with sample values.
+
+    def _presence_section(self, form: QFormLayout, s: Settings) -> None:
+        config = parse_presence(s.presence)
+        form.addRow(QLabel("<b>Rich Presence</b>"))
+        self.presence_on = QCheckBox("Show what I'm streaming on my Discord profile")
+        self.presence_on.setChecked(config.enabled)
+        form.addRow(self.presence_on)
+        self.presence_app = QLineEdit(config.app_id)
+        self.presence_app.setPlaceholderText("Empty: shows as “Playing Ignite”. Or your own application's ID")
+        form.addRow("&Application ID:", self.presence_app)
+        self.presence_preset = QComboBox()
+        self.presence_preset.addItem("Custom", "")
+        for key, (label, _details, _state) in PRESENCE_PRESETS.items():
+            self.presence_preset.addItem(label, key)
+        self.presence_preset.activated.connect(self._presence_preset_chosen)
+        form.addRow("&Preset:", self.presence_preset)
+        self.presence_details = QLineEdit(config.details)
+        form.addRow("First line:", self.presence_details)
+        self.presence_state = QLineEdit(config.state)
+        form.addRow("Second line:", self.presence_state)
+        modules = QGridLayout()  # Two columns: four checkboxes in a row are wider than the window.
+        self.presence_modules: dict[str, QCheckBox] = {}
+        for index, (key, (label, names)) in enumerate(PRESENCE_MODULES.items()):
+            box = QCheckBox(label)
+            box.setToolTip("Fills " + ", ".join(f"{{{name}}}" for name in names))
+            box.setChecked(key in config.modules)
+            modules.addWidget(box, index // 2, index % 2)
+            self.presence_modules[key] = box
+        modules.setColumnStretch(2, 1)
+        form.addRow("Show:", modules)
+        self.presence_time = QCheckBox("Time since the stream started")
+        self.presence_time.setChecked(config.show_time)
+        self.presence_platform = QCheckBox("The platform's icon (your app's art assets: tiktok, twitch, youtube)")
+        self.presence_platform.setChecked(config.small_image == "platform")
+        form.addRow("", self.presence_time)
+        form.addRow("", self.presence_platform)
+        self.presence_image = QLineEdit(config.large_image)
+        self.presence_image.setPlaceholderText("ignite (the Ignite logo), none, or an https:// image link")
+        form.addRow("Big &image:", self.presence_image)
+        self.presence_image_text = QLineEdit(config.large_text)
+        form.addRow("Image hover text:", self.presence_image_text)
+        self.presence_buttons: list[tuple[QLineEdit, QLineEdit]] = []
+        for number in range(2):
+            label, url = config.buttons[number] if number < len(config.buttons) else ("", "")
+            label_edit, url_edit = QLineEdit(label), QLineEdit(url)
+            label_edit.setMaxLength(32)
+            label_edit.setPlaceholderText("Watch on TikTok" if not number else "Label")
+            url_edit.setPlaceholderText("https://www.tiktok.com/@{tiktok}/live" if not number else "https://…")
+            row = QHBoxLayout()
+            row.addWidget(label_edit, 1)
+            row.addWidget(url_edit, 2)
+            form.addRow(f"Button {number + 1}:", row)
+            self.presence_buttons.append((label_edit, url_edit))
+        self.presence_idle = QComboBox()
+        self.presence_idle.addItem("Show nothing", "hide")
+        self.presence_idle.addItem("Show these lines", "show")
+        self.presence_idle.setCurrentIndex(max(0, self.presence_idle.findData(config.idle)))
+        self.presence_idle_details = QLineEdit(config.idle_details)
+        self.presence_idle_state = QLineEdit(config.idle_state)
+        idle = QHBoxLayout()
+        idle.addWidget(self.presence_idle)
+        idle.addWidget(self.presence_idle_details, 2)
+        idle.addWidget(self.presence_idle_state, 1)
+        form.addRow("When not live:", idle)
+        self.presence_preview = QLabel()
+        self.presence_preview.setWordWrap(True)
+        self.presence_preview.setTextFormat(Qt.TextFormat.PlainText)
+        form.addRow("Preview:", self.presence_preview)
+        self.presence_state_label = QLabel(self.controller.presence_status)
+        self.presence_state_label.setWordWrap(True)
+        form.addRow("Status:", self.presence_state_label)
+        self.controller.presence_changed.connect(self.presence_state_label.setText)
+        form.addRow(note("Placeholders: {platforms}, {platform}, {viewers}, {likes}, {followers}, {song}, {artist}, "
+                         "{requester}, {game}, and your usernames {tiktok}, {twitch}, {youtube} (for button links). "
+                         "Separate parts with “ · ”: a part whose information isn't there (or whose box above is "
+                         "off) is left out. Your profile shows “Playing Ignite”; for another name, make an application at "
+                         "discord.com/developers and enter its ID. Needs the Discord app on this PC, with Activity "
+                         "Privacy → “Share your detected activities” on."))
+        for widget in (self.presence_details, self.presence_state, self.presence_image, self.presence_image_text,
+                       self.presence_idle_details, self.presence_idle_state, self.presence_app,
+                       *(edit for pair in self.presence_buttons for edit in pair)):
+            widget.textChanged.connect(self._presence_preview)
+        for box in (self.presence_on, self.presence_time, self.presence_platform, *self.presence_modules.values()):
+            box.toggled.connect(self._presence_preview)
+        self.presence_idle.currentIndexChanged.connect(self._presence_preview)
+        self._presence_preview()
+
+    def _presence_preset_chosen(self) -> None:
+        key = self.presence_preset.currentData()
+        if key in PRESENCE_PRESETS:
+            _label, details, state = PRESENCE_PRESETS[key]
+            self.presence_details.setText(details)
+            self.presence_state.setText(state)
+
+    def _presence_form(self) -> dict:
+        return {
+            "enabled": self.presence_on.isChecked(), "app_id": self.presence_app.text().strip(),
+            "details": self.presence_details.text(), "state": self.presence_state.text(),
+            "modules": [key for key, box in self.presence_modules.items() if box.isChecked()],
+            "show_time": self.presence_time.isChecked(),
+            "large_image": self.presence_image.text().strip() or "ignite",
+            "large_text": self.presence_image_text.text(),
+            "small_image": "platform" if self.presence_platform.isChecked() else "none",
+            "buttons": [[label.text(), url.text().strip()] for label, url in self.presence_buttons
+                        if label.text().strip() and url.text().strip()],
+            "idle": self.presence_idle.currentData(), "idle_details": self.presence_idle_details.text(),
+            "idle_state": self.presence_idle_state.text(),
+        }
+
+    def _presence_preview(self) -> None:
+        raw = self._presence_form()
+        config = parse_presence({**raw, "enabled": True})  # Preview even while off.
+        preset = next((key for key, (_l, d, st) in PRESENCE_PRESETS.items()
+                       if (d, st) == (raw["details"], raw["state"])), "")
+        self.presence_preset.setCurrentIndex(max(0, self.presence_preset.findData(preset)))
+        activity = build_presence(config, PRESENCE_SAMPLE)
+        if activity is None:
+            self.presence_preview.setText("(nothing: you're not live)")
+            return
+        lines = [activity.get("details", ""), activity.get("state", "")]
+        if "timestamps" in activity:
+            lines.append("1:23:45 elapsed")
+        lines += [f"[{button['label']}]" for button in activity.get("buttons", [])]
+        bad = [label.text() for label, url in self.presence_buttons
+               if label.text().strip() and url.text().strip() and not url.text().strip().startswith("https://")]
+        if bad:
+            lines.append("(Button links must start with https://)")
+        if raw["app_id"] and not parse_presence(raw).app_id:
+            lines.append("(The application ID is a long number, from the Developer Portal)")
+        self.presence_preview.setText("\n".join(line for line in lines if line))
+
+    def _minecraft_url(self) -> str:
+        """The typed address, cleaned; the saved one while it's mistyped (apply() says so before saving)."""
+        try:
+            return check_servertap_url(self.minecraft_url.text())
+        except ServerTapError:
+            return self.controller.settings.minecraft_url
+
+    def _test_minecraft(self) -> None:
+        try:
+            url = check_servertap_url(self.minecraft_url.text())
+        except ServerTapError as error:
+            self.minecraft_state.setText(str(error))
+            return
+        self.minecraft_state.setText("Checking…")
+        self.controller.test_minecraft(lambda text, _ok: self.minecraft_state.setText(text), url,
+                                       self.minecraft_key.text().strip())
+
     def _test_discord(self) -> None:
         url = self.discord_url.text().strip() or keychain.load(keychain.DISCORD_WEBHOOK) or ""
         if not valid_webhook_url(url):
@@ -872,6 +1054,8 @@ class PreferencesDialog(QDialog):
             tiktok_username=self.tiktok.text().strip().lstrip("@"),
             twitch_channel=self.twitch.text().strip(),
             twitch_stats=self.twitch_stats.isChecked(),
+            minecraft_url=self._minecraft_url(),
+            presence=clean_presence(self._presence_form()),
             tiktok_chat_replies=self.tiktok_replies.isChecked(),
             youtube_channel=self.youtube.text().strip(),
             obs_url=self.obs_url.text().strip() or "ws://127.0.0.1:4455",
@@ -951,6 +1135,12 @@ class PreferencesDialog(QDialog):
             self.tabs.setCurrentIndex(TABS.index("Discord"))
             self.message.setText("That Discord webhook URL doesn't look right. Nothing was saved.")
             return False
+        try:
+            check_servertap_url(self.minecraft_url.text())
+        except ServerTapError as error:
+            self.tabs.setCurrentIndex(TABS.index("Minecraft"))
+            self.message.setText(f"{error} Nothing was saved.")
+            return False
         session = self.tiktok_session.text().strip()
         if session and not valid_session(session):
             self.tabs.setCurrentIndex(TABS.index("Text to speech"))
@@ -970,6 +1160,7 @@ class PreferencesDialog(QDialog):
             keychain.SIGN_API_KEY: self.sign_key,
             keychain.DISCORD_WEBHOOK: self.discord_url,
             keychain.TIKTOK_SESSION: self.tiktok_session,
+            keychain.MINECRAFT_KEY: self.minecraft_key,
         }
         obs_password_entered = bool(self.obs_password.text().strip())
         for name, widget in secrets.items():
