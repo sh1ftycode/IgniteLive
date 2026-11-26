@@ -1,11 +1,11 @@
-"""TikTok LIVE chat adapter. The only module that imports TikTokLive.
+"""TikTok LIVE chat adapter. The only module that imports IgniteLiveAPI.
 
-TikTokLive is an unofficial, reverse-engineered client. Each connection asks
+IgniteLiveAPI (derived from TikTokLive) is an unofficial, reverse-engineered client. Each connection asks
 the Euler Stream signing service for a signed WebSocket URL, which is rate
 limited. This adapter owns reconnection and turns library payloads into
 ``ignite_live.core.events`` types.
 
-Licensing: TikTokLive's modified AGPL permits importing it into this desktop
+Licensing: IgniteLiveAPI's modified AGPL permits importing it into this desktop
 app, but not running it inside a hosted service (its section 19). Keep this
 module out of ``ignite_live.server``.
 """
@@ -17,8 +17,8 @@ import logging
 import time
 from typing import Any, Callable
 
-from TikTokLive import TikTokLiveClient
-from TikTokLive.client.errors import (
+from IgniteLiveAPI import IgniteLiveClient
+from IgniteLiveAPI.client.errors import (
     AgeRestrictedError,
     SignAPIError,
     SignatureRateLimitError,
@@ -26,8 +26,8 @@ from TikTokLive.client.errors import (
     UserOfflineError,
     WebcastBlockedError,
 )
-from TikTokLive.client.web.web_settings import WebDefaults
-from TikTokLive.events import (
+from IgniteLiveAPI.client.web.web_settings import WebDefaults
+from IgniteLiveAPI.events import (
     CommentEvent,
     ConnectEvent,
     FollowEvent,
@@ -125,9 +125,10 @@ class TikTokChat:
     """Keeps one creator's LIVE chat connected until stopped.
 
     Run ``await chat.run()`` as a task and end it with ``await chat.stop()``.
-    Don't cancel the task while connected: TikTokLive 7's cancellation handler
-    calls ``loop.run_until_complete()`` inside the running loop, which raises,
-    and would then cancel every other task on the loop.
+    Prefer ``stop()``. Cancelling the task is also safe with the pinned IgniteLiveAPI: it
+    disconnects cleanly and re-raises ``CancelledError``. (TikTokLive 7, which this used to
+    run on, called ``loop.run_until_complete()`` inside the running loop there, which
+    raised and then cancelled every other task on the loop.)
     """
 
     def __init__(
@@ -147,7 +148,7 @@ class TikTokChat:
         self._on_status = on_status
         if sign_api_key:
             WebDefaults.tiktok_sign_api_key = sign_api_key
-        self._client_factory = client_factory or (lambda uid: TikTokLiveClient(unique_id=uid, ws_kwargs={"ssl": tls_context()}))
+        self._client_factory = client_factory or (lambda uid: IgniteLiveClient(unique_id=uid, ws_kwargs={"ssl": tls_context()}))
         self._sleep = sleep
         self._clock = clock
         self._connected_at_ms = 0
@@ -202,7 +203,7 @@ class TikTokChat:
             except Exception:
                 task = asyncio.current_task()
                 if self._stopping or (task is not None and task.cancelling()):
-                    # TikTokLive can turn a cancellation into a RuntimeError; never retry then.
+                    # Older libraries turned a cancellation into a RuntimeError; never retry then.
                     await self._quietly_disconnect(client)
                     self._status(ConnectionState.OFFLINE)
                     if self._stopping:

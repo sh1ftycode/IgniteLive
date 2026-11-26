@@ -640,7 +640,7 @@ class Controller(QObject):
     def _make_chat(self, platform: str, name: str, on_status):
         if platform == "tiktok":
             def own_connection():
-                from ignite_live.integrations.tiktok_chat import TikTokChat  # TikTokLive is slow to import.
+                from ignite_live.integrations.tiktok_chat import TikTokChat  # IgniteLiveAPI is slow to import.
 
                 return TikTokChat(name, self._on_chat_event, on_status, keychain.load(keychain.SIGN_API_KEY))
 

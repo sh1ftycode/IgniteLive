@@ -4,7 +4,7 @@ Holds each user's latest TikTok stream key for 48 hours (or until that LIVE
 is marked used), syncs non-secret settings, and resolves song requests
 through a shared, cached YouTube search.
 
-The server never sees Streamlabs tokens and never runs TikTokLive: the
+The server never sees Streamlabs tokens and never runs IgniteLiveAPI: the
 desktop app generates keys itself and only stores the result here.
 """
 

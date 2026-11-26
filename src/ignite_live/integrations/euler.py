@@ -31,7 +31,7 @@ The wire form (``normalize``) is small and only carries what Ignite uses::
 
     user: {"id": uniqueId, "name": nickname, "avatar": url, "mod", "follower", "host", "sub": bools}
 
-Unlike TikTokLive, Euler's service may run inside a hosted server, so the
+Unlike IgniteLiveAPI, Euler's service may run inside a hosted server, so the
 Ignite server can read TikTok chat for its accounts.
 """
 
@@ -319,7 +319,7 @@ class EulerChat:
     """Keeps one creator's LIVE chat connected through Euler Stream until stopped (``run()`` / ``stop()``,
     like TikTokChat). ``server``: (Ignite server URL, its token) to go through the server; else ``api_key``.
 
-    ``fallback``: a reader to use instead (TikTokLive) when the server doesn't read TikTok chat (404) or has
+    ``fallback``: a reader to use instead (IgniteLiveAPI) when the server doesn't read TikTok chat (404) or has
     no Euler key: then this hands over to it for good.
     """
 

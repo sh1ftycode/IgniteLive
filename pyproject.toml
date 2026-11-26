@@ -16,7 +16,8 @@ desktop = [
     "PySide6>=6.7,<7",
     "keyring>=25,<26",
     # Pinned: TikTok's webcast protocol changes often, so upgrade deliberately.
-    "TikTokLive==7.0.1",
+    # Installed from a pinned commit until IgniteLiveAPI is published to PyPI; then use "IgniteLiveAPI==x.y.z".
+    "IgniteLiveAPI @ git+https://github.com/sh1ftycode/IgniteLiveAPI.git@73487831b451d59bb32140f834481bd47535a83b",
     # Microsoft Edge voices for text to speech. Unofficial service: upgrade when Microsoft changes it.
     "edge-tts>=7,<8",
 ]

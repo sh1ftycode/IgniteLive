@@ -26,8 +26,8 @@ if BUNDLED_CONFIG.exists():
 
 hiddenimports = (
     collect_submodules("keyring.backends")
-    # TikTokLive and its protobuf bindings resolve some modules dynamically.
-    + collect_submodules("TikTokLive")
+    # IgniteLiveAPI and its protobuf bindings resolve some modules dynamically.
+    + collect_submodules("IgniteLiveAPI")
     + collect_submodules("TikTokLiveProto")
 )
 
