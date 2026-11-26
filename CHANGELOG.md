@@ -5,6 +5,20 @@ starts with its section from this file (see `.github/workflows/build.yml`).
 For versions before 1.6.1, see the
 [GitHub releases](https://github.com/sh1ftycode/IgniteLive/releases).
 
+## 1.8.6
+
+### Changed
+
+- **IgniteLiveAPI:** TikTok chat now runs through IgniteLiveAPI, Ignite's own
+  fork of TikTokLive. Euler Stream's OAuth login for chat replies and
+  moderation is unchanged.
+
+### Fixed
+
+- **Duplicate joins:** viewers who joined a TikTok LIVE no longer appear twice
+  in the chat feed (the synthetic join event is now skipped since the real one
+  already handles it).
+
 ## 1.8.5
 
 ### Fixed
