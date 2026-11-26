@@ -52,7 +52,7 @@ def tls_session(**kwargs: Any) -> aiohttp.ClientSession:
     """An aiohttp session that trusts what ``tls_context()`` trusts. Create it inside a running event loop.
 
     aiohttp's own default trusts only the system store, so under Wine every chat connection failed
-    with CERTIFICATE_VERIFY_FAILED while TikTokLive's httpx requests (which bundle certifi) went through.
+    with CERTIFICATE_VERIFY_FAILED while IgniteLiveAPI's httpx requests (which bundle certifi) went through.
     """
     import aiohttp
 

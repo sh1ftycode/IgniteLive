@@ -84,8 +84,8 @@ def _setup_logging() -> None:
         handlers=handlers,
         force=True,
     )
-    # TikTokLive logs every frame at INFO; keep only its warnings.
-    logging.getLogger("TikTokLive").setLevel(logging.WARNING)
+    # IgniteLiveAPI logs every frame at INFO; keep only its warnings.
+    logging.getLogger("IgniteLiveAPI").setLevel(logging.WARNING)
     logging.captureWarnings(True)
     qt = logging.getLogger("qt")
     qInstallMessageHandler(lambda mode, _context, message: qt.log(QT_LEVELS.get(mode, logging.WARNING), message))

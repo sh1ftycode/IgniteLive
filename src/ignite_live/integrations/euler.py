@@ -31,7 +31,7 @@ The wire form (``normalize``) is small and only carries what Ignite uses::
 
     user: {"id": uniqueId, "name": nickname, "avatar": url, "mod", "follower", "host", "sub": bools}
 
-Unlike TikTokLive, Euler's service may run inside a hosted server, so the
+Unlike IgniteLiveAPI, Euler's service may run inside a hosted server, so the
 Ignite server can read TikTok chat for its accounts.
 """
 
@@ -217,11 +217,11 @@ def normalize(message: Any) -> dict | None:
             user = _user(data.get("user"), data.get("userIdentity"))
             return {"kind": "join", "user": user} if user["id"] else None
         return None
-    if kind in ("SyntheticJoinMessage", "SyntheticLeaveMessage"):
+    if kind == "SyntheticLeaveMessage":
         user = _user(data.get("user"))
-        if not user["id"]:
-            return None
-        return {"kind": "join" if kind == "SyntheticJoinMessage" else "leave", "user": user}
+        return {"kind": "leave", "user": user} if user["id"] else None
+    if kind == "SyntheticJoinMessage":
+        return None  # WebcastMemberMessage already handles joins; the synthetic duplicate is skipped.
     if kind == "WebcastRoomUserSeqMessage":
         count = _int(_first(data, "viewerCount", "total"))
         return {"kind": "viewers", "count": count} if count is not None else None
@@ -319,7 +319,7 @@ class EulerChat:
     """Keeps one creator's LIVE chat connected through Euler Stream until stopped (``run()`` / ``stop()``,
     like TikTokChat). ``server``: (Ignite server URL, its token) to go through the server; else ``api_key``.
 
-    ``fallback``: a reader to use instead (TikTokLive) when the server doesn't read TikTok chat (404) or has
+    ``fallback``: a reader to use instead (IgniteLiveAPI) when the server doesn't read TikTok chat (404) or has
     no Euler key: then this hands over to it for good.
     """
 

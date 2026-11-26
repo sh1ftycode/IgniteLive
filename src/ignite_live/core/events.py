@@ -1,7 +1,7 @@
 """Typed events shared by every integration.
 
 Adapters translate third-party payloads into these, so the UI, the command
-engine, and the overlays never import TikTokLive, aiohttp, or YouTube types.
+engine, and the overlays never import IgniteLiveAPI, aiohttp, or YouTube types.
 Every chat event says which platform it came from (``ChatUser.platform``).
 """
 
