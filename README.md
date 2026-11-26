@@ -279,5 +279,7 @@ implementation and contains none of their code.
 
 - [Loukious/StreamLabsTikTokStreamKeyGenerator](https://github.com/Loukious/StreamLabsTikTokStreamKeyGenerator)
 - [Loukious/TikTokStreamKeyGenerator](https://github.com/Loukious/TikTokStreamKeyGenerator)
+- [sh1ftycode/IgniteLiveAPI](https://github.com/sh1ftycode/IgniteLiveAPI): the library Ignite uses to read TikTok chat
+  (derived from the next entry)
 - [isaackogan/TikTokLive](https://github.com/isaackogan/TikTokLive)
 - [overabstractor/MusicBot](https://github.com/overabstractor/MusicBot)

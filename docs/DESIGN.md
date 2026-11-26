@@ -24,13 +24,13 @@ commits as of that date.
 
 | Decision | Recommendation |
 |---|---|
-| Stack | **Python 3.12+ / PySide6**, kept from the existing code. TikTokLive is Python, so chat runs in-process with no Node sidecar. |
+| Stack | **Python 3.12+ / PySide6**, kept from the existing code. IgniteLiveAPI is Python, so chat runs in-process with no Node sidecar. |
 | Stream keys | **Streamlabs route only**, as an isolated "experimental" adapter, with **manual RTMP entry** as the fallback that always works. |
 | RTMP proxy | **None.** OBS streams directly to the URL and key that Streamlabs returns. |
-| Chat | **TikTokLive**, imported as a library behind our own adapter, run **only on the user's machine**. |
+| Chat | **IgniteLiveAPI**, imported as a library behind our own adapter, run **only on the user's machine**. |
 | Music | **YouTube IFrame player** in a local overlay page that OBS loads as a Browser Source. No downloads, no yt-dlp, and the player stays visible. |
 | OBS | Our own small **obs-websocket v5** client (or MIT-licensed `simpleobsws`). Do not use GPL `obsws-python`. |
-| Backend | **Small aiohttp + SQLite service** for the 48h stream-key cache, settings sync, and shared song search. It never holds Streamlabs tokens and never runs TikTokLive (§5). |
+| Backend | **Small aiohttp + SQLite service** for the 48h stream-key cache, settings sync, and shared song search. It never holds Streamlabs tokens and never runs IgniteLiveAPI (§5). |
 | Storage | JSON settings in the platform config directory. Tokens, keys, and passwords go in the OS keychain (`keyring`). |
 
 ---
@@ -80,18 +80,21 @@ the Streamlabs adapter.
   a paid third-party dependency, FFmpeg, and the highest account-flagging risk.
 - **Ideas worth keeping, implemented our own way:**
   - Showing the **share URL** of the live room, if Streamlabs returns one
-  - Chat reader **with automatic reconnect** (we get this via TikTokLive)
+  - Chat reader **with automatic reconnect** (we get this via IgniteLiveAPI)
   - **Dual layout (portrait + landscape):** account-gated, unverified even
     upstream. Out of scope.
 
 ### 2.3 isaackogan/TikTokLive: **chat engine**
+
+> Ignite now imports [IgniteLiveAPI](https://github.com/sh1ftycode/IgniteLiveAPI), its own library derived from
+> this project (same license, same events). The notes below describe the upstream project it was derived from.
 
 - v7.0.1, Python ≥3.10, asyncio. License is **"Modified AGPL-3.0"**:
   - §18 lets you *import it into downstream apps and bots without your app
     becoming AGPL*, "provided they do not trigger Section 19".
   - §19: the exception is **revoked** if it powers a hosted service, WebSocket
     relay, or SaaS for third parties. Running it on our backend would trigger this.
-  - Therefore: **TikTokLive runs on the user's desktop only, never on a server.**
+  - Therefore: **IgniteLiveAPI runs on the user's desktop only, never on a server.**
 - It is read-only. It connects by `@unique_id` with no login and emits Comment,
   Gift, Like, Follow, Share, Join, viewer count (RoomUserSeq), LiveEnd, Connect,
   and Disconnect events.
@@ -141,7 +144,7 @@ flowchart LR
   subgraph Desktop["Ignite (one process)"]
     UI["Qt UI<br/>Dashboard · Chat · Music · Stream · Settings"]
     Bus["Controller<br/>(Qt signals ⇄ asyncio)"]
-    Chat["Chat adapter<br/>(TikTokLive)"]
+    Chat["Chat adapter<br/>(IgniteLiveAPI)"]
     Cmd["Command engine<br/>parse · cooldown · permissions"]
     Q["Music queue<br/>(pure logic)"]
     SL["Streamlabs adapter"]
@@ -174,7 +177,7 @@ flowchart LR
   error(message)`), and typed events. The dashboard shows every adapter's
   status the same way, which is what makes it feel like one product.
 - **Third-party libraries are imported in exactly one module each.** If
-  TikTokLive or Streamlabs breaks, only that file changes.
+  IgniteLiveAPI or Streamlabs breaks, only that file changes.
 
 ### Layout
 
@@ -213,7 +216,7 @@ src/ignite_live/
     profiles.py          .igniteprofile export/import (zip: profile.json + sounds/)
   integrations/
     streamlabs.py        undocumented Streamlabs routes + PKCE login + eligibility
-    tiktok_chat.py       the only module that imports TikTokLive; reconnect/backoff
+    tiktok_chat.py       the only module that imports IgniteLiveAPI; reconnect/backoff
     obs.py               obs-websocket v5 client
     backend.py           desktop client for the Ignite server
     relay.py             opt-in remote control: outbound WebSocket to the server's /v1/relay
@@ -721,7 +724,7 @@ compromised repository; signing the builds would.
 | Streamlabs flags the account for using a spoofed Streamlabs Desktop User-Agent | Medium | Disclose this in the UI. One request per user action, no polling. |
 | The account lacks Streamlabs TikTok LIVE access (application approval) | Common | Show `application_status`/`can_be_live` before Generate. |
 | Euler signer rate limits or downtime break chat | Medium | Exponential backoff that respects `RateLimit-Reset`; an optional user-supplied Euler key; chat is "degraded" and never blocks streaming or music. |
-| TikTok changes its webcast protocol | Medium | Pin the TikTokLive version; upgrade deliberately. |
+| TikTok changes its webcast protocol | Medium | Pin the IgniteLiveAPI version; upgrade deliberately. |
 | Euler Stream sees which usernames you connect to | Certain | Disclose in Settings. |
 | Twitch changes anonymous IRC reading (`justinfan` login) | Low | It's Twitch's documented, long-standing read-only mode; the client reconnects with backoff and reports a clear error for unknown channels. |
 | YouTube changes its web chat endpoints (`/live_chat` page, `youtubei/v1/live_chat/get_live_chat`) | Medium | Isolated adapter (`integrations/youtube_chat.py`); failures become "retrying" statuses, never crashes. The official Data API is the fallback, but its chat polling costs quota on every request, so it isn't the default. |
@@ -770,7 +773,8 @@ compromised repository; signing the builds would.
 | StreamLabsTikTokStreamKeyGenerator | GPL-3.0 | Behavior reference only, no code copied. |
 | TikTokStreamKeyGenerator | None (all rights reserved) | Reading only. |
 | MusicBot | None (all rights reserved) | Feature ideas only. |
-| TikTokLive | Modified AGPL-3.0 (§18 exception) | Imported in the desktop app; **never hosted**. |
+| IgniteLiveAPI | Modified AGPL-3.0 (§18 exception) | Imported in the desktop app; **never hosted**. Derived from TikTokLive. |
+| TikTokLive (upstream) | Modified AGPL-3.0 | Not imported directly; see IgniteLiveAPI. |
 | TikTok-Live-Connector | Modified AGPL-3.0 | Not used. |
 | PySide6 | LGPL-3.0 | Keep the Qt libraries dynamically linked in builds (PyInstaller's default). |
 | obsws-python | GPL-3.0 | **Avoid**: use our own client or `simpleobsws` (MIT). |
@@ -805,7 +809,7 @@ avoids the risks from the original research:
 - **It never sees the Streamlabs token.** The desktop app generates the key
   with the user's own token (from the user's own IP, as Streamlabs expects)
   and stores only the resulting server/key on the backend.
-- **It never runs TikTokLive**, so its modified-AGPL §19 is not triggered.
+- **It never runs IgniteLiveAPI**, so its modified-AGPL §19 is not triggered.
 - **One process, one file:** aiohttp + SQLite. Run it on localhost, a home
   server, or a $5 VPS behind HTTPS (e.g. Caddy). The client refuses plain
   `http://` except for localhost.
@@ -846,7 +850,7 @@ than 48h, the app must detect the OBS connection failure and offer
 | **Twitch chat** | Live run against a real channel (comments, sub badges), unknown-channel error, clean stop mid-connect; parser unit tests for bits, subs, gift bundles. | A stream with bits and subs coming in. |
 | **YouTube chat** | Live runs: channel `/live` lookup, not-live and unknown-channel states, messages read from a live stream; backlog skipping and Super Chat parsing unit-tested. | Super Chats and memberships on a real stream; a long session for continuation stability. |
 | **Text to speech** | Rules (filters, cooldowns, templates), the speaker queue (prefetch, order, skip, mute, failures) unit-tested with fakes; TikTok request/response against a fake server. Live: Edge voices fetched and played back to back through the real controller and Qt Multimedia, skip, and the "no session ID" error. The frozen build bundles the speech and FFmpeg plugins and edge-tts. | TikTok voices with a real session ID (none available here). System voices on Windows and macOS, and OBS picking up the audio. |
-| **Server** | Clean server-only install (no Qt/TikTokLive), auth, key store/reuse/retire, settings sync, live oEmbed. | `docker compose up` on a VPS (Docker wasn't available to build the image here). |
+| **Server** | Clean server-only install (no Qt/IgniteLiveAPI), auth, key store/reuse/retire, settings sync, live oEmbed. | `docker compose up` on a VPS (Docker wasn't available to build the image here). |
 | **Desktop app** | Headless launch of every page; manual key flow end to end; statuses for OBS offline, overlay waiting. | Day-to-day use on Windows and macOS. |
 | **Viewers and numbers** | Audience logic, Twitch membership lines, DecAPI text and TikTok room details unit-tested; YouTube's counts parsed from a real live page and a real `updated_metadata` answer; DecAPI's two endpoints answered live. Offscreen run of the real app: events from all three platforms through the controller into the stats row and Viewers tab, and a disconnect clearing them. | Every platform on a real stream: TikTok `JoinEvent` volume and `fetch_room_info`'s field names, Twitch membership on a channel with chatters, YouTube's poll over hours. |
 | **Pop-out chat** | Offscreen run at 0, 35 and 100 % in dark and light, composited over a busy picture: layout, text edges, lock, saved settings. | On a real desktop over a real game: translucency, click handling at 0 %, dragging, the lock. |

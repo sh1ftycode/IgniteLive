@@ -1,6 +1,6 @@
 """TikTok LIVE chat adapter. The only module that imports IgniteLiveAPI.
 
-IgniteLiveAPI is an unofficial, reverse-engineered client. Each connection asks
+IgniteLiveAPI (derived from TikTokLive) is an unofficial, reverse-engineered client. Each connection asks
 the Euler Stream signing service for a signed WebSocket URL, which is rate
 limited. This adapter owns reconnection and turns library payloads into
 ``ignite_live.core.events`` types.
@@ -125,9 +125,10 @@ class TikTokChat:
     """Keeps one creator's LIVE chat connected until stopped.
 
     Run ``await chat.run()`` as a task and end it with ``await chat.stop()``.
-    Don't cancel the task while connected: IgniteLiveAPI's cancellation handler
-    calls ``loop.run_until_complete()`` inside the running loop, which raises,
-    and would then cancel every other task on the loop.
+    Prefer ``stop()``. Cancelling the task is also safe with the pinned IgniteLiveAPI: it
+    disconnects cleanly and re-raises ``CancelledError``. (TikTokLive 7, which this used to
+    run on, called ``loop.run_until_complete()`` inside the running loop there, which
+    raised and then cancelled every other task on the loop.)
     """
 
     def __init__(
@@ -202,6 +203,7 @@ class TikTokChat:
             except Exception:
                 task = asyncio.current_task()
                 if self._stopping or (task is not None and task.cancelling()):
+                    # Older libraries turned a cancellation into a RuntimeError; never retry then.
                     await self._quietly_disconnect(client)
                     self._status(ConnectionState.OFFLINE)
                     if self._stopping:
