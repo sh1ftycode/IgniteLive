@@ -357,7 +357,8 @@ QComboBox::drop-down {{ border: none; width: 24px; }}
 QComboBox::down-arrow {{ image: url({img}/down.svg); width: 12px; height: 12px; }}
 QComboBox QAbstractItemView {{ background: {PANEL}; border: 1px solid {DIVIDER}; border-radius: {r}; padding: 4px;
                                selection-background-color: {RAISED}; selection-color: {TEXT}; outline: 0; }}
-QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {{ border: none; width: 16px; background: transparent; }}
+QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {{
+    subcontrol-origin: border; width: 16px; margin: 0; border: none; background: transparent; }}
 QAbstractSpinBox::up-arrow {{ image: url({img}/up.svg); width: 10px; height: 10px; }}
 QAbstractSpinBox::down-arrow {{ image: url({img}/down.svg); width: 10px; height: 10px; }}
 

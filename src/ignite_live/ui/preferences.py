@@ -533,10 +533,18 @@ class PreferencesDialog(QDialog):
         # REMOTE_CONTROL (controller.py) can hide it; the setting itself is kept.
         self.remote_control.setVisible(REMOTE_CONTROL)
         remote_note.setVisible(REMOTE_CONTROL)
+        self.tiktok_via_server = QCheckBox("Read TikTok chat through the server instead of this PC")
+        self.tiktok_via_server.setChecked(s.tiktok_via_server)
+        self.tiktok_via_server.setToolTip("Off by default: this PC already reads TikTok chat itself for free. "
+                                          "Turning this on routes it through the server's Euler Stream key instead, "
+                                          "which every signed-in account shares.")
+        form.addRow("", self.tiktok_via_server)
+        form.addRow(note("Leave this off unless your own connection is unreliable: the server's TikTok key is "
+                         "shared by every signed-in account, so it's best saved for dashboards reading chat while "
+                         "this PC is off, which always works regardless of this setting."))
         form.addRow(note("Optional. Sign in to keep your stream key for 48 hours when the app is closed, sync "
-                         "settings between computers, run song search, read TikTok chat through the server, and "
-                         "use Ignite from a browser or your phone. Every signed-in PC is listed on the website "
-                         "under Account, where you can sign it out."))
+                         "settings between computers, run song search, and use Ignite from a browser or your "
+                         "phone. Every signed-in PC is listed on the website under Account, where you can sign it out."))
 
         form = _tab(self.tabs, "Song requests")
         self.request_role = _choice({r: ROLE_NAMES[r] for r in ROLES}, s.request_role)
@@ -1162,6 +1170,7 @@ class PreferencesDialog(QDialog):
             obs_screenshot_dir=self.obs_screenshots.text().strip(),
             backend_url=self.backend_url.text().strip().rstrip("/"),
             remote_control=self.remote_control.isChecked(),
+            tiktok_via_server=self.tiktok_via_server.isChecked(),
             overlay_port=self.port.value(),
             request_role=self.request_role.currentData(),
             skip_role=self.skip_role.currentData(),

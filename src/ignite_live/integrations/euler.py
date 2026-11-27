@@ -387,9 +387,33 @@ class EulerChat:
                     {"Authorization": f"Bearer {token}"})
         return euler_url(self.unique_id, self._api_key), {}
 
+    async def _has_capacity(self) -> bool:
+        """Whether the server looks able to take this connection, checked over plain HTTP before ever opening
+        the WebSocket. An older server (no such route) or any network hiccup here just means "try anyway": the
+        normal connect-and-get-told-to-fall-back flow still catches it."""
+        if self._server is None:
+            return True
+        base, token = self._server
+        base = base.strip().rstrip("/")
+        url = base + "/v1/tiktok/capacity?" + urllib.parse.urlencode({"username": self.unique_id})
+        try:
+            async with self._session_factory() as session:
+                async with session.get(url, headers={"Authorization": f"Bearer {token}"},
+                                       timeout=aiohttp.ClientTimeout(total=5)) as response:
+                    if response.status != 200:
+                        return True
+                    data = await response.json(content_type=None)
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError):
+            return True
+        return bool(data.get("available", True)) if isinstance(data, dict) else True
+
     async def run(self) -> None:
         attempt = 0
         while not self._stopping:
+            if self.via_server and self._fallback is not None and not await self._has_capacity():
+                log.info("TikTok: the server is at capacity; reading this LIVE directly instead")
+                await self._hand_over()
+                return
             url, headers = self._target()
             where = "your Ignite server" if self.via_server else "Euler Stream"
             self._status(ConnectionState.CONNECTING, f"Connecting to @{self.unique_id} through {where}…")

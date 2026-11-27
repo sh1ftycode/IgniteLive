@@ -128,7 +128,11 @@ class Settings:
     obs_screenshot_dir: str = ""  # Empty: Pictures/Ignite.
     backend_url: str = ""
     server_username: str = ""  # The account this Ignite signed in to on backend_url (shown in Preferences → Server).
-    tiktok_via_server: bool = True  # Signed in: read TikTok chat through the server (Euler Stream), not IgniteLiveAPI.
+    # Signed in: read TikTok chat through the server (Euler Stream) instead of this PC's own free, direct
+    # IgniteLiveAPI connection. Off by default: the server's Euler key is shared by every signed-in account, so
+    # routing everyone's live chat through it burns that shared quota for no benefit while the PC is on (the
+    # dashboard-while-PC-off feature doesn't use this setting at all; it already runs its own server connection).
+    tiktok_via_server: bool = False
     # With TikTok signed in on the server's website: answer song requests in TikTok chat, as the streamer.
     tiktok_chat_replies: bool = False
     # Minecraft action rules go to this ServerTap address (integrations/servertap.py); its key is in the keychain.

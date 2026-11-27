@@ -5,6 +5,31 @@ starts with its section from this file (see `.github/workflows/build.yml`).
 For versions before 1.6.1, see the
 [GitHub releases](https://github.com/sh1ftycode/IgniteLive/releases).
 
+## 1.9.1
+
+### Changed
+
+- **TikTok chat defaults to your own connection:** signed-in Ignite now reads TikTok chat
+  itself (free, direct, no key needed) instead of through the Ignite server by default.
+  The server's Euler Stream key is shared across every signed-in account, so routing
+  everyone's live chat through it burned that shared quota for no benefit while the PC was
+  on. The Server tab in Preferences has a new "Read TikTok chat through the server instead
+  of this PC" checkbox for anyone who wants it back (e.g. an unreliable home connection).
+  Dashboards reading TikTok chat while the PC is off are unaffected either way.
+- **Capacity-aware server fallback:** a PC reading TikTok through the Ignite server now
+  checks the server's capacity over plain HTTP before ever opening the connection; when
+  the server is full, it goes straight to reading TikTok itself instead of dialing in to be
+  told so.
+- **Fewer wasted up/down arrows:** `QAbstractSpinBox` fields (Health, Win by, Time limit,
+  and similar number fields across the app) no longer show their up/down arrows as a
+  detached, gapped box; they now sit flush against the field's edge, matching every other
+  input.
+
+### Fixed
+
+- The Ignite server re-serializes TikTok chat to JSON once per batch instead of once per
+  reader, so accounts with several open dashboards sharing one TikTok connection cost less.
+
 ## 1.9.0
 
 ### Changed
