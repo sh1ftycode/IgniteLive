@@ -267,7 +267,7 @@ jobs:
           TOKEN: ${{ secrets.FLATPAK_UPLOAD_TOKEN }}
           URL: ${{ vars.FLATPAK_UPLOAD_URL || 'https://ignite.shiftytech.dev/v1/flatpak-upload' }}
         run: |
-          tar -czf flatpak-repo.tar.gz -C flatpak-repo .
+          tar -cJf flatpak-repo.tar.xz -C flatpak-repo .
           curl -sf --fail-with-body -X POST "$URL" \
             -H "Authorization: Bearer $TOKEN" \
-            --data-binary @flatpak-repo.tar.gz
+            --data-binary @flatpak-repo.tar.xz
