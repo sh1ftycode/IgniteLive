@@ -16,9 +16,9 @@ Get the latest build from [Releases](https://github.com/sh1ftycode/IgniteLive/re
 
 - **Windows:** `Ignite-Setup-<version>.exe` (installer) or the `-windows.zip`.
 - **Linux:** the Flatpak (recommended): open
-  [ignite.flatpakref](https://sh1ftycode.github.io/IgniteLive/flatpak/ignite.flatpakref)
+  [ignite.flatpakref](https://ignite.shiftytech.dev/ignite.flatpakref)
   in your software centre, or `flatpak install --user
-  https://sh1ftycode.github.io/IgniteLive/flatpak/ignite.flatpakref` (the
+  https://ignite.shiftytech.dev/ignite.flatpakref` (the
   release's `Ignite-<version>.flatpak` works too). It updates like any other
   Flatpak, or with Ignite's Update button. Or
   `Ignite-<version>-x86_64.AppImage`: `chmod +x` it and run it. Or unpack the

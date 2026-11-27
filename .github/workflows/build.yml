@@ -1,5 +1,6 @@
 # Builds Ignite for Windows (Setup .exe + zip), Linux (AppImage + tar.gz + Flatpak) and Android (.apk).
-# On a tag, it also publishes the GitHub Pages site with the Flatpak repository Ignite's Flatpak updates from.
+# On a tag, it also pushes the Flatpak repository Ignite's Flatpak updates from to the main server
+# (ignite_web/app.py's /v1/flatpak-upload), which serves it at /flatpak/.
 # Run it from the Actions tab ("Run workflow") to get the files as artifacts, or
 # push a tag like v1.2.0 to also publish a GitHub release with all of them.
 name: Build
@@ -11,8 +12,6 @@ on:
 
 permissions:
   contents: write  # The release job, on tag pushes.
-  pages: write  # The pages job: the site and the Flatpak repository.
-  id-token: write  # (Required by actions/deploy-pages.)
 
 jobs:
   build:
@@ -159,7 +158,7 @@ jobs:
             dist/Ignite-Setup-*.exe
           if-no-files-found: error
 
-      # The repository installed Flatpaks update from: published on GitHub Pages by the pages job.
+      # The repository installed Flatpaks update from: pushed to the main server by the flatpak job.
       - uses: actions/upload-artifact@v4
         if: runner.os == 'Linux'
         with:
@@ -250,63 +249,25 @@ jobs:
           body_path: ${{ runner.temp }}/notes.md
           generate_release_notes: true
 
-  # The GitHub Pages site (the README, as before) plus the Flatpak repository at /flatpak, after the release.
-  # Needs Settings → Pages → Source: GitHub Actions.
-  pages:
+  # Pushes the Flatpak repository to the main server, which serves it at /flatpak/ (ignite_web/app.py,
+  # POST /v1/flatpak-upload). Needs the FLATPAK_UPLOAD_TOKEN repo secret to match the server's
+  # IGNITE_WEB_FLATPAK_UPLOAD_TOKEN.
+  flatpak:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: release
     runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deploy.outputs.page_url || steps.deploy_again.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/configure-pages@v5
-
-      - uses: actions/jekyll-build-pages@v1
-        with:
-          source: ./
-          destination: ./_site
-
-      # The Jekyll step leaves _site owned by root: the next steps add to it.
-      - name: Own the site folder
-        run: sudo chown -R "$USER" _site
-
       - uses: actions/download-artifact@v4
         with:
           name: flatpak-repo
-          path: _site/flatpak
+          path: flatpak-repo
 
-      # One-click install: software centres open .flatpakref files.
-      - name: Flatpak install file
+      - name: Upload to the server
+        env:
+          TOKEN: ${{ secrets.FLATPAK_UPLOAD_TOKEN }}
+          URL: ${{ vars.FLATPAK_UPLOAD_URL || 'https://ignite.shiftytech.dev/v1/flatpak-upload' }}
         run: |
-          cat > _site/flatpak/ignite.flatpakref <<'REF'
-          [Flatpak Ref]
-          Title=Ignite
-          Name=io.github.sh1ftycode.Ignite
-          Branch=stable
-          Url=https://sh1ftycode.github.io/IgniteLive/flatpak/
-          IsRuntime=false
-          RuntimeRepo=https://dl.flathub.org/repo/flathub.flatpakrepo
-          REF
-          sed -i 's/^ *//' _site/flatpak/ignite.flatpakref
-          echo "GPGKey=$(base64 -w0 packaging/flatpak/ignite.gpg)" >> _site/flatpak/ignite.flatpakref
-          touch _site/.nojekyll
-
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: _site
-
-      # GitHub sometimes can't find the site it was just given ("No artifacts named github-pages"): try again.
-      - id: deploy
-        uses: actions/deploy-pages@v4
-        continue-on-error: true
-
-      - name: Wait before trying again
-        if: steps.deploy.outcome == 'failure'
-        run: sleep 45
-
-      - id: deploy_again
-        if: steps.deploy.outcome == 'failure'
-        uses: actions/deploy-pages@v4
+          tar -czf flatpak-repo.tar.gz -C flatpak-repo .
+          curl -sf --fail-with-body -X POST "$URL" \
+            -H "Authorization: Bearer $TOKEN" \
+            --data-binary @flatpak-repo.tar.gz
