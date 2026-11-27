@@ -1,18 +1,20 @@
+"""Overlays: Browser Sources for OBS (music, chat, alerts, goals, games), the goal bars and chat games."""
+
 from __future__ import annotations
 
 from dataclasses import replace
 
-from PySide6.QtCore import Qt, QUrl
-from PySide6.QtGui import QDesktopServices, QGuiApplication
+from PySide6.QtCore import QRectF, Qt, QTimer, QUrl
+from PySide6.QtGui import QColor, QDesktopServices, QGuiApplication, QPainter, QPen
 from PySide6.QtWidgets import (
     QComboBox,
-    QFormLayout,
-    QGroupBox,
+    QFrame,
     QHBoxLayout,
     QHeaderView,
-    QPushButton,
-    QSplitter,
+    QLabel,
+    QLineEdit,
     QTableWidgetItem,
+    QTabWidget,
     QTextBrowser,
     QVBoxLayout,
     QWidget,
@@ -22,10 +24,10 @@ from ignite_live.controller import Controller
 from ignite_live.core.seasons import SEASONAL, SEASONAL_LABEL
 from ignite_live.overlay.server import PAGES, THEMES
 from ignite_live.ui.goals import GoalsBox
-from ignite_live.ui.simulate import sample_events
+from ignite_live.ui.kit import Card, PageContainer, StatusIndicator, button, label, restyle_buttons
 from ignite_live.ui.pages.music import read_only_table
-from ignite_live.ui.pages.stream import note, scrolling
-from ignite_live.ui.flow_layout import FlowLayout
+from ignite_live.ui.simulate import sample_events
+from ignite_live.ui.theme import colors, theme_changed
 
 DESCRIPTIONS = {
     "nowplaying": (
@@ -113,94 +115,203 @@ OPTIONS = {
 TESTABLE = ("alerts", "chat", "goals", "leaderboard", "game")
 
 
+class CanvasPreview(QFrame):
+    """The overlay's Browser Source, drawn to scale: how much of a 1080p canvas it takes. A real look at it is a
+    click away (Preview with Sample Data) — Ignite doesn't embed a browser, so this doesn't pretend to."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setObjectName("inset")
+        self.setMinimumHeight(170)
+        self.size_ = (0, 0)
+        self.name = ""
+
+    def set_overlay(self, name: str, width: int, height: int) -> None:
+        self.name, self.size_ = name, (width, height)
+        self.update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802 - Qt override
+        super().paintEvent(event)
+        p = colors()
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        area = QRectF(self.rect()).adjusted(16, 16, -16, -30)
+        canvas_w, canvas_h = 1920, 1080
+        scale = min(area.width() / canvas_w, area.height() / canvas_h)
+        canvas = QRectF(0, 0, canvas_w * scale, canvas_h * scale)
+        canvas.moveCenter(area.center())
+        painter.setPen(QPen(QColor(p.divider), 1, Qt.PenStyle.DashLine))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(canvas)
+        width, height = self.size_
+        if width and height:
+            box = QRectF(0, 0, min(width, canvas_w) * scale, min(height, canvas_h) * scale)
+            box.moveCenter(canvas.center())
+            painter.setPen(QPen(QColor(p.accent), 1.5))
+            painter.setBrush(QColor(p.selected))
+            painter.drawRoundedRect(box, 4, 4)
+            painter.setPen(QColor(p.text))
+            painter.drawText(box, Qt.AlignmentFlag.AlignCenter, self.name)
+        painter.setPen(QColor(p.text_muted))
+        small = self.font()
+        small.setPixelSize(11)
+        painter.setFont(small)
+        painter.drawText(QRectF(self.rect()).adjusted(16, 0, -16, -8), Qt.AlignmentFlag.AlignBottom
+                         | Qt.AlignmentFlag.AlignHCenter, f"{width} × {height} on a 1920 × 1080 canvas")
+
+
 class OverlaysPage(QWidget):
+    """Overlays: every Browser Source Ignite serves, whether it's open in OBS, and its link and options; then the
+    goal bars and chat games those overlays show."""
+
     def __init__(self, controller: Controller) -> None:
         super().__init__()
         self.controller = controller
-        layout = scrolling(self)
+        self.setObjectName("page")
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        self.tabs = QTabWidget()
+        self.tabs.setDocumentMode(True)
+        self.tabs.setStyleSheet("QTabWidget::pane { border: none; } QTabWidget::tab-bar { left: 24px; } QTabBar { margin-top: 8px; }")
+        outer.addWidget(self.tabs)
+        self.tabs.addTab(self._overlays_tab(), "Overlays")
+        goals = PageContainer()
+        self.goals_card = Card("Goals", icon="target")
+        self.goals = GoalsBox(controller)
+        self.goals_card.body.addWidget(self.goals)
+        goals.add(self.goals_card)
+        goals.finish()
+        self.tabs.addTab(goals, "Goals")
+        from ignite_live.ui.pages.games import GamesPage
 
-        theme_box = QGroupBox("Theme")
-        form = QFormLayout(theme_box)
+        self.games = GamesPage(controller)
+        self.tabs.addTab(self.games, "Chat Games")
+        controller.settings_changed.connect(self._settings)
+        theme_changed().connect(self._restyle)
+        self._status_timer = QTimer(self, interval=3000)
+        self._status_timer.timeout.connect(self._statuses)
+        self._fill_urls()
+        self.table.selectRow(0)
+        self._restyle()
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt override
+        super().showEvent(event)
+        self._status_timer.start()
+
+    def hideEvent(self, event) -> None:  # noqa: N802 - Qt override
+        self._status_timer.stop()
+        super().hideEvent(event)
+
+    def show_tab(self, name: str) -> None:
+        self.tabs.setCurrentIndex({"overlays": 0, "goals": 1, "games": 2}.get(name, 0))
+
+    def _overlays_tab(self) -> QWidget:
+        page = PageContainer()
+        # Look: applies to every overlay.
+        self.theme_box = Card("Look", icon="palette")
+        look = QHBoxLayout()
+        look.setSpacing(8)
+        look.addWidget(label("Overlay theme", "muted"))
         self.theme = QComboBox()
         for key, name in {SEASONAL: SEASONAL_LABEL, **THEMES}.items():
             self.theme.addItem(name, key)
-        self.theme.setCurrentIndex(max(0, self.theme.findData(controller.settings.overlay_theme)))
+        self.theme.setCurrentIndex(max(0, self.theme.findData(self.controller.settings.overlay_theme)))
         self.theme.activated.connect(self._theme_chosen)
-        gallery = QPushButton("Browse Themes…")
-        gallery.setToolTip("Every theme side by side with sample songs and chat; pick one there")
-        gallery.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(controller.overlay.url("gallery"))))
-        theme_row = QHBoxLayout()
-        theme_row.addWidget(self.theme, 1)
-        theme_row.addWidget(gallery)
-        form.addRow("Overlay theme:", theme_row)
-        form.addRow(note("Applies to every overlay at once, live. To give one overlay its own theme, choose it "
-                         "under “Theme for this URL” before copying the URL."))
-        layout.addWidget(theme_box)
+        look.addWidget(self.theme, 1)
+        self.gallery = button("Browse Themes", "palette", tip="Every theme side by side with sample songs and chat")
+        self.gallery.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(self.controller.overlay.url("gallery"))))
+        self.reload = button("Reload in OBS", "refresh-cw", tip="Reload every Ignite overlay in OBS (F5)")
+        self.reload.clicked.connect(self.controller.refresh_overlays)
+        self.add_all = button("Add All to OBS", "plus", kind="primary", tip="Choose a scene, and add every overlay to it")
+        self.add_all.clicked.connect(lambda: self.window().open_add_overlays())
+        for widget in (self.gallery, self.reload, self.add_all):
+            look.addWidget(widget)
+        self.theme_box.body.addLayout(look)
+        self.theme_box.body.addWidget(label("Applies to every overlay at once, live. To give one overlay its own "
+                                            "theme, pick it for that overlay's link below.", "muted", wrap=True))
+        page.add(self.theme_box)
 
-        split = QSplitter(Qt.Orientation.Vertical)
-        list_box = QGroupBox("Overlays")
-        list_layout = QVBoxLayout(list_box)
-        self.table = read_only_table(["Overlay", "Suggested size", "URL"])
+        columns = QHBoxLayout()
+        columns.setSpacing(16)
+        self.list_box = Card("Overlays", icon="layers", padded=False)
+        self.table = read_only_table(["Overlay", "Status", "Size"])
         self.table.setSelectionMode(self.table.SelectionMode.SingleSelection)
+        self.table.setShowGrid(False)
+        self.table.setStyleSheet("QTableView { border: none; }")
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self.table.setRowCount(len(PAGES))
-        for row, (page, (title, width, height)) in enumerate(PAGES.items()):
+        for row, (page_key, (title, width, height)) in enumerate(PAGES.items()):
             name = QTableWidgetItem(title)
-            name.setData(Qt.ItemDataRole.UserRole, page)
+            name.setData(Qt.ItemDataRole.UserRole, page_key)
             self.table.setItem(row, 0, name)
-            self.table.setItem(row, 1, QTableWidgetItem(f"{width} × {height}"))
-            self.table.setItem(row, 2, QTableWidgetItem(""))
+            self.table.setItem(row, 1, QTableWidgetItem(""))
+            self.table.setItem(row, 2, QTableWidgetItem(f"{width} × {height}"))
         self.table.itemSelectionChanged.connect(self._selected)
-        list_layout.addWidget(self.table, 1)
+        self.table.setMinimumHeight(420)
+        self.list_box.body.addWidget(self.table, 1)
+        columns.addWidget(self.list_box, 2)
 
+        detail = QVBoxLayout()
+        detail.setSpacing(16)
+        self.details_box = Card("Overlay", icon="video")
+        self.status = StatusIndicator("", "muted")
+        self.details_box.add_header_widget(self.status)
+        url_row = QHBoxLayout()
+        self.url = QLineEdit()
+        self.url.setReadOnly(True)
+        self.url.setAccessibleName("Browser Source URL")
+        copy = button("Copy URL", "copy", tip="Paste it into a Browser Source in OBS")
+        copy.clicked.connect(self._copy)
+        url_row.addWidget(self.url, 1)
+        url_row.addWidget(copy)
+        self.details_box.body.addWidget(label("Browser Source URL", "caption"))
+        self.details_box.body.addLayout(url_row)
+        theme_row = QHBoxLayout()
+        theme_row.addWidget(label("Theme for this URL", "muted"))
         self.url_theme = QComboBox()
         self.url_theme.addItem("Follow app setting", "")
         for key, name in THEMES.items():
             self.url_theme.addItem(name, key)
         self.url_theme.currentIndexChanged.connect(lambda _: self._fill_urls())
-        copy = QPushButton("Copy URL")
-        copy.clicked.connect(self._copy)
-        preview = QPushButton("Preview with Sample Data")
-        preview.setToolTip("Opens this overlay in your browser with fake songs and chat, so you can see it without going live")
-        preview.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(self._url(self._page()) + "&demo=1")))
-        add = QPushButton("Add to OBS…")
-        add.setToolTip("Add this overlay (or tick more, or all) to an OBS scene")
+        theme_row.addWidget(self.url_theme, 1)
+        self.details_box.body.addLayout(theme_row)
+        self.preview_area = CanvasPreview()
+        self.details_box.body.addWidget(self.preview_area)
+        buttons_row = QHBoxLayout()
+        buttons_row.setSpacing(8)
+        add = button("Add to OBS", "plus", kind="primary", tip="Add this overlay (or tick more) to an OBS scene")
         add.clicked.connect(lambda: self.window().open_add_overlays([self._page()]))
-        add_all = QPushButton("Add All to OBS…")
-        add_all.clicked.connect(lambda: self.window().open_add_overlays())
-        self.test = QPushButton("Send Test")
+        preview = button("Preview with Sample Data", "external-link",
+                         tip="Opens this overlay in your browser with sample songs and chat")
+        preview.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(self._url(self._page()) + "&demo=1")))
+        self.test = button("Send Test", "flask")
         self.test.clicked.connect(self._send_test)
+        for widget in (add, preview, self.test):
+            buttons_row.addWidget(widget)
+        buttons_row.addStretch(1)
+        self.details_box.body.addLayout(buttons_row)
         self.row_buttons = [copy, preview, self.test, add]
-        self.add_all = add_all
-        row = FlowLayout()  # Wraps in a narrow window rather than cutting off the buttons.
-        theme_label = note("Theme for this URL:")
-        theme_label.setWordWrap(False)
-        row.addWidget(theme_label)
-        row.addWidget(self.url_theme)
-        for widget in self.row_buttons:
-            row.addWidget(widget)
-        row.addWidget(add_all)
-        list_layout.addLayout(row)
-        split.addWidget(list_box)
-        split.addWidget(GoalsBox(controller))
+        self.description = QLabel()
+        self.description.setWordWrap(True)
+        self.description.setTextFormat(Qt.TextFormat.RichText)
+        self.details_box.body.addWidget(self.description)
+        detail.addWidget(self.details_box)
 
-        details = QGroupBox("Details")
-        details_layout = QVBoxLayout(details)
+        self.options_box = Card("URL options", icon="sliders")
         self.details = QTextBrowser()
         self.details.setOpenLinks(False)
-        details_layout.addWidget(self.details)
-        split.addWidget(details)
-        split.setStretchFactor(0, 3)
-        split.setStretchFactor(1, 2)
-        split.setStretchFactor(2, 2)
-        layout.addWidget(split, 1)
-
-        controller.settings_changed.connect(self._settings)
-        self._fill_urls()
-        self.table.selectRow(0)
+        self.details.setMinimumHeight(160)
+        self.details.setFrameShape(QFrame.Shape.NoFrame)
+        self.options_box.body.addWidget(self.details)
+        detail.addWidget(self.options_box)
+        detail.addStretch(1)
+        columns.addLayout(detail, 3)
+        page.add_layout(columns)
+        page.finish()
+        return page
 
     def _page(self) -> str:
         items = self.table.selectedItems()
@@ -210,10 +321,20 @@ class OverlaysPage(QWidget):
         return self.controller.overlay.url(page, self.url_theme.currentData() or "")
 
     def _fill_urls(self) -> None:
+        self._selected()
+
+    def _statuses(self) -> None:
+        open_now = self.controller.overlay.open_pages()
+        p = colors()
         for row in range(self.table.rowCount()):
             page = self.table.item(row, 0).data(Qt.ItemDataRole.UserRole)
-            self.table.item(row, 2).setText(self._url(page))
-        self._selected()
+            item = self.table.item(row, 1)
+            on = page in open_now
+            item.setText("Open in OBS" if on else "Not open")
+            item.setForeground(QColor(p.healthy if on else p.text_muted))
+        page = self._page()
+        on = page in open_now
+        self.status.set("Open in OBS" if on else "Not open in OBS", "healthy" if on else "muted")
 
     def _selected(self) -> None:
         has = bool(self.table.selectedItems())
@@ -225,16 +346,19 @@ class OverlaysPage(QWidget):
         self.test.setToolTip("Send a sample event to this overlay in OBS (it doesn't count anywhere)" if testable
                              else "Use Preview with Sample Data for this overlay")
         title, width, height = PAGES[page]
-        html = [f"<h3>{title}</h3><p>{DESCRIPTIONS[page]}</p>",
-                f"<p>Suggested Browser Source size: {width} × {height}. Overlays are transparent, so place and "
-                "crop them freely in OBS.</p>"]
+        self.details_box.title.setText(title)
+        self.url.setText(self._url(page))
+        self.preview_area.set_overlay(title, width, height)
+        self.description.setText(DESCRIPTIONS[page])
+        html = []
         if OPTIONS[page]:
-            html.append("<p><b>URL options</b> (add to the end of the URL):</p><table cellpadding='3'>")
+            html.append("<p>Add to the end of the URL:</p><table cellpadding='4'>")
             html += [f"<tr><td><code>&amp;{opt}</code></td><td>{text}</td></tr>" for opt, text in OPTIONS[page]]
             html.append("</table>")
         html.append("<p>Any overlay: <code>&amp;theme=neon</code> pins its theme (" + ", ".join(THEMES) + "). "
                     "<code>&amp;demo=1</code> fills it with sample data for previews; don't use that one in OBS.</p>")
         self.details.setHtml("".join(html))
+        self._statuses()
 
     def _send_test(self) -> None:
         page = self._page()
@@ -258,3 +382,9 @@ class OverlaysPage(QWidget):
 
     def _settings(self, settings) -> None:
         self.theme.setCurrentIndex(max(0, self.theme.findData(settings.overlay_theme)))
+
+    def _restyle(self, _palette=None) -> None:
+        for card in (self.theme_box, self.list_box, self.details_box, self.options_box, self.goals_card):
+            card.restyle()
+        restyle_buttons(self.gallery, self.reload, self.add_all, *self.row_buttons)
+        self._statuses()

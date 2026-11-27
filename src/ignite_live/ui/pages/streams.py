@@ -1,4 +1,5 @@
-"""Streams tab: a report for each past stream (viewers, engagement, songs, clips)."""
+"""Analytics: your streams over a time range (totals, compared with the period before, and a trend chart),
+then a full report for each stream (viewers, engagement, songs, games, clips). From the reports Ignite saves."""
 
 from __future__ import annotations
 
@@ -8,18 +9,15 @@ from pathlib import Path
 from PySide6.QtCore import QPointF, QRectF, Qt, QUrl
 from PySide6.QtGui import QColor, QDesktopServices, QPainter, QPainterPath, QPalette, QPen
 from PySide6.QtWidgets import (
+    QComboBox,
     QFileDialog,
     QGridLayout,
-    QGroupBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
-    QPushButton,
-    QScrollArea,
-    QSplitter,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
@@ -27,10 +25,37 @@ from PySide6.QtWidgets import (
 
 from ignite_live.controller import Controller
 from ignite_live.live import analytics
+from ignite_live.ui.kit import Card, Legend, LineChart, MetricCard, PageContainer, StatTile, button, label, restyle_buttons
 from ignite_live.ui.pages.music import read_only_table
-from ignite_live.ui.pages.stream import note, scrolling
+from ignite_live.ui.pages.stream import note
+from ignite_live.ui.theme import colors, theme_changed
 
 MOMENT_COLORS = {"clip": "#7c6cff", "goal": "#59c27a", "gift": "#f5a623", "scene": "#8b9a93"}
+RANGES = ((0, "All time"), (7, "Last 7 days"), (30, "Last 30 days"), (90, "Last 90 days"))
+SUMMARY = (("streams", "radio", "Streams", "accent"), ("hours", "clock", "Hours streamed", "muted"),
+           ("average", "users", "Avg. viewers", "accent"), ("peak", "eye", "Peak viewers", "accent"),
+           ("follows", "heart", "New follows", "live"), ("coins", "coins", "Coins", "warning"))
+TREND_METRICS = {
+    "viewers": ("Viewers", (("Avg. viewers", "average_viewers"), ("Peak viewers", "peak_viewers"))),
+    "growth": ("Follows and shares", (("Follows", "follows"), ("Shares", "shares"))),
+    "chat": ("Comments and likes", (("Comments", "comments"), ("Likes", "likes"))),
+    "gifts": ("Coins and gifts", (("Coins", "coins"), ("Gifts", "gifts"))),
+}
+
+
+class Section(QWidget):
+    """A titled part of a report: a heading and its content, without another box around it."""
+
+    def __init__(self, title: str) -> None:
+        super().__init__()
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 8, 0, 0)
+        layout.setSpacing(8)
+        layout.addWidget(label(title, "cardTitle"))
+        self.body = layout
+
+    def restyle(self) -> None:
+        pass
 
 
 def _duration(minutes: float) -> str:
@@ -114,15 +139,8 @@ class Chart(QWidget):
         painter.setPen(text)
 
 
-def stat(value: str, label: str) -> QWidget:
-    box = QWidget()
-    layout = QVBoxLayout(box)
-    layout.setContentsMargins(0, 0, 12, 0)
-    number = QLabel(value)
-    number.setStyleSheet("font-size: 20px; font-weight: 700")
-    layout.addWidget(number)
-    layout.addWidget(note(label))
-    return box
+STAT_TILES = (("eye", "peak viewers"), ("chart", "average viewers"), ("heart", "new follows"),
+             ("star", "likes"), ("zap", "coins"), ("chat", "comments"))
 
 
 class StreamsPage(QWidget):
@@ -131,32 +149,86 @@ class StreamsPage(QWidget):
         self.controller = controller
         self.data: dict | None = None
         self.path: Path | None = None
-        layout = scrolling(self, QHBoxLayout)
-        split = QSplitter()
-        left = QWidget()
-        left_layout = QVBoxLayout(left)
-        left_layout.setContentsMargins(0, 0, 0, 0)
-        self.list = QListWidget()
-        self.list.currentItemChanged.connect(lambda item, _old: self._open(item))
-        left_layout.addWidget(self.list, 1)
-        folder = QPushButton("Open Streams Folder")
-        folder.clicked.connect(self._open_folder)
-        left_layout.addWidget(folder)
-        split.addWidget(left)
+        self.reports: list[tuple[Path, dict, dict]] = []  # (path, data, summary), newest first.
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        page = PageContainer()
+        outer.addWidget(page)
 
+        # Range and summary.
+        top = QHBoxLayout()
+        top.setSpacing(8)
+        self.range = QComboBox()
+        self.range.setAccessibleName("Time range")
+        for days, text in RANGES:
+            self.range.addItem(text, days)
+        self.range.currentIndexChanged.connect(lambda _i: self.refresh())
+        top.addWidget(label("Time range", "muted"))
+        top.addWidget(self.range)
+        top.addStretch(1)
+        self.export = button("Export CSV", "download", tip="Export the selected stream as a spreadsheet")
+        self.export.clicked.connect(self._export)
+        self.folder = button("Open Streams Folder", "folder-open")
+        self.folder.clicked.connect(self._open_folder)
+        top.addWidget(self.export)
+        top.addWidget(self.folder)
+        page.add_layout(top)
+        summary = QHBoxLayout()
+        summary.setSpacing(16)
+        self.summary_tiles = {key: MetricCard(icon, text, tone) for key, icon, text, tone in SUMMARY}
+        for tile in self.summary_tiles.values():
+            summary.addWidget(tile, 1)
+        page.add_layout(summary)
+
+        # Over time.
+        self.trend_card = Card("Performance over time", icon="trending-up")
+        self.trend_metric = QComboBox()
+        self.trend_metric.setAccessibleName("Metric")
+        for key, (text, _series) in TREND_METRICS.items():
+            self.trend_metric.addItem(text, key)
+        self.trend_metric.currentIndexChanged.connect(lambda _i: self._fill_trend())
+        self.trend_card.add_header_widget(self.trend_metric)
+        self.trend_legend_row = QHBoxLayout()
+        self.trend_legend_row.addStretch(1)
+        self.trend_card.body.addLayout(self.trend_legend_row)
+        self.trend_chart = LineChart("No streams in this range yet. A report is saved each time you stream.")
+        self.trend_chart.setMinimumHeight(220)
+        self.trend_card.body.addWidget(self.trend_chart)
+        page.add(self.trend_card)
+
+        # Each stream.
+        split = QHBoxLayout()
+        split.setSpacing(16)
+        self.list_card = Card("Streams", icon="radio", padded=False)
+        self.list = QListWidget()
+        self.list.setObjectName("overlayList")
+        self.list.setMinimumWidth(260)
+        self.list.currentItemChanged.connect(lambda item, _old: self._open(item))
+        self.list_card.body.addWidget(self.list, 1)
+        self.list_card.setFixedWidth(300)
+        split.addWidget(self.list_card)
+        self.report_card = Card("Report", icon="file-text")
         self.report = QWidget()
         self.report_layout = QVBoxLayout(self.report)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setWidget(self.report)
-        split.addWidget(scroll)
-        split.setStretchFactor(0, 1)
-        split.setStretchFactor(1, 3)
-        split.setSizes([260, 780])
-        layout.addWidget(split)
+        self.report_layout.setContentsMargins(0, 0, 0, 0)
+        self.report_card.body.addWidget(self.report)
+        split.addWidget(self.report_card, 1)
+        page.add_layout(split)
+        page.finish()
         self._build_report()
         controller.stream_report_ready.connect(lambda path: self.refresh(select=path))
+        theme_changed().connect(self._restyle)
         self.refresh()
+        self._restyle()
+
+    def _restyle(self, _palette=None) -> None:
+        for card in (self.drops_card, self.songs_card, self.games_box, self.clips_card, self.trend_card,
+                     self.list_card, self.report_card):
+            card.restyle()
+        for tile in [*self.stat_tiles, *self.summary_tiles.values()]:
+            tile.restyle()
+        restyle_buttons(self.export, self.folder, self.delete)
+        self._fill_trend()
 
     def _build_report(self) -> None:
         r = self.report_layout
@@ -164,36 +236,41 @@ class StreamsPage(QWidget):
         self.title.setStyleSheet("font-size: 16px; font-weight: 600")
         r.addWidget(self.title)
         self.stats = QGridLayout()
+        self.stats.setHorizontalSpacing(8)
+        self.stats.setVerticalSpacing(8)
+        STATS_PER_ROW = 3
+        self.stat_tiles = [StatTile(icon, label) for icon, label in STAT_TILES]
+        for index, tile in enumerate(self.stat_tiles):
+            self.stats.addWidget(tile, index // STATS_PER_ROW, index % STATS_PER_ROW)
         r.addLayout(self.stats)
         self.chart = Chart()
         r.addWidget(self.chart)
         r.addWidget(note("Line: viewers. Bars: comments and gifts per minute. Ticks: clips (orange), goals (green), "
                          "big gifts (amber), scene changes (grey)."))
 
-        drops_box = QGroupBox("When viewers left")
+        self.drops_card = Section("When viewers left")
         self.drops = QLabel()
         self.drops.setWordWrap(True)
         self.drops.setTextFormat(Qt.TextFormat.RichText)
-        QVBoxLayout(drops_box).addWidget(self.drops)
-        r.addWidget(drops_box)
+        self.drops_card.body.addWidget(self.drops)
+        r.addWidget(self.drops_card)
 
-        songs_box = QGroupBox("Songs")
-        songs_layout = QVBoxLayout(songs_box)
-        songs_layout.addWidget(note("Chat, likes and coins per minute while each song played. "
-                                    "Engagement compares chat and likes with the rest of the stream: 1.0× is usual."))
+        self.songs_card = Section("Songs")
+        self.songs_card.body.addWidget(note("Chat, likes and coins per minute while each song played. "
+                                            "Engagement compares chat and likes with the rest of the stream: "
+                                            "1.0× is usual."))
         self.songs = read_only_table(["Started", "Song", "Requested by", "Chat/min", "Likes/min", "Coins", "Engagement"])
         self.songs.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.songs.setMinimumHeight(180)
-        songs_layout.addWidget(self.songs)
-        r.addWidget(songs_box)
+        self.songs_card.body.addWidget(self.songs)
+        r.addWidget(self.songs_card)
 
-        self.games_box = QGroupBox("Games")
-        games_layout = QVBoxLayout(self.games_box)
-        games_layout.addWidget(note("The same for each game that ran (Games tab)."))
+        self.games_box = Section("Games")
+        self.games_box.body.addWidget(note("The same for each game that ran (Games tab)."))
         self.games = read_only_table(["Started", "Game", "Chat/min", "Likes/min", "Coins", "Engagement"])
         self.games.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.games.setMinimumHeight(120)
-        games_layout.addWidget(self.games)
+        self.games_box.body.addWidget(self.games)
         r.addWidget(self.games_box)
 
         people = QHBoxLayout()
@@ -205,37 +282,42 @@ class StreamsPage(QWidget):
             people.addWidget(table)
         r.addLayout(people)
 
-        clips_box = QGroupBox("Clips")
-        clips_layout = QVBoxLayout(clips_box)
+        self.clips_card = Section("Clips")
         self.clips = read_only_table(["At", "Why", "File"])
         self.clips.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self.clips.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
         self.clips.itemDoubleClicked.connect(self._open_clip)
         self.clips.setMinimumHeight(120)
-        clips_layout.addWidget(self.clips)
-        clips_layout.addWidget(note("Double-click a clip to open it."))
-        r.addWidget(clips_box)
+        self.clips_card.body.addWidget(self.clips)
+        self.clips_card.body.addWidget(note("Double-click a clip to open it."))
+        r.addWidget(self.clips_card)
 
         actions = QHBoxLayout()
         actions.addStretch(1)
-        self.export = QPushButton("Export CSV…")
-        self.export.clicked.connect(self._export)
-        self.delete = QPushButton("Delete Report…")
+        self.delete = button("Delete Report", "trash", kind="danger", tip="Delete this stream's report (clips stay)")
         self.delete.clicked.connect(self._delete)
-        actions.addWidget(self.export)
         actions.addWidget(self.delete)
         r.addLayout(actions)
         r.addStretch(1)
 
     def refresh(self, select: Path | None = None) -> None:
         current = select or self.path
+        days = self.range.currentData()
+        now = time.time()
+        everything = []
+        for path in self.controller.saved_streams():
+            data = analytics.load(path)
+            if data is not None:
+                everything.append((path, data, analytics.summary(data)))
+        start = now - days * 86400 if days else 0
+        self.reports = [r for r in everything if r[1]["started"] >= start]
+        before = [r for r in everything if days and start - days * 86400 <= r[1]["started"] < start]
+        self._fill_summary(self.reports, before if days else None)
+        self._fill_trend()
         self.list.blockSignals(True)
         self.list.clear()
         chosen = None
-        for path in self.controller.saved_streams():
-            data = analytics.load(path)
-            if data is None:
-                continue
+        for path, data, _summary in self.reports:
             item = QListWidgetItem(stream_label(data))
             item.setData(Qt.ItemDataRole.UserRole, str(path))
             self.list.addItem(item)
@@ -252,6 +334,48 @@ class StreamsPage(QWidget):
         else:
             self._show(None, None)
 
+    def _fill_summary(self, reports: list, before: list | None) -> None:
+        """Totals for the range, each compared with the period before it (when there is one)."""
+
+        def totals(rows: list) -> dict:
+            hours = sum(s["duration_min"] for _p, _d, s in rows) / 60
+            average = sum(s["average_viewers"] for _p, _d, s in rows) / len(rows) if rows else 0
+            return {"streams": len(rows), "hours": hours, "average": average,
+                    "peak": max((s["peak_viewers"] for _p, _d, s in rows), default=0),
+                    "follows": sum(s["follows"] for _p, _d, s in rows), "coins": sum(s["coins"] for _p, _d, s in rows)}
+
+        now, then = totals(reports), totals(before) if before is not None else None
+        text = {"streams": f"{now['streams']:,}", "hours": f"{now['hours']:.1f} h", "average": f"{now['average']:,.0f}",
+                "peak": f"{now['peak']:,}", "follows": f"{now['follows']:,}", "coins": f"{now['coins']:,}"}
+        for key, tile in self.summary_tiles.items():
+            tile.set_value(text[key] if reports else "–")
+            if then is None or not then["streams"] or not reports:
+                tile.set_trend("")
+                continue
+            old, new = then[key], now[key]
+            if not old:
+                tile.set_trend("new" if new else "")
+            else:
+                change = (new - old) / old * 100
+                tile.set_trend(f"{'+' if change >= 0 else '−'}{abs(change):.0f}%")
+            tile.setToolTip(f"{tile.accessibleName()}: compared with the {self.range.currentText().lower()} before")
+
+    def _fill_trend(self) -> None:
+        key = self.trend_metric.currentData() or "viewers"
+        _text, series = TREND_METRICS[key]
+        rows = list(reversed(self.reports))  # Oldest first, left to right.
+        labels = [time.strftime("%b %d", time.localtime(d["started"])).replace(" 0", " ") for _p, d, _s in rows]
+        p = colors()
+        palette = (p.accent, p.healthy)
+        data = [(name, palette[i], [float(s[field]) for _p, _d, s in rows]) for i, (name, field) in enumerate(series)]
+        self.trend_chart.set_data(labels, data)
+        while self.trend_legend_row.count() > 1:
+            item = self.trend_legend_row.takeAt(1)
+            if item.widget():
+                item.widget().hide()  # Off screen now, not when the deletion gets round to it.
+                item.widget().deleteLater()
+        self.trend_legend_row.addWidget(Legend([(name, ("accent", "healthy")[i]) for i, (name, _f) in enumerate(series)]))
+
     def _open(self, item: QListWidgetItem | None) -> None:
         if item is None:
             return
@@ -262,12 +386,11 @@ class StreamsPage(QWidget):
         self.path, self.data = path, data
         self.export.setEnabled(data is not None)
         self.delete.setEnabled(data is not None)
-        while self.stats.count():
-            old = self.stats.takeAt(0).widget()
-            old.hide()  # Out of the layout but still drawn until Qt deletes it.
-            old.deleteLater()
         if data is None:
             self.title.setText("No streams yet")
+            for tile in self.stat_tiles:
+                tile.set_value("–")
+                tile.setToolTip("")
             self.chart.set_data({})
             self.drops.setText("A report is recorded every time OBS streams. It shows up here when you stop.")
             for table in (self.songs, self.games, self.gifters, self.chatters, self.clips):
@@ -275,16 +398,14 @@ class StreamsPage(QWidget):
             return
         self.title.setText(stream_label(data).replace("\n", " · ") + (f" · {data['title']}" if data.get("title") else ""))
         total = analytics.summary(data)
-        tiles = [
-            (f"{total['peak_viewers']:,}", f"peak viewers at {analytics.clock(total['peak_at'])}"),
-            (f"{total['average_viewers']:,}", "average viewers"),
-            (f"{total['follows']:,}", "new follows"),
-            (f"{total['likes']:,}", "likes"),
-            (f"{total['coins']:,}", f"coins from {total['gifts']:,} gifts"),
-            (f"{total['comments']:,}", "comments"),
-        ]
-        for column, (value, label) in enumerate(tiles):
-            self.stats.addWidget(stat(value, label), 0, column)
+        values = (f"{total['peak_viewers']:,}", f"{total['average_viewers']:,}", f"{total['follows']:,}",
+                 f"{total['likes']:,}", f"{total['coins']:,}", f"{total['comments']:,}")
+        tips = (f"Peak viewers, at {analytics.clock(total['peak_at'])}", "", "", "",
+               f"Coins, from {total['gifts']:,} gifts", "")
+        for tile, value, tip in zip(self.stat_tiles, values, tips):
+            tile.set_value(value)
+            if tip:
+                tile.setToolTip(tip)
         self.chart.set_data(data)
 
         drops = analytics.drops(data)

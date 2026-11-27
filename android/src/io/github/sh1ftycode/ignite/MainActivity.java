@@ -42,13 +42,13 @@ public class MainActivity extends Activity {
     private static final String PREFS = "ignite";
     private static final String SERVER = "server";
     private static final String APP_SCHEME = "ignite-app";  // The dashboard's "Server" link: ignite-app:server.
-    private static final int WINDOW = Color.rgb(0x0E, 0x10, 0x15);
-    private static final int PANEL = Color.rgb(0x16, 0x19, 0x20);
-    private static final int RAISED = Color.rgb(0x1E, 0x22, 0x2B);
-    private static final int TEXT = Color.rgb(0xE8, 0xEA, 0xEE);
-    private static final int MUTED = Color.rgb(0x9A, 0xA1, 0xAE);
-    private static final int ACCENT = Color.rgb(0xFF, 0x7A, 0x3D);
-    private static final int LIVE = Color.rgb(0xFF, 0x4D, 0x5E);
+    private static final int WINDOW = Color.rgb(0x0B, 0x0D, 0x12);
+    private static final int PANEL = Color.rgb(0x17, 0x1B, 0x26);
+    private static final int RAISED = Color.rgb(0x1D, 0x23, 0x30);
+    private static final int TEXT = Color.rgb(0xF1, 0xF3, 0xF9);
+    private static final int MUTED = Color.rgb(0x92, 0x99, 0xAA);
+    private static final int ACCENT = Color.rgb(0xA7, 0x8B, 0xFA);
+    private static final int LIVE = Color.rgb(0xE2, 0x55, 0x5A);
 
     private FrameLayout root;
     private WebView web;

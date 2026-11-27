@@ -38,28 +38,44 @@ class Palette:
     tiktok: str  # Chat platform pills: coloured text on a faint tint of the same colour.
     twitch: str
     youtube: str
+    # The app shell: the sidebar's own surface, and the filled buttons for the one main action on a screen
+    # (Go Live, Save Changes). ``accent`` stays for icons, active navigation, links and focus.
+    sidebar: str = ""
+    primary: str = ""
+    primary_hover: str = ""
+    primary_pressed: str = ""
+    on_primary: str = "#FFFFFF"
+
+    def __post_init__(self) -> None:
+        # Seasonal palettes predate the shell: derive what they don't set from their own colours.
+        for name, fallback in (("sidebar", self.panel), ("primary", self.accent_pressed),
+                               ("primary_hover", self.accent), ("primary_pressed", self.accent_pressed)):
+            if not getattr(self, name):
+                object.__setattr__(self, name, fallback)
 
 
 DARK = Palette(
     name="dark", dark=True,
-    window="#0E1015", panel="#161920", raised="#1E222B", divider="#262B36",
-    text="#E8EAF0", text_muted="#8B92A5", text_disabled="#646B7D",
-    accent="#FF7A3D", accent_hover="#FF9461", accent_pressed="#F0692B", accent_text="#FF7A3D", on_accent="#0E1015",
-    live="#F2425E", live_hover="#F45D75", live_pressed="#DE3550", on_live="#FFFFFF",
-    healthy="#3DD68C", warning="#F5C451",
-    panel_alt="#1A1D25", selected="#3B2925", pressed="#2E3441", handle="#262B36",
-    tiktok="#25F4EE", twitch="#A970FF", youtube="#FF4E45",
+    window="#0B0D12", panel="#151923", raised="#1B202C", divider="#282E3A",
+    text="#F1F3F9", text_muted="#9299AA", text_disabled="#5B6274",
+    accent="#A78BFA", accent_hover="#B9A3FC", accent_pressed="#9272F2", accent_text="#A78BFA", on_accent="#1B1033",
+    live="#EF4444", live_hover="#F25F5F", live_pressed="#DC2626", on_live="#FFFFFF",
+    healthy="#22C55E", warning="#EAB308",
+    panel_alt="#131721", selected="#231D3A", pressed="#232937", handle="#333B4D",
+    tiktok="#25F4EE", twitch="#9146FF", youtube="#FF4E45",
+    sidebar="#10131B", primary="#7C3AED", primary_hover="#8B4CF5", primary_pressed="#6D28D9", on_primary="#FFFFFF",
 )
 
 LIGHT = Palette(
     name="light", dark=False,
-    window="#E9ECF1", panel="#FFFFFF", raised="#F0F2F5", divider="#DCE0E7",
-    text="#161A22", text_muted="#5E6577", text_disabled="#A1A7B4",
-    accent="#FF7A3D", accent_hover="#FF9461", accent_pressed="#F0692B", accent_text="#C24E18", on_accent="#0E1015",
-    live="#E0344F", live_hover="#E84D65", live_pressed="#C92B44", on_live="#FFFFFF",
-    healthy="#17915A", warning="#A86B12",
-    panel_alt="#F7F8FA", selected="#FFEDE4", pressed="#E3E6EC", handle="#C9CED8",
-    tiktok="#0E8F8B", twitch="#7B3FE4", youtube="#D9302A",
+    window="#F4F4F8", panel="#FFFFFF", raised="#F1F1F6", divider="#E2E3EA",
+    text="#14161D", text_muted="#5C6070", text_disabled="#A3A6B4",
+    accent="#7C3AED", accent_hover="#8B4CF5", accent_pressed="#6D28D9", accent_text="#6D28D9", on_accent="#FFFFFF",
+    live="#DC2626", live_hover="#E33B3B", live_pressed="#B91C1C", on_live="#FFFFFF",
+    healthy="#16A34A", warning="#B45309",
+    panel_alt="#F8F8FB", selected="#EDE7FD", pressed="#E6E6EE", handle="#D3D4DE",
+    tiktok="#0E8F8B", twitch="#6441A5", youtube="#D9302A",
+    sidebar="#FAFAFC", primary="#7C3AED", primary_hover="#8B4CF5", primary_pressed="#6D28D9", on_primary="#FFFFFF",
 )
 
 # Holiday modes: dark palettes in seasonal colours. Same rules as Dark: one accent for the main action and

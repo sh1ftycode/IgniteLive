@@ -1,4 +1,4 @@
-"""Games tab: tug-of-war, boss fight and chat poll. One runs at a time, shown on the Game overlay."""
+"""Chat games (on the Overlays screen): tug-of-war, boss fight and chat poll. One runs at a time, shown on the Game overlay."""
 
 from __future__ import annotations
 
@@ -23,7 +23,9 @@ from PySide6.QtWidgets import (
 from ignite_live.controller import TEST_GAME_SECONDS, Controller
 from ignite_live.games.base import GAMES, IMAGE_NAME
 from ignite_live.games.manager import parse_games
-from ignite_live.ui.pages.stream import note, scrolling
+from ignite_live.ui.kit import Card, PageContainer
+from ignite_live.ui.pages.stream import note
+from ignite_live.ui.theme import theme_changed
 
 
 def _spin(value: int, low: int, high: int, suffix: str = "", special: str = "") -> QSpinBox:
@@ -49,7 +51,12 @@ class GamesPage(QWidget):
     def __init__(self, controller: Controller) -> None:
         super().__init__()
         self.controller = controller
-        layout = scrolling(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        page = PageContainer()
+        outer.addWidget(page)
+        self.card = Card("Chat games", icon="gamepad")
+        page.add(self.card, 1)
         status = QHBoxLayout()
         self.status = QLabel()
         self.status.setStyleSheet("font-weight: 600")
@@ -57,18 +64,20 @@ class GamesPage(QWidget):
         self.stop.clicked.connect(controller.stop_game)
         status.addWidget(self.status, 1)
         status.addWidget(self.stop)
-        layout.addLayout(status)
-        layout.addWidget(note("One game at a time. Show it with the <b>Game</b> overlay (Overlays tab). Rules can start "
+        self.card.body.addLayout(status)
+        self.card.body.addWidget(note("Show it with the <b>Game</b> overlay (Overlays tab). Rules can start "
                               "a game (“Start or stop a game”) and celebrate the winner (“Game ended”). Test runs a game "
                               f"for {TEST_GAME_SECONDS} s with pretend players: nothing counts for points or reports."))
         self.tabs = QTabWidget()
-        layout.addWidget(self.tabs, 1)
+        self.card.body.addWidget(self.tabs, 1)
         config = parse_games(controller.settings.games)
         self.tabs.addTab(self._tug(config["tug"]), GAMES["tug"])
         self.tabs.addTab(self._boss(config["boss"]), GAMES["boss"])
         self.tabs.addTab(self._poll(config["poll"]), GAMES["poll"])
         controller.game_changed.connect(self._game_changed)
         self._game_changed(controller.games.snapshot())
+        theme_changed().connect(self.card.restyle)
+        self.card.restyle()
 
     # Forms.
 

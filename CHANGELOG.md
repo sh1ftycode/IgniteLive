@@ -5,6 +5,21 @@ starts with its section from this file (see `.github/workflows/build.yml`).
 For versions before 1.6.1, see the
 [GitHub releases](https://github.com/sh1ftycode/IgniteLive/releases).
 
+## 1.9.0
+
+### Changed
+
+- **A new look:** the desktop app's menu bar, toolbar, docks and status bar are
+  replaced by a sidebar (Overview, Stream Control, Live Chat, Alerts,
+  Analytics, Overlays, Integrations, Settings) and a header with connection
+  and stream status, Panic, notifications and a profile menu, all built from
+  one shared component library and Lucide icon set.
+- **Overview:** a new first screen — metrics, a live OBS preview, go-live
+  controls, chat, a chart of recent streams, and recent follows/gifts/shares —
+  using only numbers Ignite already tracks.
+- **Settings:** Preferences now lives in the window instead of a separate
+  dialog.
+
 ## 1.8.6
 
 ### Changed

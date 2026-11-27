@@ -1,4 +1,4 @@
-"""Goals box on the Overlays tab: goal bars for likes, coins, follows, shares, or one gift."""
+"""Goals on the Overlays screen: goal bars for likes, coins, follows, shares, or one gift."""
 
 from __future__ import annotations
 
@@ -12,7 +12,6 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,
-    QGroupBox,
     QHeaderView,
     QLabel,
     QLineEdit,
@@ -115,11 +114,14 @@ class GoalDialog(QDialog):
         self.accept()
 
 
-class GoalsBox(QGroupBox):
+class GoalsBox(QWidget):
+    """Goal bars for the Goals overlay: the list, and add, edit, test, reset and copy-URL."""
+
     def __init__(self, controller: Controller) -> None:
-        super().__init__("Goals")
+        super().__init__()
         self.controller = controller
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(note("Goal bars for the <b>Goals</b> overlay. Each goal can also have its own URL."))
         self.table = read_only_table(["Name", "Goal", "Progress"])
         header = self.table.horizontalHeader()

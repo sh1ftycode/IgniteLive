@@ -143,8 +143,9 @@ class Settings:
     overlay_theme: str = "minimal"  # See overlay/server.py THEMES.
     ui_theme: str = "dark"  # "dark" or "light"; an old "system" follows the desktop until changed
     window_state: str = ""  # Qt saveState()/saveGeometry() of the main window, base64
-    tab_order: list[str] = field(default_factory=list)  # Page keys in the order the tabs were dragged into.
-    closed_tabs: list[str] = field(default_factory=list)  # Reopened from the View menu.
+    tab_order: list[str] = field(default_factory=list)  # Page keys, in the order they show in the sidebar.
+    closed_tabs: list[str] = field(default_factory=list)  # Hidden from the sidebar; shown again from the View menu.
+    sidebar_collapsed: bool = False  # Icon-only sidebar.
     close_to_tray: bool = True  # Closing the window keeps Ignite running in the system tray (when there is one).
     auto_update: bool = True
     # Let the web dashboard on your Ignite server (backend_url) control this app. Off until you turn it on.

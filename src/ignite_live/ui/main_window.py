@@ -1,26 +1,25 @@
-"""Main window: menu bar, toolbar, closable tabs (Stream, Music, Overlays, …, Games),
-dockable Chat / Connections / Activity panels, a status bar, and the system tray icon."""
+"""The main window: the sidebar, the header, and one screen at a time.
+
+Overview, Stream Control, Live Chat, Alerts, Analytics, Overlays, Integrations and Settings. Messages appear as
+toasts and stay in the notification centre (the header's bell); connection and streaming status live in the
+header; Panic is always one click away there. Every command keeps its keyboard shortcut (they're on the
+window, not a menu bar); the profile menu has the app-wide ones. Closing hides to the system tray.
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
-from PySide6.QtCore import QByteArray, QSize, Qt, QTimer, QUrl
-from PySide6.QtGui import QCloseEvent, QDesktopServices, QResizeEvent
+from PySide6.QtCore import QByteArray, Qt, QTimer, QUrl
+from PySide6.QtGui import QAction, QCloseEvent, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
-    QDockWidget,
     QHBoxLayout,
     QLabel,
     QMainWindow,
     QMenu,
     QMessageBox,
     QPushButton,
-    QSizePolicy,
     QStackedWidget,
     QSystemTrayIcon,
-    QTabWidget,
-    QToolBar,
     QVBoxLayout,
     QWidget,
 )
@@ -29,75 +28,47 @@ from ignite_live import __version__
 from ignite_live.controller import Controller
 from ignite_live.core import settings as settings_store
 from ignite_live.core.bundled import main_server
-from ignite_live.core.events import ConnectionState, StatusChange
 from ignite_live.core.seasons import SEASONAL
 from ignite_live.ui.actions import AppActions
-from ignite_live.ui.pages.actions import ActionsPage
-from ignite_live.ui.pages.streams import StreamsPage
-from ignite_live.ui.pages.games import GamesPage
-from ignite_live.ui.pages.viewers import ViewersPage
-from ignite_live.ui.docks import ActivityPanel, ChatPanel, ChatPopout, ConnectionsPanel, dock
-from ignite_live.integrations.obs_studio import Studio, clock
-from ignite_live.ui.pages.music import MusicPage
-from ignite_live.ui.pages.api import ApiPage
-from ignite_live.ui.pages.overlays import OverlaysPage
-from ignite_live.ui.pages.stream import StreamPage
 from ignite_live.ui.checklist import ChecklistDialog, go_live
-from ignite_live.ui.preferences import PreferencesDialog
+from ignite_live.ui.docks import ChatPopout
+from ignite_live.ui.kit import ToastHost
+from ignite_live.ui.pages.actions import ActionsPage
+from ignite_live.ui.pages.api import ApiPage
+from ignite_live.ui.pages.live_chat import LiveChatPage
+from ignite_live.ui.pages.overlays import OverlaysPage
+from ignite_live.ui.pages.overview import OverviewPage
+from ignite_live.ui.pages.settings import SettingsPage
+from ignite_live.ui.pages.stream import StreamPage
+from ignite_live.ui.pages.streams import StreamsPage
 from ignite_live.ui.profiles import ProfilesMenu
+from ignite_live.ui.shell import AppHeader, NotificationCenter
+from ignite_live.ui.sidebar import EXPANDED_WIDTH as SIDEBAR_WIDTH
+from ignite_live.ui.sidebar import NavItem, Sidebar
 from ignite_live.ui.simulate import SimulateDialog
+from ignite_live.ui.theme import apply_theme, colors, resolve_theme, theme_changed
 from ignite_live.ui.updates import UpdateBanner, UpdateButton, UpdateManager, show_notes
-from ignite_live.ui.theme import (
-    STATE_TEXT,
-    apply_theme,
-    colors,
-    resolve_theme,
-    set_live,
-    set_props,
-    state_color,
-    tabular,
-    theme_changed,
-    warn_color,
+
+# The screens, in sidebar order (Ctrl+1… follows it): key, title, Lucide icon, the header's description.
+SCREENS = (
+    ("overview", "Overview", "house", "Your stream at a glance"),
+    ("stream", "Stream Control", "radio", "Go live, choose your output and keep an eye on OBS"),
+    ("chat", "Live Chat", "message-square-more", "Chat from TikTok, Twitch and YouTube, your viewers and song requests"),
+    ("actions", "Alerts", "bell", "What happens on stream when viewers follow, gift, share or chat"),
+    ("streams", "Analytics", "chart-column", "How your streams went, from the reports Ignite saves"),
+    ("overlays", "Overlays", "layers", "Browser Sources for OBS, goal bars and chat games"),
+    ("api", "Integrations", "puzzle", "Platforms and services Ignite works with, and its links and API"),
+    ("settings", "Settings", "settings", "Preferences for Ignite on this PC"),
 )
+PAGE_TITLES = {key: title for key, title, _icon, _text in SCREENS}
+SUBTITLES = {key: text for key, _title, _icon, text in SCREENS}
+NAV_ITEMS = [NavItem(key, title, icon) for key, title, icon, _text in SCREENS]
+# Older links (the setup guide, the checklist, other callers): where those screens went.
+MOVED = {"music": ("chat", "music"), "viewers": ("chat", "viewers"), "games": ("overlays", "games"),
+         "goals": ("overlays", "goals"), "obs": ("stream", "")}
+MIN_WIDTH = 760 + SIDEBAR_WIDTH  # The screens' own minimum, plus the sidebar.
+MIN_HEIGHT = 560
 
-# Tab titles, in the default order (View → Ctrl+1… follows it too).
-PAGE_TITLES = {
-    "stream": "&Stream",
-    "music": "&Music",
-    "overlays": "&Overlays",
-    "api": "A&PI",
-    "actions": "Ac&tions",
-    "streams": "Str&eams",
-    "viewers": "Vie&wers",
-    "games": "&Games",
-}
-
-STATUS_NAMES = {
-    "tiktok": "TikTok",
-    "twitch": "Twitch",
-    "youtube": "YouTube",
-    "obs": "OBS",
-    "overlay": "Overlays",
-    "streamlabs": "Streamlabs",
-    "backend": "Server",
-    "discord": "Discord",
-    "tts": "TTS",
-    "remote": "Remote",
-    "api": "API",
-}
-# Shown in the status bar only while in use, so unused extras don't crowd it.
-OPTIONAL_STATUS = {"twitch", "youtube", "tts", "remote", "api"}
-INFO_SECONDS = 8
-ERROR_SECONDS = 20
-MIN_WIDTH, MIN_HEIGHT = 720, 480
-COMPACT_STATUS_WIDTH = 1100  # Narrower than this, the status bar shows each connection as just its dot.
-
-
-
-@dataclass
-class DockShare:
-    share: float  # Of the window's width (side panels) or height (bottom panels).
-    settled: int | None = None  # The room it last ended up with; None while a resize is pending.
 
 class MainWindow(QMainWindow):
     def __init__(self, controller: Controller) -> None:
@@ -106,32 +77,71 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Ignite")
         screen = QApplication.primaryScreen()
         room = screen.availableGeometry() if screen is not None else None
-        self.resize(min(1440, room.width()) if room else 1440, min(900, room.height()) if room else 900)
+        self.resize(min(1600, room.width()) if room else 1600, min(960, room.height()) if room else 960)
         self.setMinimumSize(MIN_WIDTH, MIN_HEIGHT)
-        self._compact_status = False
-        # Each dock's share of the window, kept as the window is resized.
-        self._dock_shares: dict[QDockWidget, DockShare] = {}
-        self.setDockOptions(QMainWindow.DockOption.AnimatedDocks | QMainWindow.DockOption.AllowTabbedDocks)
         self.chat_popout: ChatPopout | None = None
         self.simulator: SimulateDialog | None = None
         self.tray: QSystemTrayIcon | None = None
         self.quitting = False  # Closing the window only hides it to the tray, unless this is set.
         self.shut_down = False
         self.actions = AppActions(controller, self)
+        self.updates = UpdateManager(controller, self)
 
-        self.tabs = QTabWidget()
-        self.tabs.setDocumentMode(True)
-        self.tabs.setTabsClosable(True)  # Closed tabs come back from the View menu.
-        self.tabs.setMovable(True)
-        self.tabs.tabCloseRequested.connect(self.close_tab)
-        bar = self.tabs.tabBar()
-        bar.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        bar.customContextMenuRequested.connect(self._tab_menu)
-        # Panic mode banner, above the tabs.
+        # Screens.
+        self.pages: dict[str, QWidget] = {}
+        self.pages["chat"] = LiveChatPage(controller, self.actions)
+        self.chat_panel = self.pages["chat"]  # Its history seeds a newly opened pop-out.
+        self.pages["overview"] = OverviewPage(controller, self.actions, self.chat_panel.history)
+        self.pages["stream"] = StreamPage(controller, self.actions)
+        self.pages["actions"] = ActionsPage(controller)
+        self.pages["streams"] = StreamsPage(controller)
+        self.pages["overlays"] = OverlaysPage(controller)
+        self.pages["api"] = ApiPage(controller)
+        self.pages["settings"] = SettingsPage(controller, {
+            "check_updates": lambda: self.updates.check(manual=True), "whats_new": lambda: show_notes(self.updates, self),
+            "setup_guide": self.open_setup_guide, "feedback": self.open_feedback, "open_logs": self.open_logs})
+        for key in ("overview", "actions", "api"):
+            self.pages[key].open_page_requested.connect(self.open_page)
+        self._current_page_key = "overview"
+        self.empty_page = QWidget()  # Shown when every sidebar section is hidden.
+        empty = QVBoxLayout(self.empty_page)
+        empty.addStretch(1)
+        hint = QLabel("Every section is hidden. Show one from the sidebar, or:")
+        hint.setProperty("role", "muted")
+        empty.addWidget(hint, 0, Qt.AlignmentFlag.AlignHCenter)
+        reopen = QPushButton("Show All Sections")
+        reopen.clicked.connect(self.show_all_sections)
+        empty.addWidget(reopen, 0, Qt.AlignmentFlag.AlignHCenter)
+        empty.addStretch(1)
+        self.content_stack = QStackedWidget()
+        for key in PAGE_TITLES:
+            self.content_stack.addWidget(self.pages[key])
+        self.content_stack.addWidget(self.empty_page)
+
+        # Shell.
+        self.sidebar = Sidebar(NAV_ITEMS)
+        self.sidebar.page_requested.connect(self.open_page)
+        self.sidebar.hide_requested.connect(self.hide_page)
+        self.sidebar.show_all_requested.connect(self.show_all_sections)
+        self.sidebar.collapsed_changed.connect(self._sidebar_collapsed_changed)
+        self.update_button = UpdateButton(self.updates, self)
+        self.sidebar.add_footer_widget(self.update_button)
+        self.sidebar.account_clicked.connect(self._show_profile_menu)
+        self.sidebar.set_collapsed(controller.settings.sidebar_collapsed)
+        self.header = AppHeader(self.actions.panic)
+        self.header.status_clicked.connect(lambda: self.open_page("stream"))
+        self.header.chat_clicked.connect(lambda: self.open_page("api"))
+        self.notifications = NotificationCenter(self)
+        self.notifications.unread_changed.connect(self.header.bell.set_unread)
+        self.header.bell.clicked.connect(lambda: self.notifications.open_below(self.header.bell))
+        self.profile_menu = self._build_profile_menu()
+        self.header.profile.setMenu(self.profile_menu)
+
+        # Panic mode banner, under the header.
         self.panic_banner = QWidget()
         self.panic_banner.setObjectName("panicBanner")
         banner = QHBoxLayout(self.panic_banner)
-        banner.setContentsMargins(16, 8, 16, 8)
+        banner.setContentsMargins(24, 8, 24, 8)
         self.panic_label = QLabel()
         resume = QPushButton("Resume")
         resume.clicked.connect(controller.resume)
@@ -139,84 +149,54 @@ class MainWindow(QMainWindow):
         banner.addWidget(resume)
         self.panic_banner.hide()
         controller.panic_changed.connect(self._panic_changed)
-        self.pages = {
-            "stream": StreamPage(controller, self.actions),
-            "music": MusicPage(controller, self.actions),
-            "overlays": OverlaysPage(controller),
-            "api": ApiPage(controller),
-            "actions": ActionsPage(controller),
-            "streams": StreamsPage(controller),
-            "viewers": ViewersPage(controller),
-            "games": GamesPage(controller),
-        }
-        self.no_tabs = QWidget()  # Shown when every tab is closed.
-        empty = QVBoxLayout(self.no_tabs)
-        empty.addStretch(1)
-        hint = QLabel("Every tab is closed. Open one from the View menu, or:")
-        hint.setEnabled(False)
-        empty.addWidget(hint, 0, Qt.AlignmentFlag.AlignHCenter)
-        reopen = QPushButton("Reopen All Tabs")
-        reopen.clicked.connect(self.reopen_tabs)
-        empty.addWidget(reopen, 0, Qt.AlignmentFlag.AlignHCenter)
-        empty.addStretch(1)
-        self.stack = QStackedWidget()
-        self.stack.addWidget(self.tabs)
-        self.stack.addWidget(self.no_tabs)
-        self._restore_tabs()
+        self.update_banner = UpdateBanner(self.updates, self)
+
         central = QWidget()
-        central.setAutoFillBackground(True)  # The tabs sit on a panel, apart from the window background.
-        column = QVBoxLayout(central)
+        central.setObjectName("appContent")
+        root = QHBoxLayout(central)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        root.addWidget(self.sidebar)
+        column_widget = QWidget()
+        column = QVBoxLayout(column_widget)
         column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(0)
+        column.addWidget(self.header)
         column.addWidget(self.panic_banner)
-        # Updates from GitHub releases: checks start with the app (app.py), not with every window.
-        self.updates = UpdateManager(controller, self)
-        self.update_banner = UpdateBanner(self.updates, self)
         column.addWidget(self.update_banner)
-        column.addWidget(self.stack, 1)
+        column.addWidget(self.content_stack, 1)
+        root.addWidget(column_widget, 1)
         self.setCentralWidget(central)
+        self.toasts = ToastHost(central)
+        self._restore_sidebar()
 
-        # Side docks run the full height; Connections and Activity share the space under the tabs.
-        self.setCorner(Qt.Corner.BottomLeftCorner, Qt.DockWidgetArea.LeftDockWidgetArea)
-        self.setCorner(Qt.Corner.BottomRightCorner, Qt.DockWidgetArea.RightDockWidgetArea)
-        self.chat_panel = ChatPanel(controller, self.actions)
-        self.chat_dock = dock("Chat", "chatDock", self.chat_panel, self)
-        self.connections_dock = dock("Connections", "connectionsDock", ConnectionsPanel(controller), self)
-        self.activity_panel = ActivityPanel(controller)
-        self.activity_dock = dock("Activity", "activityDock", self.activity_panel, self)
-        self.docks = (self.chat_dock, self.connections_dock, self.activity_dock)
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.chat_dock)
-        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.connections_dock)
-        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.activity_dock)
-        self.tabifyDockWidget(self.connections_dock, self.activity_dock)
-        self.activity_dock.raise_()
-        self.resizeDocks([self.chat_dock], [360], Qt.Orientation.Horizontal)
-        self.resizeDocks([self.activity_dock], [180], Qt.Orientation.Vertical)
-
-        self._menus()
-        self._toolbar()
-        self._status_bar()
+        self._shortcuts()
         if QSystemTrayIcon.isSystemTrayAvailable():
             self._tray()
 
-        controller.status_changed.connect(self._status)
+        controller.status_changed.connect(lambda _change: self.header.set_connections(controller.statuses))
+        controller.studio_changed.connect(self._studio)
         controller.notice.connect(self._notice)
         controller.browser_link.connect(self._browser_link)
         controller.settings_changed.connect(self._settings_changed)
+        controller.account_changed.connect(lambda _info: self._account())
+        controller.tiktok_account_changed.connect(lambda _status: self._account())
         self._theme = controller.settings.ui_theme  # Applied by app.py at startup.
         # "Seasonal": move on to the next season or holiday when the date gets there (checked twice an hour).
         self._season_timer = QTimer(self, interval=30 * 60 * 1000)
         self._season_timer.timeout.connect(self._season_tick)
         self._season_timer.start()
         theme_changed().connect(self._restyle)
+        self.header.set_connections(controller.statuses)
+        self._studio(controller.studio)
+        self._account()
         self._restyle()
-        for change in controller.statuses.values():
-            self._status(change)
         self._restore_layout()
 
     # Construction.
 
-    def _menus(self) -> None:
+    def _shortcuts(self) -> None:
+        """Every command stays on its keyboard shortcut, with no menu bar to carry it."""
         a = self.actions
         a.preferences.triggered.connect(lambda: self.open_preferences())
         a.open_logs.triggered.connect(self.open_logs)
@@ -228,94 +208,43 @@ class MainWindow(QMainWindow):
         a.go_live = lambda: go_live(self, self.controller)
         a.check_stream.triggered.connect(lambda: ChecklistDialog(self.controller, self).exec())
         a.simulate.triggered.connect(self.open_simulator)
+        for value in vars(a).values():
+            if isinstance(value, QAction):
+                self.addAction(value)
+        for number, key in enumerate(PAGE_TITLES, 1):
+            action = QAction(PAGE_TITLES[key], self)
+            action.setShortcut(QKeySequence(f"Ctrl+{number}"))
+            action.triggered.connect(lambda _=False, k=key: self.open_page(k))
+            self.addAction(action)
+        guide = QAction("Setup Guide", self)
+        guide.setShortcut(QKeySequence("F1"))
+        guide.triggered.connect(self.open_setup_guide)
+        self.addAction(guide)
 
-        bar = self.menuBar()
-        file = bar.addMenu("&File")
-        file.addAction(a.preferences)
+    def _build_profile_menu(self) -> QMenu:
+        a = self.actions
+        menu = QMenu(self)
+        self.account_section = menu.addSection("Ignite")
+        menu.addAction("Settings", lambda: self.open_page("settings"), "Ctrl+,")
         self.profiles_menu = ProfilesMenu(self.controller, self)
-        file.addMenu(self.profiles_menu)
-        file.addAction(a.open_logs)
-        file.addSeparator()
-        file.addAction(a.quit)
-
-        stream = bar.addMenu("&Stream")
-        for item in (a.sign_in, a.sign_out, None, a.get_key, a.new_key, a.send_key, None, a.check_stream,
-                     a.toggle_stream, a.end_live, None, a.panic, None, a.refresh_outputs):
-            stream.addSeparator() if item is None else stream.addAction(item)
-
-        chat = bar.addMenu("&Chat")
-        for item in (a.connect_chat, a.disconnect_chat, None, a.clear_chats, a.popout_chat, a.lock_popout, None,
-                     a.skip_tts, a.mute_tts):
-            chat.addSeparator() if item is None else chat.addAction(item)
-
-        obs = bar.addMenu("&OBS")
-        for item in (a.toggle_record, a.pause_record, None, a.toggle_replay, a.save_replay, None,
-                     a.toggle_vertical_record, a.toggle_vertical_backtrack, a.save_vertical_clip, None,
-                     a.toggle_virtualcam, a.screenshot, None, a.refresh_overlays, a.add_all_overlays):
-            obs.addSeparator() if item is None else obs.addAction(item)
-
-        music = bar.addMenu("&Music")
-        for item in (a.play_pause, a.previous_song, a.skip, None, a.clear_queue, None, a.stop_playlist):
-            music.addSeparator() if item is None else music.addAction(item)
-
-        view = bar.addMenu("&View")
-        for number, (key, title) in enumerate(PAGE_TITLES.items(), 1):
-            action = view.addAction(title.replace("&", ""), lambda k=key: self.open_page(k))  # Reopens a closed tab.
-            action.setShortcut(f"Ctrl+{number}")
-        view.addAction("Reopen All Tabs", self.reopen_tabs)
-        view.addSeparator()
-        view.addAction(a.simulate)
-        view.addSeparator()
-        for panel in self.docks:
-            view.addAction(panel.toggleViewAction())
-        view.addSeparator()
-        view.addAction("Reset Layout", self._reset_layout)
-
-        help_menu = bar.addMenu("&Help")
-        help_menu.addAction("&Setup Guide…", self.open_setup_guide).setShortcut("F1")
-        help_menu.addAction("Check for &Updates…", lambda: self.updates.check(manual=True))
-        whats_new = help_menu.addAction("&What's New…", lambda: show_notes(self.updates, self))
+        menu.addMenu(self.profiles_menu)
+        menu.addAction(a.simulate)
+        menu.addAction("Setup Guide", self.open_setup_guide, "F1")
+        menu.addSeparator()
+        menu.addAction("Check for Updates", lambda: self.updates.check(manual=True))
+        whats_new = menu.addAction("What's New", lambda: show_notes(self.updates, self))
         whats_new.setEnabled(False)
         self.updates.changed.connect(lambda: whats_new.setEnabled(self.updates.release is not None))
-        # The Ignite server's form (web: /feedback), with this version filled in.
-        server = (self.controller.settings.backend_url or main_server()).rstrip("/")
-        if server:
-            help_menu.addAction("&Feedback && Requests…", lambda: QDesktopServices.openUrl(
-                QUrl(f"{(self.controller.settings.backend_url or main_server()).rstrip('/')}/feedback"
-                     f"?version={__version__}")))
-        help_menu.addSeparator()
-        help_menu.addAction(a.about)
+        if (self.controller.settings.backend_url or main_server()).strip():
+            menu.addAction("Feedback & Requests", self.open_feedback)
+        menu.addAction(a.open_logs)
+        menu.addAction(a.about)
+        menu.addSeparator()
+        menu.addAction(a.quit)
+        return menu
 
-    def _toolbar(self) -> None:
-        a = self.actions
-        bar = QToolBar("Main toolbar")
-        bar.setObjectName("mainToolbar")
-        bar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)  # Icons stay in the menus.
-        bar.setMovable(False)
-        # Only what's needed mid-stream; the rest is a tab or a menu away.
-        for item in (a.toggle_stream, a.toggle_record, a.save_replay, None, a.popout_chat, a.preferences):
-            bar.addSeparator() if item is None else bar.addAction(item)
-        # Panic sits apart, at the far end, in a toolbar of its own: in a narrow window the main toolbar
-        # tucks its last buttons into a » menu, and Panic must never be one of them.
-        panic_bar = QToolBar("Panic")
-        panic_bar.setObjectName("panicToolbar")
-        panic_bar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
-        panic_bar.setMovable(False)
-        gap = QWidget()
-        gap.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-        panic_bar.addWidget(gap)
-        panic_bar.addAction(a.panic)
-        # Styled in ui/theme.py: the only two filled buttons.
-        stream = bar.widgetForAction(a.toggle_stream)
-        if stream is not None:
-            set_live(stream, self.controller.obs_streaming)
-            self.controller.obs_streaming_changed.connect(lambda live: set_live(stream, live))
-        panic = panic_bar.widgetForAction(a.panic)
-        if panic is not None:
-            set_props(panic, live=True)
-        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, bar)
-        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, panic_bar)
-        self.toolbar, self.panic_toolbar = bar, panic_bar
+    def _show_profile_menu(self) -> None:
+        self.profile_menu.exec(self.sidebar.account.mapToGlobal(self.sidebar.account.rect().topRight()))
 
     def _tray(self) -> None:
         """Tray icon: click to show or hide the window; the menu has the go-live essentials."""
@@ -354,98 +283,84 @@ class MainWindow(QMainWindow):
         self.activateWindow()
 
     def quit(self) -> None:
-        """File → Quit and the tray's Quit: really close, rather than hiding to the tray."""
+        """The profile menu's Quit and the tray's: really close, rather than hiding to the tray."""
         self.quitting = True
         self.close()
-
-    def _status_bar(self) -> None:
-        # Live/recording time and stream health at a glance; empty while idle.
-        self.health_label = QLabel("")
-        self.health_label.setObjectName("healthLabel")
-        self.health_label.setTextFormat(Qt.TextFormat.RichText)
-        self.health_label.setFont(tabular(self.health_label.font()))  # Fixed-width digits: no jitter.
-        self.health_label.setContentsMargins(8, 0, 16, 0)
-        # Always there: what the update is doing, and one click to check, download or restart into it.
-        self.update_button = UpdateButton(self.updates, self)
-        self.statusBar().addPermanentWidget(self.update_button)
-        self.statusBar().addPermanentWidget(self.health_label)
-        self.controller.studio_changed.connect(self._health)
-        self.status_labels: dict[str, QLabel] = {}
-        for source, name in STATUS_NAMES.items():
-            label = QLabel(name)
-            label.setContentsMargins(4, 0, 4, 0)
-            self.statusBar().addPermanentWidget(label)
-            self.status_labels[source] = label
 
     # Navigation.
 
     def open_page(self, key: str) -> None:
-        """Pages that buttons and links refer to: tabs, the chat and OBS panels, and preferences."""
-        if key == "settings":
-            self.open_preferences()
-        elif key.startswith("prefs-"):  # e.g. "prefs-Text to speech" opens that Preferences section.
+        """Screens and the places buttons and links refer to: "stream", "prefs-Text to speech" (a Settings
+        section), "actions:activity" (a screen's tab), "checklist", "simulate", "guide"."""
+        key, _, tab = key.partition(":")
+        if key.startswith("prefs-"):
             self.open_preferences(key.removeprefix("prefs-"))
-        elif key == "simulate":
+            return
+        if key == "simulate":
             self.open_simulator()
-        elif key == "guide":
+            return
+        if key == "guide":
             self.open_setup_guide()
-        elif key == "checklist":
+            return
+        if key == "checklist":
             ChecklistDialog(self.controller, self).exec()
-        elif key == "chat":
-            self.chat_dock.show()
-            self.chat_dock.raise_()
+            return
+        if key in MOVED:
+            key, tab = MOVED[key][0], tab or MOVED[key][1]
+        key = key if key in self.pages else "overview"
+        s = self.controller.settings
+        if key in s.closed_tabs:  # Shown again from a Ctrl+N shortcut or a link.
+            s.closed_tabs = [k for k in s.closed_tabs if k != key]
+            self.sidebar.set_visible_items([*self.sidebar.visible_keys(), key])
+        page = self.pages[key]
+        if tab and hasattr(page, "show_tab"):
+            page.show_tab(tab)
+        self.content_stack.setCurrentWidget(page)
+        self.sidebar.set_current(key)
+        self._current_page_key = key
+        self.header.set_page(PAGE_TITLES[key], SUBTITLES[key])
+        self.setWindowTitle(f"Ignite — {PAGE_TITLES[key]}")
+        if key == "chat" and not tab:
             self.chat_panel.username.setFocus()
-        else:
-            key = key if key in self.pages else "stream"
-            if self.tabs.indexOf(self.pages[key]) < 0:
-                self.tabs.addTab(self.pages[key], PAGE_TITLES[key])
-                self._tabs_changed()
-            self.tabs.setCurrentWidget(self.pages[key])
 
-    # Tabs: each can be closed and dragged into a new order; both are remembered.
+    # Sidebar sections: each can be hidden; both that and their order are remembered.
 
-    def _key_of(self, page: QWidget) -> str:
-        return next(key for key, widget in self.pages.items() if widget is page)
-
-    def _restore_tabs(self) -> None:
+    def _restore_sidebar(self) -> None:
         s = self.controller.settings
         order = [key for key in s.tab_order if key in PAGE_TITLES]
         order += [key for key in PAGE_TITLES if key not in order]
-        for key in order:
-            if key not in s.closed_tabs:
-                self.tabs.addTab(self.pages[key], PAGE_TITLES[key])
-        self._tabs_changed()
+        visible = [key for key in order if key not in s.closed_tabs]
+        self.sidebar.set_visible_items(visible)
+        self.open_page(visible[0]) if visible else self._show_empty()
 
-    def close_tab(self, index: int) -> None:
-        self.tabs.removeTab(index)  # The page itself stays alive, so it keeps its state for when it comes back.
-        self._tabs_changed()
+    def hide_page(self, key: str) -> None:
+        s = self.controller.settings
+        if key not in s.closed_tabs:
+            s.closed_tabs = [*s.closed_tabs, key]
+        remaining = [k for k in self.sidebar.visible_keys() if k != key]
+        self.sidebar.set_visible_items(remaining)
+        if self.content_stack.currentWidget() is self.pages[key]:
+            self.open_page(remaining[0]) if remaining else self._show_empty()
 
-    def close_other_tabs(self, page: QWidget) -> None:
-        for index in reversed(range(self.tabs.count())):
-            if self.tabs.widget(index) is not page:
-                self.tabs.removeTab(index)
-        self._tabs_changed()
+    def show_all_sections(self) -> None:
+        s = self.controller.settings
+        s.closed_tabs = []
+        order = [key for key in s.tab_order if key in PAGE_TITLES] or list(PAGE_TITLES)
+        order += [key for key in PAGE_TITLES if key not in order]
+        self.sidebar.set_visible_items(order)
+        if self.content_stack.currentWidget() is self.empty_page:
+            self.open_page(order[0])
 
-    def reopen_tabs(self) -> None:
-        for key in PAGE_TITLES:
-            if self.tabs.indexOf(self.pages[key]) < 0:
-                self.tabs.addTab(self.pages[key], PAGE_TITLES[key])
-        self._tabs_changed()
+    def _show_empty(self) -> None:
+        self.content_stack.setCurrentWidget(self.empty_page)
+        self.header.set_page("Ignite", "")
+        self.setWindowTitle("Ignite")
 
-    def _tabs_changed(self) -> None:
-        self.stack.setCurrentWidget(self.tabs if self.tabs.count() else self.no_tabs)
+    def _sidebar_collapsed_changed(self, collapsed: bool) -> None:
+        self.controller.settings.sidebar_collapsed = collapsed
+        settings_store.save(self.controller.settings, self.controller.settings_path)
 
-    def _tab_menu(self, pos) -> None:
-        bar = self.tabs.tabBar()
-        index = bar.tabAt(pos)
-        menu = QMenu(self)
-        if index >= 0:
-            page = self.tabs.widget(index)
-            menu.addAction("Close Tab", lambda: self.close_tab(self.tabs.indexOf(page)))
-            menu.addAction("Close Other Tabs", lambda: self.close_other_tabs(page))
-            menu.addSeparator()
-        menu.addAction("Reopen All Tabs", self.reopen_tabs).setEnabled(self.tabs.count() < len(PAGE_TITLES))
-        menu.exec(bar.mapToGlobal(pos))
+    # Other windows.
 
     def open_setup_guide(self) -> None:
         from ignite_live.ui.setup_guide import SetupGuide
@@ -457,14 +372,23 @@ class MainWindow(QMainWindow):
         folder.mkdir(parents=True, exist_ok=True)
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
 
+    def open_feedback(self) -> None:
+        """The Ignite server's form (web: /feedback), with this version filled in."""
+        server = (self.controller.settings.backend_url or main_server()).rstrip("/")
+        if server:
+            QDesktopServices.openUrl(QUrl(f"{server}/feedback?version={__version__}"))
+
     def open_simulator(self) -> None:
         if self.simulator is None:
             self.simulator = SimulateDialog(self.controller, self)
         self.simulator.show()
         self.simulator.raise_()
 
-    def open_preferences(self, tab: str = "OBS") -> None:
-        PreferencesDialog(self.controller, self, tab).exec()
+    def open_preferences(self, section: str = "") -> None:
+        """Settings, open on a section (e.g. "Text to speech") when one's given."""
+        self.open_page("settings")
+        if section:
+            self.pages["settings"].show_section(section)
 
     def open_add_overlays(self, selected: list[str] | None = None) -> None:
         """Pick overlays to add to OBS; ``selected`` pre-ticks some (default: all)."""
@@ -483,7 +407,7 @@ class MainWindow(QMainWindow):
         self.chat_popout.activateWindow()
 
     def lock_chat_popout(self, locked: bool) -> None:
-        """Chat → Lock Pop-out Chat, or the tray menu: the only way back once it's click-through."""
+        """The Lock Pop-out Chat action (Live Chat's menu, or the tray): the only way back once it's click-through."""
         if self.chat_popout is not None:
             self.chat_popout.set_locked(locked)
         else:
@@ -494,38 +418,29 @@ class MainWindow(QMainWindow):
         self.actions.lock_popout.setChecked(locked)
         if locked:
             self.controller.notice.emit("info", "Pop-out chat locked: clicks go through it to your game. Unlock it "
-                                                "from Chat → Lock Pop-out Chat or the tray icon's menu.")
+                                                "from Live Chat's menu or the tray icon's menu.")
 
     # Updates.
 
-    def _status(self, change: StatusChange) -> None:
-        # A coloured dot and the name; the state and details are in the tooltip (and the Connections panel).
-        label = self.status_labels[change.source]
-        name = STATUS_NAMES[change.source]
-        lit = change.state.value in ("connected", "error")
-        dot = state_color(change.state, label).name() if lit else colors().text_disabled
-        label.setText(f'<span style="color: {dot};">●</span>' + ("" if self._compact_status else f" {name}"))
-        label.setToolTip(f"{name}: {STATE_TEXT[change.state]}" + (f"\n{change.detail}" if change.detail else ""))
-        label.setEnabled(change.state is not ConnectionState.OFFLINE)
-        label.setVisible(change.source not in OPTIONAL_STATUS or change.state is not ConnectionState.OFFLINE)
-
-    def _health(self, studio: Studio) -> None:
-        parts = []
-        health = studio.health
-        if studio.streaming:
-            parts.append(f"● LIVE {clock(health.stream_duration_ms)}")
-            if health.bitrate_kbps:
-                parts.append(f"{health.bitrate_kbps:,} kbps")
-            parts.append(f"{health.network_dropped_pct:.1f}% dropped")
-        if studio.recording:
-            parts.append(("REC paused " if studio.record_paused else "● REC ") + clock(studio.record_duration_ms))
-        # Numbers in normal text, the dot in red; all of it turns yellow only when something is wrong.
-        dot = f'<span style="color: {state_color(ConnectionState.ERROR, self.health_label).name()};">●</span> '
-        self.health_label.setText("&nbsp;&nbsp;·&nbsp;&nbsp;".join(part.replace("● ", dot) for part in parts))
+    def _studio(self, studio) -> None:
+        self.header.set_stream(studio)
         if self.tray is not None:
-            self.tray.setToolTip("  ·  ".join(["Ignite", *(part.removeprefix("● ") for part in parts)]))
-        bad = studio.streaming and (health.reconnecting or health.network_dropped_pct >= 1 or health.render_lag_pct >= 1)
-        self.health_label.setStyleSheet(f"color: {warn_color(self.health_label).name()};" if bad else "")
+            text = self.header.stream.text.text()
+            self.tray.setToolTip(f"Ignite · {text}")
+
+    def _account(self) -> None:
+        """Who's signed in: Streamlabs (the stream key) or TikTok on the server, else none."""
+        info = self.controller.account
+        tiktok = self.controller.tiktok_account
+        if info is not None:
+            name, detail = f"@{info.username}", "Streamlabs" + (" · TikTok" if tiktok.get("connected") else "")
+        elif tiktok.get("connected") and tiktok.get("username"):
+            name, detail = f"@{tiktok['username']}", "TikTok via your server"
+        else:
+            name, detail = "Not signed in", "Local only" if not self.controller.settings.backend_url else "Server set up"
+        self.sidebar.account.set_account(name, detail)
+        self.header.profile.set_name(name if name != "Not signed in" else "Ignite")
+        self.account_section.setText(name if name != "Not signed in" else "Ignite")
 
     def _panic_changed(self, on: bool) -> None:
         s = self.controller.settings
@@ -550,13 +465,15 @@ class MainWindow(QMainWindow):
         box.open()
 
     def _notice(self, level: str, text: str) -> None:
-        self.statusBar().showMessage(text, (ERROR_SECONDS if level == "error" else INFO_SECONDS) * 1000)
+        self.notifications.add(level, text)
+        self.toasts.show_message(level, text)
 
     def _settings_changed(self, settings) -> None:
         app = QApplication.instance()
         if app is not None and settings.ui_theme != self._theme:
             self._theme = settings.ui_theme
             apply_theme(app, settings.ui_theme)
+        self._account()
 
     def _season_tick(self) -> None:
         app = QApplication.instance()
@@ -568,9 +485,6 @@ class MainWindow(QMainWindow):
         p = colors()
         self.panic_banner.setStyleSheet(f"QWidget#panicBanner {{ background: {p.live}; }} "
                                         f"QLabel {{ color: {p.on_live}; font-weight: 600; }}")
-        for change in self.controller.statuses.values():
-            self._status(change)
-        self._health(self.controller.studio)
 
     def _about(self) -> None:
         QMessageBox.about(
@@ -583,86 +497,22 @@ class MainWindow(QMainWindow):
             f"Log: {settings_store.log_dir(self.controller.settings_path) / 'ignite.log'}</p>",
         )
 
-    # Resizing: the docks keep their share of the window, and the status bar condenses when narrow.
-
-    def resizeEvent(self, event: QResizeEvent) -> None:  # noqa: N802 - Qt override
-        super().resizeEvent(event)
-        compact = self.width() < COMPACT_STATUS_WIDTH
-        if compact != self._compact_status:
-            self._compact_status = compact
-            for change in self.controller.statuses.values():
-                self._status(change)
-        old = event.oldSize()
-        if self.isVisible() and old.isValid() and not old.isEmpty():
-            self._keep_dock_shares(old, event.size())
-
-    def _keep_dock_shares(self, old: QSize, new: QSize) -> None:
-        """Scale each docked panel with the window, so growing it doesn't give every pixel to the tabs and
-        shrinking it doesn't squeeze them first. A panel the user resized by hand keeps its new share."""
-        for panel in self.docks:
-            if not panel.isVisible() or panel.isFloating():
-                continue
-            across = self._across(panel)
-            before, after = (old.width(), new.width()) if across else (old.height(), new.height())
-            if before == after:
-                continue
-            extent = self._extent(panel)
-            share = self._dock_shares.get(panel)
-            if share is None or (share.settled is not None and abs(extent - share.settled) > 2):
-                share = self._dock_shares[panel] = DockShare(extent / before)  # New, or the user dragged it.
-            share.settled = None  # Until the layout has applied the new size.
-            self.resizeDocks([panel], [round(share.share * after)],
-                             Qt.Orientation.Horizontal if across else Qt.Orientation.Vertical)
-            QTimer.singleShot(0, lambda p=panel: self._dock_settled(p))
-
-    def _dock_settled(self, panel: QDockWidget) -> None:
-        """Remember the size the layout gave a panel (it may be held at its minimum), to tell our resizing
-        from the user's."""
-        share = self._dock_shares.get(panel)
-        if share is not None and share.settled is None:
-            share.settled = self._extent(panel)
-
-    def _across(self, panel: QDockWidget) -> bool:
-        return self.dockWidgetArea(panel) in (Qt.DockWidgetArea.LeftDockWidgetArea, Qt.DockWidgetArea.RightDockWidgetArea)
-
-    def _extent(self, panel: QDockWidget) -> int:
-        """The room a panel's dock area takes, as resizeDocks() measures it: with its tab bar, if tabbed."""
-        box, area = panel.geometry(), self.dockWidgetArea(panel)
-        if area == Qt.DockWidgetArea.RightDockWidgetArea:
-            return self.width() - box.left()
-        if area == Qt.DockWidgetArea.LeftDockWidgetArea:
-            return box.right() + 1
-        if area == Qt.DockWidgetArea.BottomDockWidgetArea:
-            bar = self.statusBar()
-            return (bar.geometry().top() if bar.isVisible() else self.height()) - box.top()
-        return box.height()
-
     # Window layout is remembered between runs.
 
     def _restore_layout(self) -> None:
-        self._default_state = self.saveState()
-        geometry, _, state = self.controller.settings.window_state.partition("|")
+        geometry, _, _state = self.controller.settings.window_state.partition("|")
         if geometry:
             self.restoreGeometry(QByteArray.fromBase64(geometry.encode()))
-        if state:
-            self.restoreState(QByteArray.fromBase64(state.encode()))
 
     def _reset_layout(self) -> None:
-        self.restoreState(self._default_state)
-        for panel in self.docks:
-            panel.show()
-        self.tabs.clear()  # Removes the tabs, not the pages.
-        self.reopen_tabs()
-        self.tabs.setCurrentIndex(0)
+        self.show_all_sections()
 
     def _save_layout(self) -> None:
         s = self.controller.settings
-        s.window_state = (
-            f"{bytes(self.saveGeometry().toBase64()).decode()}|{bytes(self.saveState().toBase64()).decode()}"
-        )
-        open_tabs = [self._key_of(self.tabs.widget(i)) for i in range(self.tabs.count())]
-        s.closed_tabs = [key for key in PAGE_TITLES if key not in open_tabs]
-        s.tab_order = open_tabs + s.closed_tabs
+        s.window_state = f"{bytes(self.saveGeometry().toBase64()).decode()}|"
+        visible = self.sidebar.visible_keys()
+        s.closed_tabs = [key for key in PAGE_TITLES if key not in visible]
+        s.tab_order = visible + s.closed_tabs
         settings_store.save(s, self.controller.settings_path)
 
     def closeEvent(self, event: QCloseEvent) -> None:

@@ -134,9 +134,9 @@ SOURCES = {
 }
 HIDDEN_SOURCES = set() if REMOTE_CONTROL else {"remote"}  # Not listed in the Connections panel.
 CHAT_HINTS = {
-    "tiktok": "Not connected. Add your username in the Chat panel.",
-    "twitch": "Not connected. Add your channel in the Chat panel.",
-    "youtube": "Not connected. Add your @handle in the Chat panel.",
+    "tiktok": "Not connected. Add your username in Live Chat.",
+    "twitch": "Not connected. Add your channel in Live Chat.",
+    "youtube": "Not connected. Add your @handle in Live Chat.",
 }
 OBS_RETRY_SECONDS = 5.0
 HEALTH_POLL_SECONDS = 2.0
@@ -1946,6 +1946,21 @@ class Controller(QObject):
         self._run("tiktok", client.tiktok_action, action, user_id, "", duration,
                   on_success=lambda _result: self.notice.emit("info", done.get(action, "Done.")))
 
+    def send_tiktok_chat(self, text: str) -> bool:
+        """Say ``text`` in your TikTok LIVE's chat, as you (TikTok signed in on the Ignite server's website).
+        GUI thread. False, with a notice, when that isn't set up."""
+        text = " ".join(text.split())[:150]
+        token = keychain.load(keychain.BACKEND_TOKEN)
+        if not text:
+            return False
+        if not (self.settings.backend_url and token) or not self.tiktok_account.get("connected"):
+            self.notice.emit("error", "To chat from Ignite, sign in to your Ignite server (Settings → "
+                                      "Integrations), then sign in to TikTok on its website.")
+            return False
+        client = BackendClient(self.settings.backend_url, token)
+        self._run("tiktok", client.tiktok_action, "chat", "", text)
+        return True
+
     def _tiktok_reply(self, user: ChatUser, text: str) -> None:
         """A song request's answer, said in TikTok chat as the streamer (one at a time). Asyncio loop."""
         if not self.settings.tiktok_chat_replies or user.platform != "tiktok" or self.simulating:
@@ -2333,6 +2348,19 @@ class Controller(QObject):
 
     def toggle_virtualcam(self) -> None:
         self._obs_action(lambda obs: obs.set_virtualcam(not self.studio.virtualcam))
+
+    def grab_preview(self, on_image: Callable[[bytes], None], width: int = 640, source: str = "") -> None:
+        """A frame of OBS's program scene (or ``source``, e.g. the vertical canvas's scene) for the stream
+        preview: ``on_image`` gets JPEG bytes, on the GUI thread. Quietly does nothing while OBS isn't
+        connected: the preview shows its own empty state."""
+        if self._obs is None or not self.studio.connected:
+            return
+
+        async def grab() -> bytes:
+            obs = self._require_obs()
+            return await obs.preview(source or self.studio.scene or await obs.current_scene(), width)
+
+        self.runtime.submit(grab(), on_image, lambda error: log.debug("Preview: %s", error))
 
     def take_screenshot(self) -> None:
         folder = Path(self.settings.obs_screenshot_dir or Path.home() / "Pictures" / "Ignite").expanduser()

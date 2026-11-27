@@ -401,6 +401,13 @@ class ObsClient:
             encode_total=int(data.get("outputTotalFrames") or 0),
         )
 
+    async def preview(self, source: str, width: int = 640) -> bytes:
+        """A JPEG of a scene as OBS renders it right now (for the app's stream preview)."""
+        data = await self.request("GetSourceScreenshot", {"sourceName": source, "imageFormat": "jpg",
+                                                          "imageWidth": width, "imageCompressionQuality": 70})
+        image = str(data.get("imageData") or "")
+        return base64.b64decode(image.split(",", 1)[-1]) if image else b""
+
     async def screenshot(self, source: str, path: str) -> None:
         """Save a PNG of a scene or source (the path is on the computer running OBS)."""
         await self.request("SaveSourceScreenshot",

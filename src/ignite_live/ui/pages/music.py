@@ -1,3 +1,5 @@
+"""Song requests (on the Live Chat screen): what's playing, the queue, background music and the commands."""
+
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
@@ -7,7 +9,6 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QFormLayout,
     QGridLayout,
-    QGroupBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -24,8 +25,10 @@ from PySide6.QtWidgets import (
 from ignite_live.controller import Controller, command_config
 from ignite_live.music.commands import CommandKind
 from ignite_live.ui.actions import AppActions, action_button
+from ignite_live.ui.kit import Card, PageContainer
 from ignite_live.ui.live_widgets import MusicBar
-from ignite_live.ui.pages.stream import buttons, note, scrolling
+from ignite_live.ui.pages.stream import buttons, note
+from ignite_live.ui.theme import theme_changed
 
 COMMANDS = (
     (CommandKind.REQUEST, " song - artist", "Request a song, or paste a YouTube link"),
@@ -75,13 +78,23 @@ class MusicPage(QWidget):
     def __init__(self, controller: Controller, actions: AppActions) -> None:
         super().__init__()
         self.controller = controller
-        grid = scrolling(self, QGridLayout)
+        box = QVBoxLayout(self)
+        box.setContentsMargins(0, 0, 0, 0)
+        page = PageContainer()
+        box.addWidget(page)
+        grid_holder = QWidget()
+        grid = QGridLayout(grid_holder)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(16)
+        grid.setVerticalSpacing(16)
+        page.add(grid_holder, 1)
         grid.setColumnStretch(0, 3)
         grid.setColumnStretch(1, 2)
 
         # Now playing.
-        playing = QGroupBox("Now playing")
-        form = QFormLayout(playing)
+        self.playing_box = playing = Card("Now playing", icon="music", primary=True)
+        form = QFormLayout()
+        playing.body.addLayout(form)
         self.song_title = QLabel("Nothing playing")
         self.song_title.setWordWrap(True)
         font = self.song_title.font()
@@ -107,8 +120,8 @@ class MusicPage(QWidget):
         grid.addWidget(playing, 0, 0)
 
         # Queue.
-        queue = QGroupBox("Queue")
-        layout = QVBoxLayout(queue)
+        self.queue_box = queue = Card("Queue", icon="music")
+        layout = queue.body
         self.queue = read_only_table(["#", "Title", "Channel", "Requested by", "Length"])
         header = self.queue.horizontalHeader()
         header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
@@ -135,8 +148,9 @@ class MusicPage(QWidget):
         grid.addWidget(queue, 1, 0)
 
         # Background music: a playlist, or autoplay.
-        playlist = QGroupBox("Background music")
-        form = self.background_form = QFormLayout(playlist)
+        self.playlist_box = playlist = Card("Background music", icon="music")
+        form = self.background_form = QFormLayout()
+        playlist.body.addLayout(form)
         self.playlist_link = QLineEdit(controller.settings.music_playlist_url)
         self.playlist_link.setPlaceholderText("Spotify or YouTube playlist link")
         self.playlist_link.returnPressed.connect(self._load_playlist)
@@ -168,8 +182,8 @@ class MusicPage(QWidget):
         grid.addWidget(playlist, 0, 1)
 
         # Chat commands.
-        commands = QGroupBox("Chat commands")
-        layout = QVBoxLayout(commands)
+        self.commands_box = commands = Card("Chat commands", icon="chat")
+        layout = commands.body
         table = read_only_table(["Command", "What it does"])
         table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
@@ -193,6 +207,12 @@ class MusicPage(QWidget):
         self._queue(controller.queue_snapshot)
         self._playlist(controller.playlist_info)
         self.radio_state.setText(controller.radio_status)
+        theme_changed().connect(self._restyle)
+        self._restyle()
+
+    def _restyle(self, _palette=None) -> None:
+        for card in (self.playing_box, self.queue_box, self.playlist_box, self.commands_box):
+            card.restyle()
 
     def _commands(self, settings) -> None:
         rows = command_rows(settings)

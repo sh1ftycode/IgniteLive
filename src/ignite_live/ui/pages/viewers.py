@@ -1,4 +1,4 @@
-"""Viewers tab: loyalty points (how they're earned and spent) and everyone who's been in chat."""
+"""Viewers & Points (on the Live Chat screen): loyalty points (how they're earned and spent) and everyone who's been in chat."""
 
 from __future__ import annotations
 
@@ -9,7 +9,6 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox,
     QFormLayout,
-    QGroupBox,
     QHBoxLayout,
     QHeaderView,
     QInputDialog,
@@ -29,8 +28,10 @@ from ignite_live.actions.rules import SOUND_NAME
 from ignite_live.controller import Controller, command_config
 from ignite_live.core.events import PLATFORMS
 from ignite_live.music.commands import CommandKind
+from ignite_live.ui.kit import Card
 from ignite_live.ui.pages.music import read_only_table
-from ignite_live.ui.pages.stream import note, scrolling
+from ignite_live.ui.pages.stream import note
+from ignite_live.ui.theme import theme_changed
 from ignite_live.viewers.points import ACTIVE_EVERY_MIN, ACTIVE_WINDOW_MIN, CHAT_COOLDOWN_S, config_to_dict, parse_config
 
 
@@ -49,16 +50,20 @@ class ViewersPage(QWidget):
     def __init__(self, controller: Controller) -> None:
         super().__init__()
         self.controller = controller
-        layout = scrolling(self, QHBoxLayout)
+        box = QVBoxLayout(self)
+        box.setContentsMargins(24, 16, 24, 24)
         self.split = split = QSplitter()  # Side by side, or stacked when the window is too narrow for both.
-        layout.addWidget(split)
+        split.setHandleWidth(16)
+        split.setStyleSheet("QSplitter::handle { background: transparent; }")
+        box.addWidget(split, 1)
 
         # Points settings.
         settings = QWidget()
         side = QVBoxLayout(settings)
         side.setContentsMargins(0, 0, 0, 0)
-        box = QGroupBox("Loyalty points")
-        form = QFormLayout(box)
+        self.points_box = box = Card("Loyalty points", icon="star", primary=True)
+        form = QFormLayout()
+        box.body.addLayout(form)
         c = parse_config(controller.settings.points)
         self.enabled = QCheckBox("Viewers earn and spend points")
         self.enabled.setChecked(c.enabled)
@@ -115,9 +120,8 @@ class ViewersPage(QWidget):
         split.addWidget(settings)
 
         # Viewers.
-        people = QWidget()
-        right = QVBoxLayout(people)
-        right.setContentsMargins(0, 0, 0, 0)
+        self.people_box = people = Card("Viewers", icon="people")
+        right = people.body
         search_row = QHBoxLayout()
         self.search = QLineEdit()
         self.search.setPlaceholderText("Search viewers")
@@ -174,6 +178,12 @@ class ViewersPage(QWidget):
         split.setStretchFactor(1, 3)
         self._fill_sounds(c)
         self.refresh()
+        theme_changed().connect(self._restyle)
+        self._restyle()
+
+    def _restyle(self, _palette=None) -> None:
+        self.points_box.restyle()
+        self.people_box.restyle()
 
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt override
         super().resizeEvent(event)

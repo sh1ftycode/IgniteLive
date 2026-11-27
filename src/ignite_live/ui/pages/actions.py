@@ -1,12 +1,13 @@
-"""Actions tab: event → action rules (a gift shows an alert, likes switch a scene, …)."""
+"""Alerts: event → action rules (a gift shows an alert, likes switch a scene, …), their history and sounds."""
 
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import replace
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -26,7 +27,9 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSpinBox,
+    QStackedWidget,
     QTableWidgetItem,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -58,11 +61,25 @@ from ignite_live.actions.rules import (
     to_dict,
 )
 from ignite_live.controller import Controller, action_engine_config
-from ignite_live.core.events import PLATFORMS, ConnectionState
+from ignite_live.core.events import PLATFORMS, ChatFollow, ChatGift, ChatShare, ConnectionState
+from ignite_live.ui.kit import (
+    Card,
+    EmptyState,
+    EventRow,
+    PageContainer,
+    StatusIndicator,
+    button,
+    hline,
+    icon_label,
+    label,
+    restyle_buttons,
+)
 from ignite_live.ui.pages.music import read_only_table
-from ignite_live.ui.pages.stream import note, scrolling
-from ignite_live.ui.theme import state_color
-from ignite_live.ui.flow_layout import FlowLayout
+from ignite_live.ui.pages.stream import note
+from ignite_live.ui.simulate import sample_events
+from ignite_live.ui.theme import colors, state_color, theme_changed
+
+MAX_HISTORY = 300
 
 TEXT_HINTS = {
     "alert": "Alert text, e.g. {user} sent {gift}!",
@@ -84,8 +101,8 @@ class ActionRow(QWidget):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         self.kind = QComboBox()
-        for key, label in ACTIONS.items():
-            self.kind.addItem(label, key)
+        for key, name in ACTIONS.items():
+            self.kind.addItem(name, key)
         self.kind.setCurrentIndex(max(0, self.kind.findData(action.kind)))
         self.text = QLineEdit(action.text)
         self.target = QComboBox()
@@ -105,8 +122,8 @@ class ActionRow(QWidget):
         self.seconds.setToolTip("Undo the change after this long (Keep: leave it)")
         self.seconds.setValue(action.seconds)
         self.game = QComboBox()
-        for key, label in GAMES.items():
-            self.game.addItem(f"Start {label.lower()}", key)
+        for key, name in GAMES.items():
+            self.game.addItem(f"Start {name.lower()}", key)
         self.game.addItem("Stop the running game", "stop")
         self.game.setCurrentIndex(max(0, self.game.findData(action.target)))
         self.amount = QSpinBox()
@@ -216,8 +233,8 @@ class RuleDialog(QDialog):
         form.addRow("Name", name_row)
         trigger = rule.trigger
         self.kind = QComboBox()
-        for key, label in TRIGGERS.items():
-            self.kind.addItem(label, key)
+        for key, name in TRIGGERS.items():
+            self.kind.addItem(name, key)
         self.kind.setCurrentIndex(max(0, self.kind.findData(trigger.kind)))
         form.addRow("Trigger", self.kind)
         self.gifts = QLineEdit(", ".join(trigger.gifts))
@@ -236,13 +253,13 @@ class RuleDialog(QDialog):
         self.every.setValue(trigger.every or 100)
         self.board = QComboBox()
         self.board.addItem("Any leaderboard", "")
-        for key, (label, _unit, _counter) in BOARDS.items():
-            self.board.addItem(label, key)
+        for key, (name, _unit, _counter) in BOARDS.items():
+            self.board.addItem(name, key)
         self.board.setCurrentIndex(max(0, self.board.findData(trigger.board)))
         self.game = QComboBox()
         self.game.addItem("Any game", "")
-        for key, label in GAMES.items():
-            self.game.addItem(label, key)
+        for key, name in GAMES.items():
+            self.game.addItem(name, key)
         self.game.setCurrentIndex(max(0, self.game.findData(trigger.game)))
         self.spike_min = QSpinBox()
         self.spike_min.setRange(3, 10_000)
@@ -286,8 +303,8 @@ class RuleDialog(QDialog):
             "factor": ("And", self.factor),
             "role": ("Who", self.role),
         }
-        for label, widget in self.rows.values():
-            form.addRow(label, widget)
+        for title, widget in self.rows.values():
+            form.addRow(title, widget)
         form.addRow("Platforms", platform_row)
         self.platform_row = platform_row
         self.form = form
@@ -442,64 +459,257 @@ RULES_FILE_FILTER = "Ignite rules (*.ignite-rules.json *.json)"
 
 
 class ActionsPage(QWidget):
+    """Alerts: what happens on stream when viewers follow, gift, share or chat.
+
+    Rules (each an alert type and what it does, switched on and off right in the list), a preview and test
+    panel, this session's alert history, and the sounds alerts can play. ``open_page_requested``: a link to
+    another screen (e.g. the notification settings).
+    """
+
+    open_page_requested = Signal(str)
+
     def __init__(self, controller: Controller) -> None:
         super().__init__()
         self.controller = controller
-        layout = scrolling(self)
-        layout.addWidget(note(
-            "Rules react to your LIVE: a gift shows an alert and plays a sound, every 1,000 likes switches a scene, "
-            "!hype from a follower reads a message aloud. Alerts and sounds play in the <b>Alerts</b> overlay "
-            "(Overlays tab), so they're in OBS's audio mix. Put sound files (mp3, wav, ogg) in the sounds folder."
-        ))
+        self.setObjectName("page")
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        self.tabs = QTabWidget()
+        self.tabs.setDocumentMode(True)
+        self.tabs.setStyleSheet("QTabWidget::pane { border: none; } QTabWidget::tab-bar { left: 24px; } QTabBar { margin-top: 8px; }")
+        outer.addWidget(self.tabs)
+        self.tabs.addTab(self._rules_tab(), "Rules")
+        self.tabs.addTab(self._history_tab(), "Activity")
+        self.tabs.addTab(self._sounds_tab(), "Sounds")
+        controller.settings_changed.connect(lambda _s: self._refresh())
+        controller.chat_event.connect(self._chat_event)
+        theme_changed().connect(self._restyle)
+        self._refresh()
+        self._fill_sound_list()
+        self._restyle()
+
+    def show_tab(self, name: str) -> None:
+        self.tabs.setCurrentIndex({"rules": 0, "activity": 1, "sounds": 2}.get(name, 0))
+
+    # Rules.
+
+    def _rules_tab(self) -> QWidget:
+        page = PageContainer()
+        columns = QHBoxLayout()
+        columns.setSpacing(16)
+        self.rules_card = Card("Alert rules", icon="bell")
+        bar = QHBoxLayout()
+        bar.setSpacing(8)
+        self.buttons = {}
+        for key, text, icon, slot, kind in (("add", "Add Rule", "plus", self._add, "primary"),
+                                            ("edit", "Edit", "pencil", self._edit, ""),
+                                            ("copy", "Duplicate", "copy", self._duplicate, ""),
+                                            ("test", "Test", "flask", self._test, ""),
+                                            ("delete", "Delete", "trash", self._delete, "danger")):
+            widget = button(text, icon, kind=kind)
+            widget.clicked.connect(slot)
+            bar.addWidget(widget)
+            self.buttons[key] = widget
+        self.buttons["test"].setToolTip("Run this rule's actions now with sample values (ignores cooldowns)")
+        bar.addStretch(1)
+        more = QPushButton("More")
+        more.icon_name = "ellipsis-vertical"  # type: ignore[attr-defined]
+        menu = QMenu(more)
+        menu.addAction("Add Auto-Clip Rules", self._add_auto_clip).setToolTip(
+            "Save a clip on big gifts (1,000+ coins) and chat spikes")
+        menu.addAction("Add TT Interactive Rules (Minecraft)", self._add_tt_interactive)
+        menu.addSeparator()
+        menu.addAction("Export Rules…", self._export)
+        menu.addAction("Import Rules…", self._import)
+        more.setMenu(menu)
+        self.more = more
+        bar.addWidget(more)
+        self.rules_card.body.addLayout(bar)
         self.table = read_only_table(["On", "Name", "When", "Do"])
         header = self.table.horizontalHeader()
         header.setStretchLastSection(True)
         for column in (0, 1, 2):
             header.setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.setMinimumHeight(320)
         self.table.itemDoubleClicked.connect(lambda _item: self._edit())
         self.table.itemChanged.connect(self._toggled)
         self.table.itemSelectionChanged.connect(self._selection_changed)
-        layout.addWidget(self.table, 1)
-        buttons = FlowLayout()  # Wraps in a narrow window rather than cutting off the buttons.
-        self.buttons = {}
-        for key, text, slot in (("add", "Add Rule…", self._add), ("edit", "Edit…", self._edit),
-                                ("copy", "Duplicate", self._duplicate), ("delete", "Delete", self._delete),
-                                ("test", "Test", self._test)):
-            button = QPushButton(text)
-            button.clicked.connect(slot)
-            buttons.addWidget(button)
-            self.buttons[key] = button
-        self.buttons["test"].setToolTip("Run this rule's actions now with sample values (ignores cooldowns)")
-        auto_clip = QPushButton("Add Auto-Clip Rules")
-        auto_clip.setToolTip("Save a clip on big gifts (1,000+ coins) and chat spikes. Edit or delete them like any rule.")
-        auto_clip.clicked.connect(self._add_auto_clip)
-        buttons.addWidget(auto_clip)
-        minecraft = QPushButton("Add TT Interactive Rules")
-        minecraft.setToolTip("Gifts spawn mobs, items and events in Minecraft through TT Interactive Stream Games and "
-                             "ServerTap (set the server up in File → Preferences → Minecraft)")
-        minecraft.clicked.connect(self._add_tt_interactive)
-        buttons.addWidget(minecraft)
-        export = QPushButton("Export…")
-        export.setToolTip("Save every rule to a file, to back them up or share them")
-        export.clicked.connect(self._export)
-        buttons.addWidget(export)
-        load = QPushButton("Import…")
-        load.setToolTip("Add the rules from a file to yours (nothing you have is replaced)")
-        load.clicked.connect(self._import)
-        buttons.addWidget(load)
-        play = QPushButton("Play Sound")
-        play.setToolTip("Play a file from the sounds folder through the Alerts overlay")
-        self.sound_menu = QMenu(play)
+        self.rules_empty = EmptyState("bell", "No alert rules yet",
+                                      "Rules react to your LIVE: a gift shows an alert and plays a sound, 1,000 likes "
+                                      "switch a scene, !hype reads a message aloud.")
+        self.rules_stack = QStackedWidget()
+        self.rules_stack.addWidget(self.rules_empty)
+        self.rules_stack.addWidget(self.table)
+        self.rules_card.body.addWidget(self.rules_stack, 1)
+        columns.addWidget(self.rules_card, 3)
+
+        side = QVBoxLayout()
+        side.setSpacing(16)
+        self.types_card = Card("Alert types", icon="layers")
+        self.types_card.body.addWidget(label("What can start a rule. Pick one to add a rule for it.", "muted", wrap=True))
+        self.type_rows: dict[str, QPushButton] = {}
+        for key, text in TRIGGERS.items():
+            widget = QPushButton(text)
+            widget.setProperty("ghost", True)
+            widget.setStyleSheet("text-align: left;")
+            widget.setCursor(Qt.CursorShape.PointingHandCursor)
+            widget.clicked.connect(lambda _=False, k=key: self._add(k))
+            self.types_card.body.addWidget(widget)
+            self.type_rows[key] = widget
+        side.addWidget(self.types_card)
+
+        self.preview_card = Card("Preview", icon="eye")
+        self.overlay_state = StatusIndicator("", "muted")
+        self.preview_card.body.addWidget(self.overlay_state)
+        self.preview_card.body.addWidget(label("Alerts and their sounds play in the Alerts overlay, so they're in "
+                                               "OBS's audio mix.", "muted", wrap=True))
+        self.send_test = button("Send Test Alert", "flask", tip="A sample gift and follow on the Alerts overlay "
+                                                               "(they don't count anywhere)")
+        self.send_test.clicked.connect(lambda: self.controller.simulate(*sample_events("alerts")))
+        self.open_preview = button("Preview in Browser", "external-link",
+                                   tip="The Alerts overlay with sample alerts, in your browser")
+        self.open_preview.clicked.connect(lambda: QDesktopServices.openUrl(
+            QUrl(self.controller.overlay.url("alerts") + "&demo=1")))
+        self.notification_settings = button("Notification Settings", "sliders",
+                                            tip="Messages, speech and Discord forwarding")
+        self.notification_settings.clicked.connect(lambda: self.open_page_requested.emit("prefs-Messages"))
+        for widget in (self.send_test, self.open_preview, self.notification_settings):
+            self.preview_card.body.addWidget(widget)
+        side.addWidget(self.preview_card)
+        side.addStretch(1)
+        columns.addLayout(side, 2)
+        page.add_layout(columns)
+        page.finish()
+        self._overlay_timer = QTimer(self, interval=3000)
+        self._overlay_timer.timeout.connect(self._overlay_status)
+        self._overlay_status()
+        return page
+
+    def showEvent(self, event) -> None:  # noqa: N802 - Qt override
+        super().showEvent(event)
+        self._overlay_timer.start()
+
+    def hideEvent(self, event) -> None:  # noqa: N802 - Qt override
+        self._overlay_timer.stop()
+        super().hideEvent(event)
+
+    def _overlay_status(self) -> None:
+        open_now = "alerts" in self.controller.overlay.open_pages()
+        self.overlay_state.set("Alerts overlay is open in OBS" if open_now else "Alerts overlay isn't open in OBS",
+                               "healthy" if open_now else "warning")
+
+    # Activity: this session's alerts.
+
+    def _history_tab(self) -> QWidget:
+        page = PageContainer()
+        self.history_card = Card("Alert activity", icon="history")
+        bar = QHBoxLayout()
+        bar.addWidget(label("Follows, gifts and shares since Ignite started.", "muted"))
+        bar.addStretch(1)
+        self.history_filter = QComboBox()
+        for key, text in (("", "All"), ("follow", "Follows"), ("gift", "Gifts"), ("share", "Shares")):
+            self.history_filter.addItem(text, key)
+        self.history_filter.currentIndexChanged.connect(lambda _i: self._render_history())
+        bar.addWidget(self.history_filter)
+        self.history_card.body.addLayout(bar)
+        self.history_list = QVBoxLayout()
+        self.history_list.setSpacing(0)
+        self.history_card.body.addLayout(self.history_list)
+        self.history_empty = EmptyState("history", "No alerts yet", "They're listed here as viewers follow, gift "
+                                                                    "and share while you're live.")
+        self.history_card.body.addWidget(self.history_empty)
+        page.add(self.history_card)
+        page.finish()
+        self.history: list[tuple[float, str, object]] = []
+        return page
+
+    def _chat_event(self, event) -> None:
+        kind = "follow" if isinstance(event, ChatFollow) else "gift" if isinstance(event, ChatGift) else \
+            "share" if isinstance(event, ChatShare) else ""
+        if not kind or getattr(event, "streaking", False):
+            return
+        self.history.insert(0, (time.time(), kind, event))
+        del self.history[MAX_HISTORY:]
+        if self.tabs.currentIndex() == 1:
+            self._render_history()
+
+    def _render_history(self) -> None:
+        while self.history_list.count():
+            item = self.history_list.takeAt(0)
+            if item.widget():
+                item.widget().hide()
+                item.widget().deleteLater()
+        wanted = self.history_filter.currentData()
+        shown = [(when, event) for when, kind, event in self.history if not wanted or kind == wanted][:100]
+        self.history_empty.setVisible(not shown)
+        from ignite_live.ui.pages.overview import event_text
+
+        for index, (when, event) in enumerate(shown):
+            if index:
+                self.history_list.addWidget(hline())
+            icon, tone, title, detail = event_text(event)
+            self.history_list.addWidget(EventRow(icon, tone, title, detail, when))
+
+    # Sounds.
+
+    def _sounds_tab(self) -> QWidget:
+        page = PageContainer()
+        self.sounds_card = Card("Sounds", icon="volume")
+        bar = QHBoxLayout()
+        bar.addWidget(label("mp3, wav or ogg files in the sounds folder. Rules, chat commands and the test buttons "
+                            "play them through the Alerts overlay.", "muted", wrap=True), 1)
+        self.open_folder = button("Open Sounds Folder", "folder-open")
+        self.open_folder.clicked.connect(
+            lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.controller.open_sounds_folder()))))
+        self.reload_sounds = button("Refresh", "refresh-cw")
+        self.reload_sounds.clicked.connect(self._fill_sound_list)
+        bar.addWidget(self.reload_sounds)
+        bar.addWidget(self.open_folder)
+        self.sounds_card.body.addLayout(bar)
+        self.sound_rows = QVBoxLayout()
+        self.sound_rows.setSpacing(4)
+        self.sounds_card.body.addLayout(self.sound_rows)
+        self.sounds_empty = EmptyState("volume", "No sounds yet", "Add files to the sounds folder, then Refresh.")
+        self.sounds_card.body.addWidget(self.sounds_empty)
+        page.add(self.sounds_card)
+        page.finish()
+        # "Play Sound" menu (kept for callers of the old Actions tab).
+        self.sound_menu = QMenu(self)
         self.sound_menu.aboutToShow.connect(self._fill_sounds)
-        play.setMenu(self.sound_menu)
-        buttons.addWidget(play)
-        folder = QPushButton("Sounds Folder…")
-        folder.clicked.connect(
-            lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(controller.open_sounds_folder()))))
-        buttons.addWidget(folder)
-        layout.addLayout(buttons)
-        controller.settings_changed.connect(lambda _s: self._refresh())
-        self._refresh()
+        return page
+
+    def _sound_names(self) -> list[str]:
+        folder = self.controller.sounds_dir
+        return sorted(p.name for p in folder.iterdir() if SOUND_NAME.match(p.name)) if folder.is_dir() else []
+
+    def _fill_sound_list(self) -> None:
+        while self.sound_rows.count():
+            item = self.sound_rows.takeAt(0)
+            if item.widget():
+                item.widget().hide()
+                item.widget().deleteLater()
+        names = self._sound_names()
+        self.sounds_empty.setVisible(not names)
+        for name in names:
+            line = QWidget()
+            row = QHBoxLayout(line)
+            row.setContentsMargins(0, 2, 0, 2)
+            row.addWidget(icon_label("music", colors().text_muted, 16))
+            row.addWidget(label(name), 1)
+            play = button("Play", "play", tip=f"Play {name} through the Alerts overlay")
+            play.clicked.connect(lambda _=False, n=name: self.controller.play_sound(n))
+            row.addWidget(play)
+            self.sound_rows.addWidget(line)
+
+    def _fill_sounds(self) -> None:
+        self.sound_menu.clear()
+        names = self._sound_names()
+        if not names:
+            self.sound_menu.addAction("No sounds yet: add files to the sounds folder").setEnabled(False)
+        for name in names:
+            self.sound_menu.addAction(name, lambda n=name: self.controller.play_sound(n))
+
+    # Rules: data.
 
     def _rules(self) -> list[Rule]:
         return parse_rules(self.controller.settings.action_rules)
@@ -510,12 +720,14 @@ class ActionsPage(QWidget):
         self.table.setRowCount(0)
         prefix = self.controller.settings.command_prefix or "!"
         goal_names = {goal.id: goal.name for goal in parse_goals(self.controller.settings.goals)}
-        for row, rule in enumerate(self._rules()):
+        rules = self._rules()
+        for row, rule in enumerate(rules):
             self.table.insertRow(row)
             on = QTableWidgetItem()
             on.setFlags(Qt.ItemFlag.ItemIsUserCheckable | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
             on.setCheckState(Qt.CheckState.Checked if rule.enabled else Qt.CheckState.Unchecked)
             on.setData(Qt.ItemDataRole.UserRole, rule.id)
+            on.setToolTip("On: the rule runs. Off: it's kept but does nothing.")
             self.table.setItem(row, 0, on)
             for column, text in enumerate((rule.name, describe_trigger(rule.trigger, prefix, goal_names),
                                            describe_actions(rule.actions)), 1):
@@ -523,6 +735,14 @@ class ActionsPage(QWidget):
             if selected and rule.id == selected.id:
                 self.table.selectRow(row)
         self.table.blockSignals(False)
+        self.rules_stack.setCurrentWidget(self.table if rules else self.rules_empty)
+        counts: dict[str, int] = {}
+        for rule in rules:
+            if rule.enabled:
+                counts[rule.trigger.kind] = counts.get(rule.trigger.kind, 0) + 1
+        for key, widget in self.type_rows.items():
+            count = counts.get(key, 0)
+            widget.setText(f"{TRIGGERS[key]}" + (f"  ·  {count} on" if count else ""))
         self._selection_changed()
 
     def _selected(self) -> Rule | None:
@@ -554,8 +774,10 @@ class ActionsPage(QWidget):
         if dialog.exec() and dialog.result_rule is not None:
             self._put(dialog.result_rule)
 
-    def _add(self) -> None:
-        self._open_editor(Rule(id=new_id(), name="New rule", actions=(Action("alert", "{user} sent {gift}!"),)))
+    def _add(self, kind: str = "gift") -> None:
+        name = f"{TRIGGERS.get(kind, 'New')} alert" if kind else "New rule"
+        self._open_editor(Rule(id=new_id(), name=name, trigger=Trigger(kind or "gift"),
+                               actions=(Action("alert", "{user} sent {gift}!" if kind == "gift" else "{user}!"),)))
 
     def _edit(self) -> None:
         rule = self._selected()
@@ -571,7 +793,7 @@ class ActionsPage(QWidget):
         rule = self._selected()
         if rule is None:
             return
-        answer = QMessageBox.question(self, "Delete rule", f"Delete “{rule.name}”?")
+        answer = QMessageBox.question(self, "Delete rule", f"Delete “{rule.name}”? This can't be undone.")
         if answer == QMessageBox.StandardButton.Yes:
             self._save([r for r in self._rules() if r.id != rule.id])
 
@@ -579,15 +801,6 @@ class ActionsPage(QWidget):
         rule = self._selected()
         if rule is not None:
             self.controller.test_rule(rule)
-
-    def _fill_sounds(self) -> None:
-        self.sound_menu.clear()
-        folder = self.controller.sounds_dir
-        names = sorted(p.name for p in folder.iterdir() if SOUND_NAME.match(p.name)) if folder.is_dir() else []
-        if not names:
-            self.sound_menu.addAction("No sounds yet: add files to the sounds folder").setEnabled(False)
-        for name in names:
-            self.sound_menu.addAction(name, lambda n=name: self.controller.play_sound(n))
 
     def _add_auto_clip(self) -> None:
         rules = self._rules()
@@ -606,7 +819,7 @@ class ActionsPage(QWidget):
         if added:
             self._save(rules + added)
         self.controller.notice.emit("info", "Minecraft rules added: gifts run TT Interactive's /ttinteractive gift. "
-                                            "Set ServerTap's address and key in File → Preferences → Minecraft."
+                                            "Set ServerTap's address and key in Settings → Integrations."
                                     if added else "The TT Interactive rules are already there.")
 
     def _export(self) -> None:
@@ -648,3 +861,12 @@ class ActionsPage(QWidget):
         rule_id = item.data(Qt.ItemDataRole.UserRole)
         on = item.checkState() == Qt.CheckState.Checked
         self._save([replace(r, enabled=on) if r.id == rule_id else r for r in self._rules()])
+
+    def _restyle(self, _palette=None) -> None:
+        for card in (self.rules_card, self.types_card, self.preview_card, self.history_card, self.sounds_card):
+            card.restyle()
+        for empty in (self.rules_empty, self.history_empty, self.sounds_empty):
+            empty.restyle()
+        restyle_buttons(*self.buttons.values(), self.more, self.send_test, self.open_preview,
+                        self.notification_settings, self.open_folder, self.reload_sounds)
+        self._fill_sound_list()

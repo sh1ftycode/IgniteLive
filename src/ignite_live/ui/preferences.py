@@ -10,7 +10,7 @@ import html
 import re
 from dataclasses import replace
 
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import QObject, QSize, Qt, QUrl, Signal
 from PySide6.QtGui import QColor, QDesktopServices, QFontDatabase
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -129,38 +129,131 @@ def _slider(value: int, low: int, high: int) -> tuple[QHBoxLayout, QSlider]:
     return row, slider
 
 
+# Settings are grouped the way people look for them; each group shows its sections as cards, one under another.
+SETTING_GROUPS = (
+    ("General", "sliders", "Song requests, chat commands and text to speech.",
+     ("Song requests", "Commands", "Text to speech")),
+    ("Appearance", "palette", "How Ignite and your overlays look.", ("Appearance",)),
+    ("Streaming", "radio", "OBS: the connection, and what happens when you go live.", ("OBS",)),
+    ("Integrations", "puzzle", "Chat platforms, your Ignite server, Discord and Minecraft.",
+     ("Chat platforms", "Server", "Discord", "Minecraft")),
+    ("Notifications", "bell", "Everything Ignite says to viewers: chat replies, overlays, speech and Discord.",
+     ("Messages",)),
+    ("Privacy", "shield", "Blocked words and viewers, links, and what Panic does.", ("Moderation",)),
+    ("Advanced", "wrench", "Updates, experiments and the rest.", ("Advanced",)),
+    ("About", "info", "Version, files and help.", ("About",)),
+)
+GROUP_OF = {section: index for index, (_name, _icon, _text, sections) in enumerate(SETTING_GROUPS)
+            for section in sections}
+
+
+class _SectionSignals(QObject):
+    """``currentRowChanged(section index)``: what callers of the old list-and-stack watched."""
+
+    currentRowChanged = Signal(int)  # noqa: N815 - mirrors QListWidget
+
+
 class Sections(QWidget):
-    """A section list on the left and the selected page on the right (tab-like API)."""
+    """Settings groups on the left (General, Appearance, …), the chosen group's sections as cards on the right.
+
+    Keeps a tab-like API: ``addTab(page, section title)``, and indexes that follow the order sections were
+    added (``TABS``)."""
 
     def __init__(self) -> None:
         super().__init__()
+        from ignite_live.ui.kit import Card, label
+        from ignite_live.ui import lucide
+        from ignite_live.ui.theme import colors
+
+        self._Card, self._label, self._lucide, self._colors = Card, label, lucide, colors
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        self.list = QListWidget()
-        self.list.setMaximumWidth(170)
+        layout.setSpacing(0)
+        self.nav = QListWidget()
+        self.nav.setObjectName("settingsNav")
+        self.nav.setFixedWidth(208)
+        self.nav.setIconSize(QSize(16, 16))
         self.stack = QStackedWidget()
-        layout.addWidget(self.list)
+        layout.addWidget(self.nav)
         layout.addWidget(self.stack, 1)
-        self.list.currentRowChanged.connect(self.stack.setCurrentIndex)
+        self.list = _SectionSignals(self)  # The old name, for code that watches which section is showing.
+        self.titles: list[str] = []
+        self.cards: dict[str, QWidget] = {}
+        self.columns: dict[int, QVBoxLayout] = {}
+        self.scrolls: dict[int, QScrollArea] = {}
+        self.group_rows: dict[int, int] = {}
+        self.nav.currentRowChanged.connect(self._group_chosen)
+
+    def _group_page(self, group: int) -> QVBoxLayout:
+        if group not in self.columns:
+            name, icon, text, _sections = SETTING_GROUPS[group]
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+            holder = QWidget()
+            holder.setObjectName("page")
+            column = QVBoxLayout(holder)
+            column.setContentsMargins(24, 4, 24, 24)
+            column.setSpacing(16)
+            column.addWidget(self._label(name, "sectionTitle"))
+            column.addWidget(self._label(text, "muted", wrap=True))
+            column.addStretch(1)
+            scroll.setWidget(holder)
+            self.columns[group], self.scrolls[group] = column, scroll
+            # Groups go in their fixed order, whatever order their first section arrives in.
+            position = sorted(self.columns).index(group)
+            self.stack.insertWidget(position, scroll)
+            item = QListWidgetItem(self._lucide.icon(icon, self._colors().text_muted, 16), name)
+            item.setData(Qt.ItemDataRole.UserRole, group)
+            item.setSizeHint(QSize(0, 36))
+            self.nav.insertItem(position, item)
+            if self.nav.currentRow() < 0:
+                self.nav.setCurrentRow(0)
+        return self.columns[group]
 
     def addTab(self, page: QWidget, title: str) -> None:  # noqa: N802 - mirrors QTabWidget
-        scroll = QScrollArea()
-        scroll.setWidget(page)
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QScrollArea.Shape.NoFrame)
-        self.stack.addWidget(scroll)
-        self.list.addItem(title)
-        if self.list.currentRow() < 0:
-            self.list.setCurrentRow(0)
+        group = GROUP_OF.get(title, len(SETTING_GROUPS) - 2)
+        column = self._group_page(group)
+        card = self._Card(title)
+        card.body.addWidget(page)
+        column.insertWidget(column.count() - 1, card)
+        self.titles.append(title)
+        self.cards[title] = card
+
+    def _group_chosen(self, row: int) -> None:
+        if row < 0:
+            return
+        group = self.nav.item(row).data(Qt.ItemDataRole.UserRole)
+        self.stack.setCurrentWidget(self.scrolls[group])
+        for title in SETTING_GROUPS[group][3]:
+            if title in self.titles:
+                self.list.currentRowChanged.emit(self.titles.index(title))
+
+    def show_section(self, title: str) -> None:
+        if title not in self.cards:
+            return
+        group = GROUP_OF.get(title, len(SETTING_GROUPS) - 2)
+        for row in range(self.nav.count()):
+            if self.nav.item(row).data(Qt.ItemDataRole.UserRole) == group:
+                self.nav.setCurrentRow(row)
+                break
+        self.scrolls[group].ensureWidgetVisible(self.cards[title], 0, 24)
 
     def setCurrentIndex(self, index: int) -> None:  # noqa: N802
-        self.list.setCurrentRow(index)
+        if 0 <= index < len(self.titles):
+            self.show_section(self.titles[index])
 
     def currentIndex(self) -> int:  # noqa: N802
-        return self.list.currentRow()
+        row = self.nav.currentRow()
+        if row < 0:
+            return 0
+        group = self.nav.item(row).data(Qt.ItemDataRole.UserRole)
+        first = next((t for t in SETTING_GROUPS[group][3] if t in self.titles), None)
+        return self.titles.index(first) if first else 0
 
     def setTabVisible(self, index: int, visible: bool) -> None:  # noqa: N802
-        self.list.item(index).setHidden(not visible)
+        if 0 <= index < len(self.titles):
+            self.cards[self.titles[index]].setVisible(visible)
 
 
 def banned_text(s: Settings) -> str:
@@ -613,6 +706,7 @@ class PreferencesDialog(QDialog):
         box.rejected.connect(self.reject)
         box.button(QDialogButtonBox.StandardButton.Apply).clicked.connect(self.apply)
         layout.addWidget(box)
+        self.button_box = box  # The Settings screen hides it and gives the page its own Save bar.
         if tab in TABS:
             self.tabs.setCurrentIndex(TABS.index(tab))
             if tab == "Text to speech":

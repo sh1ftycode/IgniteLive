@@ -1,7 +1,7 @@
-"""Stream tab: two steps to go live. 1) get a stream key, 2) send it to OBS and start.
+"""Stream Control, and the small form helpers every screen shares (notes, "?" buttons, disclosures).
 
-Everything rarely needed (the key itself, a Streamlabs token, a key from elsewhere) sits
-under "More options", closed by default.
+Going live is two steps: get a stream key, then send it to OBS and start. Everything rarely needed (the key
+itself, a Streamlabs token, a key from elsewhere) sits under "More options", closed by default.
 """
 
 from __future__ import annotations
@@ -19,7 +19,6 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QFrame,
     QGridLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -33,12 +32,26 @@ from PySide6.QtWidgets import (
 )
 
 from ignite_live.controller import Controller
+from ignite_live.core.events import PLATFORMS, ConnectionState
 from ignite_live.integrations.backend import CachedKey
-from ignite_live.integrations.obs_studio import Studio
+from ignite_live.integrations.obs_studio import Studio, clock
 from ignite_live.integrations.obs_targets import StreamTarget
 from ignite_live.integrations.streamlabs import AccountInfo
+from ignite_live.ui import lucide
 from ignite_live.ui.actions import AppActions, action_button
-from ignite_live.ui.theme import LABEL_PX, RADIUS, colors, set_live, set_props, theme_changed, tint
+from ignite_live.ui.kit import (
+    Banner,
+    Card,
+    MetricCard,
+    PageContainer,
+    button,
+    hline,
+    icon_button,
+    label,
+    recolor_icon_button,
+    restyle_buttons,
+)
+from ignite_live.ui.theme import LABEL_PX, RADIUS, colors, set_live, set_props, tabular, theme_changed, tint
 
 CONTENT_WIDTH = 760  # The page's column; wider screens get margins instead of stretched fields.
 
@@ -240,40 +253,114 @@ def chip(text: str, color: str) -> str:
 
 
 class StreamPage(QWidget):
+    """Stream Control: everything for going live, in the order you need it.
+
+    Status across the top; then the go-live controls and the output they drive; the stream key (Streamlabs or
+    your own); and OBS itself (scenes, recording and clips, health) beside them. Errors from OBS or Streamlabs
+    show in a banner rather than a status bar you might not see.
+    """
+
     def __init__(self, controller: Controller, actions: AppActions) -> None:
         super().__init__()
         self.controller = controller
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.actions = actions
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
-        outer.addWidget(scroll)
-        holder = QWidget()
-        scroll.setWidget(holder)
-        centre = QHBoxLayout(holder)
-        column = QWidget()
-        column.setMaximumWidth(CONTENT_WIDTH)
-        centre.addWidget(column)
-        page = QVBoxLayout(column)
-        page.setContentsMargins(16, 16, 16, 16)
-        page.setSpacing(8)
+        page = PageContainer()
+        outer.addWidget(page)
 
-        # Header: what to do, and where things stand.
-        top = QHBoxLayout()
-        title = QLabel("Go live")
-        title.setStyleSheet("font-size: 22px; font-weight: 700;")
-        top.addWidget(title)
-        top.addStretch(1)
+        self.banner = Banner("", error=True)
+        self.banner.hide()
+        page.add(self.banner)
+
+        # Status.
+        metrics = QHBoxLayout()
+        metrics.setSpacing(16)
+        self.status_tile = MetricCard("radio", "Status", "accent")
+        self.uptime_tile = MetricCard("clock", "Uptime", "muted")
+        self.bitrate_tile = MetricCard("activity", "Bitrate", "healthy")
+        self.dropped_tile = MetricCard("triangle-alert", "Dropped frames", "warning")
+        self.connections_tile = MetricCard("plug", "Chats connected", "accent")
+        for tile in (self.status_tile, self.uptime_tile, self.bitrate_tile, self.dropped_tile, self.connections_tile):
+            metrics.addWidget(tile, 1)
+        # Kept names for older callers: the first redesign's tiles.
+        self.viewers_tile, self.followers_tile = self.bitrate_tile, self.dropped_tile
+        page.add_layout(metrics)
+
+        columns = QHBoxLayout()
+        columns.setSpacing(16)
+        left = QVBoxLayout()
+        left.setSpacing(16)
+        right = QVBoxLayout()
+        right.setSpacing(16)
+        columns.addLayout(left, 3)
+        columns.addLayout(right, 2)
+        page.add_layout(columns)
+
+        # Go live.
+        self.obs_box = Card("Go live", icon="play")
         self.state = QLabel()
-        top.addWidget(self.state)
-        top.addWidget(help_button("Get a stream key, then send it to OBS and start streaming. Video goes straight "
-                                  "from OBS to TikTok."))
-        page.addLayout(top)
+        self.obs_box.add_header_widget(self.state)
+        self.obs_box.add_header_widget(help_button(
+            "Get a stream key, then send it to OBS and start streaming. Video goes straight from OBS to TikTok."))
+        main_row = QHBoxLayout()
+        main_row.setSpacing(8)
+        self.start = button("Go Live", "play", kind="primary",
+                            tip="Check OBS, the key, audio and overlays, then start the chosen output")
+        self.start.setProperty("big", True)
+        self.start.clicked.connect(lambda: self.actions.go_live())
+        self.stop_button = button("Stop Stream", "square", tip="Stop OBS's output (asks first)")
+        self.stop_button.setProperty("big", True)
+        self.stop_button.clicked.connect(self._stop)
+        main_row.addWidget(self.start, 1)
+        main_row.addWidget(self.stop_button, 1)
+        self.obs_box.body.addLayout(main_row)
+        more_row = QHBoxLayout()
+        more_row.setSpacing(8)
+        self.check_first = button("Check First", "circle-check", tip=actions.check_stream.toolTip())
+        self.check_first.clicked.connect(actions.check_stream.trigger)
+        self.send_key_button = button("Send Key to OBS", "key", tip=actions.send_key.toolTip())
+        self.send_key_button.clicked.connect(actions.send_key.trigger)
+        self.end = button("End LIVE…", "circle-x", kind="danger", tip=actions.end_live.toolTip())
+        self.end.clicked.connect(actions.end_live.trigger)
+        # Experimental (Settings → Advanced): a new title or category mid-stream, by restarting the LIVE.
+        self.relaunch = button("Update While Live…", "refresh-cw",
+                               tip="Experimental: restart the LIVE with this title and category (a new key)")
+        self.relaunch.clicked.connect(self._relaunch)
+        for widget in (self.check_first, self.send_key_button, self.relaunch):
+            more_row.addWidget(widget)
+        more_row.addStretch(1)
+        more_row.addWidget(self.end)
+        self.obs_box.body.addLayout(more_row)
+        self.obs_box.body.addWidget(hline())
+        output = QGridLayout()
+        output.setHorizontalSpacing(12)
+        output.setVerticalSpacing(8)
+        output.addWidget(label("Output", "muted"), 0, 0)
+        self.target = QComboBox()
+        self.target.setAccessibleName("OBS output")
+        self.target.activated.connect(lambda _: controller.set_stream_target(self.target.currentData()))
+        refresh = icon_button("refresh-cw", "Reload OBS's outputs")
+        refresh.clicked.connect(actions.refresh_outputs.trigger)
+        self.refresh_outputs = refresh
+        target_row = QHBoxLayout()
+        target_row.addWidget(self.target, 1)
+        target_row.addWidget(refresh)
+        output.addLayout(target_row, 0, 1)
+        self.target_hint = label("", "muted", wrap=True)
+        output.addWidget(self.target_hint, 1, 1)
+        output.setColumnStretch(1, 1)
+        self.obs_box.body.addLayout(output)
+        left.addWidget(self.obs_box)
 
-        # 1. Stream key.
-        key_box = QGroupBox("1   Stream key")
-        form = QFormLayout(key_box)
+        # Stream key.
+        self.key_box = Card("Stream key", icon="key")
+        key_form = QWidget()
+        self.key_box.body.addWidget(key_form)
+        form = QFormLayout(key_form)
+        form.setContentsMargins(0, 0, 0, 0)
+        form.setHorizontalSpacing(16)
+        form.setVerticalSpacing(10)
         account_row = QHBoxLayout()
         self.account_text = QLabel("Not signed in")
         self.account_text.setWordWrap(True)
@@ -282,10 +369,10 @@ class StreamPage(QWidget):
         self.sign_out = action_button(actions.sign_out, "Sign Out")
         account_row.addWidget(self.sign_in)
         account_row.addWidget(self.sign_out)
-        form.addRow("Streamlabs:", account_row)
+        form.addRow("Streamlabs", account_row)
         self.title = QLineEdit(controller.settings.stream_title)
         self.title.setPlaceholderText("What are you streaming?")
-        form.addRow("&Title:", self.title)
+        form.addRow("&Title", self.title)
         self.category = QComboBox()
         self.category.setEditable(True)
         self.category.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
@@ -294,34 +381,31 @@ class StreamPage(QWidget):
         self._search = QTimer(self, singleShot=True, interval=400)
         self._search.timeout.connect(lambda: controller.search_categories(self.category.currentText()))
         self.category.lineEdit().textEdited.connect(lambda _: self._search.start())
-        form.addRow("&Category:", self.category)
+        form.addRow("&Category", self.category)
         self.key_state = QLabel("No key yet")
-        form.addRow("Key:", self.key_state)
+        self.key_state.setWordWrap(True)
+        form.addRow("Key", self.key_state)
         get_key = action_button(actions.get_key)
         set_props(get_key, primary=True)
-        # Experimental (Preferences → Advanced): a new title or category mid-stream, by restarting the LIVE.
-        self.relaunch = QPushButton("Update While Live…")
-        self.relaunch.setToolTip("Experimental: restart the LIVE with this title and category (a new key)")
-        self.relaunch.clicked.connect(self._relaunch)
-        form.addRow(buttons(self.relaunch, action_button(actions.new_key, "Generate New Key"), get_key))
+        self.get_key_button = get_key
+        form.addRow(buttons(action_button(actions.new_key, "Generate New Key"), get_key))
 
         more = QWidget()
         more_form = QFormLayout(more)
         more_form.setContentsMargins(0, 4, 0, 0)
         self.server = QLineEdit()
         self.server.setReadOnly(True)
-        more_form.addRow("Server:", self.server)
+        more_form.addRow("Server", self.server)
         self.key = QLineEdit()
         self.key.setReadOnly(True)
         self.key.setEchoMode(QLineEdit.EchoMode.Password)
         self.reveal = QCheckBox("Show")
         self.reveal.toggled.connect(
-            lambda shown: self.key.setEchoMode(QLineEdit.EchoMode.Normal if shown else QLineEdit.EchoMode.Password)
-        )
+            lambda shown: self.key.setEchoMode(QLineEdit.EchoMode.Normal if shown else QLineEdit.EchoMode.Password))
         key_row = QHBoxLayout()
         key_row.addWidget(self.key, 1)
         key_row.addWidget(self.reveal)
-        more_form.addRow("Key:", key_row)
+        more_form.addRow("Key", key_row)
         self.token = QLineEdit()
         self.token.setEchoMode(QLineEdit.EchoMode.Password)
         self.token.setPlaceholderText("If browser sign-in doesn't work")
@@ -330,7 +414,7 @@ class StreamPage(QWidget):
         token_row = QHBoxLayout()
         token_row.addWidget(self.token, 1)
         token_row.addWidget(use_token)
-        more_form.addRow("Streamlabs token:", token_row)
+        more_form.addRow("Streamlabs token", token_row)
         more_form.addRow(note("Streamlabs keys use its private API, which can change without notice. "
                               "Terminal alternative: ignite-streamlabs-login"))
         self.manual_server = QLineEdit()
@@ -344,39 +428,60 @@ class StreamPage(QWidget):
         manual_row.addWidget(self.manual_server, 1)
         manual_row.addWidget(self.manual_key, 1)
         manual_row.addWidget(save)
-        more_form.addRow("Your own key:", manual_row)
+        more_form.addRow("Your own key", manual_row)
         more_form.addRow(note("A key from TikTok LIVE Studio or anywhere else; no Streamlabs needed."))
         self.more = disclosure("More options: the key itself, a token, or your own key", more)
         form.addRow(self.more)
-        page.addWidget(key_box)
+        left.addWidget(self.key_box)
+        left.addStretch(1)
 
-        # 2. OBS.
-        obs_box = QGroupBox("2   Send to OBS and go live")
-        form = QFormLayout(obs_box)
-        self.target = QComboBox()
-        self.target.activated.connect(lambda _: controller.set_stream_target(self.target.currentData()))
-        refresh = QPushButton("Refresh")
-        refresh.clicked.connect(actions.refresh_outputs.trigger)
-        target_row = QHBoxLayout()
-        target_row.addWidget(self.target, 1)
-        target_row.addWidget(refresh)
-        form.addRow("OBS output:", target_row)
-        self.target_hint = note("")
-        form.addRow(self.target_hint)
-        start = action_button(actions.toggle_stream)
-        set_live(start, controller.obs_streaming)  # Orange when ready, red with a pulsing dot while live.
-        controller.obs_streaming_changed.connect(lambda live: set_live(start, live))
-        end = action_button(actions.end_live, "End LIVE…")
-        set_props(end, danger=True)
-        row = QHBoxLayout()
-        row.addWidget(end)
-        row.addStretch(1)
-        row.addWidget(action_button(actions.check_stream, "Check First…"))
-        row.addWidget(action_button(actions.send_key, "Send to OBS"))
-        row.addWidget(start)
-        form.addRow(row)
-        page.addWidget(obs_box)
-        page.addStretch(1)
+        # OBS: scenes, recording and clips, health.
+        self.scenes_box = Card("Scenes", icon="layers")
+        self.scene_list = QVBoxLayout()
+        self.scene_list.setSpacing(4)
+        self.scenes_box.body.addLayout(self.scene_list)
+        self.scenes_empty = label("Scenes show up once OBS is connected.", "muted", wrap=True)
+        self.scenes_box.body.addWidget(self.scenes_empty)
+        right.addWidget(self.scenes_box)
+
+        self.record_box = Card("Recording and clips", icon="video")
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(8)
+        self.record_buttons = []
+        for index, (action, icon) in enumerate(((actions.toggle_record, "circle-dot"), (actions.pause_record, "pause"),
+                                                (actions.toggle_replay, "history"), (actions.save_replay, "scissors"),
+                                                (actions.toggle_virtualcam, "camera"), (actions.screenshot, "monitor"),
+                                                (actions.toggle_vertical_record, "circle-dot"),
+                                                (actions.toggle_vertical_backtrack, "history"),
+                                                (actions.save_vertical_clip, "scissors"))):
+            widget = action_button(action)
+            widget.icon_name = icon  # type: ignore[attr-defined]
+            action.changed.connect(lambda w=widget, a=action: w.setVisible(a.isVisible()))
+            widget.setVisible(action.isVisible())
+            grid.addWidget(widget, index // 2, index % 2)
+            self.record_buttons.append(widget)
+        self.record_box.body.addLayout(grid)
+        right.addWidget(self.record_box)
+
+        self.health_box = Card("Health", icon="activity")
+        self.health_rows: dict[str, QLabel] = {}
+        health = QGridLayout()
+        health.setHorizontalSpacing(16)
+        health.setVerticalSpacing(6)
+        for row, (key, name) in enumerate((("stream", "Stream"), ("recording", "Recording"), ("bitrate", "Bitrate"),
+                                           ("network", "Dropped (network)"), ("render", "Rendering"),
+                                           ("encode", "Encoding"), ("cpu", "CPU"), ("memory", "Memory"))):
+            health.addWidget(label(name, "muted"), row, 0)
+            value = label("–")
+            value.setFont(tabular(value.font()))
+            value.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            health.addWidget(value, row, 1)
+            self.health_rows[key] = value
+        health.setColumnStretch(1, 1)
+        self.health_box.body.addLayout(health)
+        right.addWidget(self.health_box)
+        right.addStretch(1)
 
         actions.get_key.triggered.connect(lambda: self.get_key(False))
         actions.new_key.triggered.connect(lambda: self.get_key(True))
@@ -389,11 +494,15 @@ class StreamPage(QWidget):
         controller.settings_changed.connect(self._settings)
         controller.obs_streaming_changed.connect(lambda _live: self._settings(controller.settings))
         controller.studio_changed.connect(self._studio)
+        controller.status_changed.connect(self._connections)
         theme_changed().connect(self._restyle)
         self._targets(controller.targets)
         self._account(controller.account)
         self._key(controller.active_key)
         self._settings(controller.settings)
+        self._connections()
+        self._studio(controller.studio)
+        self._restyle()
 
     def _category_id(self) -> str:
         index = self.category.findText(self.category.currentText())
@@ -406,12 +515,20 @@ class StreamPage(QWidget):
         self.relaunch.setVisible(settings.experimental_relaunch)
         self.relaunch.setEnabled(self.controller.obs_streaming)
 
+    def _stop(self) -> None:
+        answer = QMessageBox.question(self, "Stop streaming",
+                                      "Stop OBS's output? Your viewers will see the stream end. The key stays "
+                                      "valid, so you can go live again.")
+        if answer == QMessageBox.StandardButton.Yes:
+            self.controller.set_obs_streaming(False)
+
     def _relaunch(self) -> None:
         answer = QMessageBox.question(
             self, "Update While Live (experimental)",
             f"Restart the LIVE as “{self.title.text().strip()}” in {self.category.currentText() or 'Other'}?\n\n"
             "Ignite gets a new key, stops your OBS output, ends this LIVE, and starts a new one with the new key. "
-            "Viewers see the LIVE end and a new one begin, and some may not follow. TikTok chat reconnects by itself once the new LIVE is up.",
+            "Viewers see the LIVE end and a new one begin, and some may not follow. TikTok chat reconnects by "
+            "itself once the new LIVE is up.",
         )
         if answer == QMessageBox.StandardButton.Yes:
             self.controller.relaunch_live(self.title.text(), self._category_id())
@@ -435,21 +552,102 @@ class StreamPage(QWidget):
     # Updates.
 
     def _show_state(self) -> None:
-        key = self.controller.active_key
-        if self.controller.studio.streaming:
-            text, color = "LIVE", colors().live
+        studio, key = self.controller.studio, self.controller.active_key
+        if studio.streaming:
+            text, color, tile = "LIVE", colors().live, "Live"
         elif key is not None:
-            text, color = "Key ready", colors().healthy
+            text, color, tile = "Key ready", colors().healthy, "Ready"
         else:
-            text, color = "No key yet", colors().text_muted
+            text, color, tile = "No key yet", colors().text_muted, "No key"
         self.state.setText(text)
         self.state.setStyleSheet(chip(text, color))
+        self.status_tile.set_value(tile if studio.connected else "OBS offline")
+        self.status_tile.set_live(studio.streaming)
+
+    def _connections(self, _change=None) -> None:
+        connected = sum(1 for platform in PLATFORMS
+                        if self.controller.statuses[platform].state is ConnectionState.CONNECTED)
+        self.connections_tile.set_value(f"{connected} of {len(PLATFORMS)}")
+        problems = [f"{name}: {self.controller.statuses[source].detail}"
+                    for source, name in (("obs", "OBS"), ("streamlabs", "Streamlabs"))
+                    if self.controller.statuses[source].state is ConnectionState.ERROR
+                    and self.controller.statuses[source].detail]
+        self.banner.text.setText("\n".join(problems))
+        self.banner.setVisible(bool(problems))
+
+    def _studio(self, studio: Studio) -> None:
+        self._show_state()
+        live, health = studio.streaming, studio.health
+        self.start.setEnabled(studio.connected and not live)
+        self.stop_button.setEnabled(studio.connected and live)
+        set_live(self.stop_button, live)
+        self.uptime_tile.set_value(clock(health.stream_duration_ms) if live else "–")
+        self.bitrate_tile.set_value(f"{health.bitrate_kbps:,} kbps" if live else "–")
+        self.dropped_tile.set_value(f"{health.network_dropped_pct:.1f}%" if live else "–")
+        rows = self.health_rows
+        if not studio.connected:
+            for value in rows.values():
+                value.setText("–")
+            rows["stream"].setText("OBS isn't connected")
+        else:
+            rows["stream"].setText(f"Live {clock(health.stream_duration_ms)}" if live else "Not streaming")
+            rows["recording"].setText(("Paused " if studio.record_paused else "Recording ")
+                                      + clock(studio.record_duration_ms) if studio.recording else "Off")
+            rows["bitrate"].setText(f"{health.bitrate_kbps:,} kbps" if live else "–")
+            rows["network"].setText(f"{health.network_dropped_pct:.1f}%" if live else "–")
+            rows["render"].setText(f"{round(health.fps)} fps, {health.render_lag_pct:.1f}% skipped")
+            rows["encode"].setText(f"{health.encode_lag_pct:.1f}% skipped")
+            rows["cpu"].setText(f"{round(health.cpu)}%")
+            rows["memory"].setText(f"{round(health.memory_mb):,} MB")
+        for key, bad in (("network", live and health.network_dropped_pct >= 1),
+                         ("render", studio.connected and health.render_lag_pct >= 1),
+                         ("encode", studio.connected and health.encode_lag_pct >= 1),
+                         ("cpu", studio.connected and health.cpu >= 85)):
+            set_props(rows[key], tone="warning" if bad else "")
+        self._scenes(studio)
+        restyle_buttons(self.start, self.stop_button, *self.record_buttons)
+
+    def _scenes(self, studio: Studio) -> None:
+        names = [(name, False) for name in studio.scenes]
+        if studio.vertical is not None:
+            names += [(name, True) for name in studio.vertical.scenes]
+        shown = [(getattr(b, "scene", None), getattr(b, "vertical", None)) for b in self._scene_buttons()]
+        current = {(studio.scene, False)} | ({(studio.vertical.scene, True)} if studio.vertical else set())
+        if shown != names:
+            for widget in self._scene_buttons():
+                self.scene_list.removeWidget(widget)
+                widget.hide()
+                widget.deleteLater()
+            for name, vertical in names:
+                widget = QPushButton(("Vertical · " if vertical else "") + name)
+                widget.scene, widget.vertical = name, vertical  # type: ignore[attr-defined]
+                widget.setProperty("ghost", True)
+                widget.setCursor(Qt.CursorShape.PointingHandCursor)
+                widget.setStyleSheet("text-align: left;")
+                widget.clicked.connect(lambda _=False, n=name, v=vertical: self.controller.switch_scene(n, v))
+                self.scene_list.addWidget(widget)
+        for widget in self._scene_buttons():
+            on = (widget.scene, widget.vertical) in current
+            widget.setIcon(lucide.icon("circle-dot" if on else "circle", colors().accent if on else colors().text_disabled, 14))
+            set_props(widget, ghost=not on, outline=on)
+        self.scenes_empty.setVisible(not names)
+        self.scenes_empty.setText("Scenes show up once OBS is connected." if not studio.connected else
+                                  "OBS has no scenes.")
+
+    def _scene_buttons(self) -> list[QPushButton]:
+        return [self.scene_list.itemAt(i).widget() for i in range(self.scene_list.count())
+                if self.scene_list.itemAt(i).widget() is not None]
 
     def _restyle(self, _palette=None) -> None:
         self._show_state()  # The chip's colours follow the mode.
-
-    def _studio(self, _studio: Studio) -> None:
-        self._show_state()
+        for card in (self.key_box, self.obs_box, self.scenes_box, self.record_box, self.health_box):
+            card.restyle()
+        for tile in (self.status_tile, self.uptime_tile, self.bitrate_tile, self.dropped_tile, self.connections_tile):
+            tile.restyle()
+        self.banner.restyle()
+        recolor_icon_button(self.refresh_outputs)
+        restyle_buttons(self.start, self.stop_button, self.check_first, self.send_key_button, self.end, self.relaunch,
+                        *self.record_buttons)
 
     def _account(self, info: AccountInfo | None) -> None:
         if info is None:
@@ -479,7 +677,6 @@ class StreamPage(QWidget):
             else "None yet. Get Stream Key reuses your saved key while it's valid (48 hours, or until you end "
                  "the LIVE)."
         )
-        self.key_state.setWordWrap(True)
         self._show_state()
 
     def _targets(self, targets: list[StreamTarget]) -> None:
@@ -504,4 +701,4 @@ class StreamPage(QWidget):
         elif found.kind == "main" and any(t.kind == "vertical" for t in targets):
             self.target_hint.setText("If Vertical Canvas is set to start with the main stream, it goes live too.")
         else:
-            self.target_hint.setText("Only this output gets the key and is started by Start Streaming.")
+            self.target_hint.setText("Only this output gets the key and is started by Go Live.")
