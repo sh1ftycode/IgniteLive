@@ -1,6 +1,5 @@
 # Builds Ignite for Windows (Setup .exe + zip), Linux (AppImage + tar.gz + Flatpak) and Android (.apk).
-# On a tag, it also pushes the Flatpak repository Ignite's Flatpak updates from to the main server
-# (ignite_web/app.py's /v1/flatpak-upload), which serves it at /flatpak/.
+# On a tag, it also publishes the Flatpak repository to GitHub Pages, so Ignite Flatpak installs can update from it.
 # Run it from the Actions tab ("Run workflow") to get the files as artifacts, or
 # push a tag like v1.2.0 to also publish a GitHub release with all of them.
 name: Build
@@ -12,6 +11,8 @@ on:
 
 permissions:
   contents: write  # The release job, on tag pushes.
+  pages: write  # The pages job: publish Flatpak to GitHub Pages.
+  id-token: write  # (Required by actions/deploy-pages.)
 
 jobs:
   build:
@@ -250,24 +251,45 @@ jobs:
           generate_release_notes: true
 
   # Pushes the Flatpak repository to the main server, which serves it at /flatpak/ (ignite_web/app.py,
-  # POST /v1/flatpak-upload). Needs the FLATPAK_UPLOAD_TOKEN repo secret to match the server's
-  # IGNITE_WEB_FLATPAK_UPLOAD_TOKEN.
-  flatpak:
+  pages:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: release
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
     steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/jekyll-build-pages@v1
+        with:
+          source: ./
+          destination: ./_site
+
+      # Jekyll leaves _site owned by root: own it so we can add the Flatpak repository.
+      - name: Own the site folder
+        run: sudo chown -R "$USER" _site
+
       - uses: actions/download-artifact@v4
         with:
           name: flatpak-repo
-          path: flatpak-repo
+          path: _site/flatpak
 
-      - name: Upload to the server
-        env:
-          TOKEN: ${{ secrets.FLATPAK_UPLOAD_TOKEN }}
-          URL: ${{ vars.FLATPAK_UPLOAD_URL || 'https://ignite.shiftytech.dev/v1/flatpak-upload' }}
+      # One-click install: software centres open .flatpakref files directly.
+      - name: Create Flatpak install file
         run: |
-          tar -cJf flatpak-repo.tar.xz -C flatpak-repo .
-          curl -sf --fail-with-body -X POST "$URL" \
-            -H "Authorization: Bearer $TOKEN" \
-            --data-binary @flatpak-repo.tar.xz
+          cat > _site/flatpak/ignite.flatpakref <<'REF'
+          [Flatpak Ref]
+          Title=Ignite
+          Name=io.github.sh1ftycode.Ignite
+          Branch=stable
+          Url=https://sh1ftycode.github.io/IgniteLive/flatpak/
+          IsRuntime=false
+          GPGKey=mDMEaw2sYBYJKwYBBAHaRw8BAQcA7L/ERfKJJsK/hbVA/j4b45UxUxfIVvFmv/PjQDCeU8b+BAMEHCzBHGlqRqD0qZtf3qKDqKyP/tBrxDT2GLqpYAFsxbXX0FqHkD2hEbPhF8wZa1b9eWkPEwEAAQ==
+          REF
+
+      - name: Upload to Pages
+        id: deploy
+        uses: actions/deploy-pages@v4
