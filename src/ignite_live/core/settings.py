@@ -122,7 +122,6 @@ class Settings:
     obs_record_while_live: bool = False  # Start recording when the stream starts, stop when it ends.
     obs_replay_while_live: bool = False  # The same for the replay buffer.
     obs_live_scene: str = ""  # Switch to this scene when the stream starts.
-    obs_warn_dropped_pct: int = 5  # Warn when OBS drops or skips this % of frames; 0 = never.
     obs_chat_clip: bool = True  # Moderators: !clip saves the replay buffer.
     obs_chat_scene: bool = False  # Moderators: !scene <name> switches scenes.
     obs_screenshot_dir: str = ""  # Empty: Pictures/Ignite.

@@ -278,13 +278,9 @@ class StreamPage(QWidget):
         metrics.setSpacing(16)
         self.status_tile = MetricCard("radio", "Status", "accent")
         self.uptime_tile = MetricCard("clock", "Uptime", "muted")
-        self.bitrate_tile = MetricCard("activity", "Bitrate", "healthy")
-        self.dropped_tile = MetricCard("triangle-alert", "Dropped frames", "warning")
         self.connections_tile = MetricCard("plug", "Chats connected", "accent")
-        for tile in (self.status_tile, self.uptime_tile, self.bitrate_tile, self.dropped_tile, self.connections_tile):
+        for tile in (self.status_tile, self.uptime_tile, self.connections_tile):
             metrics.addWidget(tile, 1)
-        # Kept names for older callers: the first redesign's tiles.
-        self.viewers_tile, self.followers_tile = self.bitrate_tile, self.dropped_tile
         page.add_layout(metrics)
 
         columns = QHBoxLayout()
@@ -464,14 +460,12 @@ class StreamPage(QWidget):
         self.record_box.body.addLayout(grid)
         right.addWidget(self.record_box)
 
-        self.health_box = Card("Health", icon="activity")
+        self.health_box = Card("Status", icon="activity")
         self.health_rows: dict[str, QLabel] = {}
         health = QGridLayout()
         health.setHorizontalSpacing(16)
         health.setVerticalSpacing(6)
-        for row, (key, name) in enumerate((("stream", "Stream"), ("recording", "Recording"), ("bitrate", "Bitrate"),
-                                           ("network", "Dropped (network)"), ("render", "Rendering"),
-                                           ("encode", "Encoding"), ("cpu", "CPU"), ("memory", "Memory"))):
+        for row, (key, name) in enumerate((("stream", "Stream"), ("recording", "Recording"))):
             health.addWidget(label(name, "muted"), row, 0)
             value = label("–")
             value.setFont(tabular(value.font()))
@@ -582,8 +576,6 @@ class StreamPage(QWidget):
         self.stop_button.setEnabled(studio.connected and live)
         set_live(self.stop_button, live)
         self.uptime_tile.set_value(clock(health.stream_duration_ms) if live else "–")
-        self.bitrate_tile.set_value(f"{health.bitrate_kbps:,} kbps" if live else "–")
-        self.dropped_tile.set_value(f"{health.network_dropped_pct:.1f}%" if live else "–")
         rows = self.health_rows
         if not studio.connected:
             for value in rows.values():
@@ -593,17 +585,6 @@ class StreamPage(QWidget):
             rows["stream"].setText(f"Live {clock(health.stream_duration_ms)}" if live else "Not streaming")
             rows["recording"].setText(("Paused " if studio.record_paused else "Recording ")
                                       + clock(studio.record_duration_ms) if studio.recording else "Off")
-            rows["bitrate"].setText(f"{health.bitrate_kbps:,} kbps" if live else "–")
-            rows["network"].setText(f"{health.network_dropped_pct:.1f}%" if live else "–")
-            rows["render"].setText(f"{round(health.fps)} fps, {health.render_lag_pct:.1f}% skipped")
-            rows["encode"].setText(f"{health.encode_lag_pct:.1f}% skipped")
-            rows["cpu"].setText(f"{round(health.cpu)}%")
-            rows["memory"].setText(f"{round(health.memory_mb):,} MB")
-        for key, bad in (("network", live and health.network_dropped_pct >= 1),
-                         ("render", studio.connected and health.render_lag_pct >= 1),
-                         ("encode", studio.connected and health.encode_lag_pct >= 1),
-                         ("cpu", studio.connected and health.cpu >= 85)):
-            set_props(rows[key], tone="warning" if bad else "")
         self._scenes(studio)
         restyle_buttons(self.start, self.stop_button, *self.record_buttons)
 
@@ -642,7 +623,7 @@ class StreamPage(QWidget):
         self._show_state()  # The chip's colours follow the mode.
         for card in (self.key_box, self.obs_box, self.scenes_box, self.record_box, self.health_box):
             card.restyle()
-        for tile in (self.status_tile, self.uptime_tile, self.bitrate_tile, self.dropped_tile, self.connections_tile):
+        for tile in (self.status_tile, self.uptime_tile, self.connections_tile):
             tile.restyle()
         self.banner.restyle()
         recolor_icon_button(self.refresh_outputs)

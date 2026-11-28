@@ -425,9 +425,6 @@ class PreferencesDialog(QDialog):
         self.obs_live_scene.setCurrentText(s.obs_live_scene)
         self.obs_live_scene.lineEdit().setPlaceholderText("Keep the current scene")
         form.addRow("Switch to scene:", self.obs_live_scene)
-        self.obs_warn = _spin(s.obs_warn_dropped_pct, 0, 50, " %")
-        self.obs_warn.setSpecialValueText("Never")
-        form.addRow("&Warn when dropping:", self.obs_warn)
         self.obs_chat_clip = QCheckBox("Moderators can type !clip to save a clip")
         self.obs_chat_clip.setChecked(s.obs_chat_clip)
         form.addRow("Chat:", self.obs_chat_clip)
@@ -993,8 +990,10 @@ class PreferencesDialog(QDialog):
         self.presence_on.setChecked(config.enabled)
         form.addRow(self.presence_on)
         self.presence_app = QLineEdit(config.app_id)
-        self.presence_app.setPlaceholderText("Empty: shows as “Playing Ignite”. Or your own application's ID")
-        form.addRow("&Application ID:", self.presence_app)
+        self.presence_app.setPlaceholderText("Empty: the one your Ignite server gives out (“Playing Ignite”)")
+        advanced = QWidget()  # Few people need their own Discord application: it stays out of the way.
+        QFormLayout(advanced).addRow("&Application ID:", self.presence_app)
+        form.addRow(disclosure("Advanced", advanced))
         self.presence_preset = QComboBox()
         self.presence_preset.addItem("Custom", "")
         for key, (label, _details, _state) in PRESENCE_PRESETS.items():
@@ -1164,7 +1163,6 @@ class PreferencesDialog(QDialog):
             obs_record_while_live=self.obs_record.isChecked(),
             obs_replay_while_live=self.obs_replay.isChecked(),
             obs_live_scene=self.obs_live_scene.currentText().strip(),
-            obs_warn_dropped_pct=self.obs_warn.value(),
             obs_chat_clip=self.obs_chat_clip.isChecked(),
             obs_chat_scene=self.obs_chat_scene.isChecked(),
             obs_screenshot_dir=self.obs_screenshots.text().strip(),

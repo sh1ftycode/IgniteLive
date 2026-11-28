@@ -55,18 +55,6 @@ class AudioInput:
     volume_db: float  # -100 (silent) .. 0
 
 
-@dataclass(frozen=True)
-class ObsStats:
-    fps: float
-    cpu: float  # Percent.
-    memory_mb: float
-    disk_mb: float
-    render_skipped: int  # Frames OBS couldn't render in time (GPU overloaded).
-    render_total: int
-    encode_skipped: int  # Frames the encoder couldn't keep up with (CPU/encoder overloaded).
-    encode_total: int
-
-
 def auth_response(password: str, salt: str, challenge: str) -> str:
     secret = base64.b64encode(hashlib.sha256((password + salt).encode()).digest())
     return base64.b64encode(hashlib.sha256(secret + challenge.encode()).digest()).decode()
@@ -386,20 +374,7 @@ class ObsClient:
     async def set_virtualcam(self, start: bool) -> None:
         await self.request("StartVirtualCam" if start else "StopVirtualCam")
 
-    # Health and tools.
-
-    async def stats(self) -> ObsStats:
-        data = await self.request("GetStats")
-        return ObsStats(
-            fps=float(data.get("activeFps") or 0),
-            cpu=float(data.get("cpuUsage") or 0),
-            memory_mb=float(data.get("memoryUsage") or 0),
-            disk_mb=float(data.get("availableDiskSpace") or 0),
-            render_skipped=int(data.get("renderSkippedFrames") or 0),
-            render_total=int(data.get("renderTotalFrames") or 0),
-            encode_skipped=int(data.get("outputSkippedFrames") or 0),
-            encode_total=int(data.get("outputTotalFrames") or 0),
-        )
+    # Tools.
 
     async def preview(self, source: str, width: int = 640) -> bytes:
         """A JPEG of a scene as OBS renders it right now (for the app's stream preview)."""

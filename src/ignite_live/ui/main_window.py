@@ -88,6 +88,8 @@ class MainWindow(QMainWindow):
         self.updates = UpdateManager(controller, self)
 
         # Screens.
+        self.guide = None  # The in-window setup guide while it is open.
+        self._guide_return = "overview"
         self.pages: dict[str, QWidget] = {}
         self.pages["chat"] = LiveChatPage(controller, self.actions)
         self.chat_panel = self.pages["chat"]  # Its history seeds a newly opened pop-out.
@@ -312,6 +314,7 @@ class MainWindow(QMainWindow):
         if key in s.closed_tabs:  # Shown again from a Ctrl+N shortcut or a link.
             s.closed_tabs = [k for k in s.closed_tabs if k != key]
             self.sidebar.set_visible_items([*self.sidebar.visible_keys(), key])
+        self._close_guide(None)  # Going somewhere else leaves the guide.
         page = self.pages[key]
         if tab and hasattr(page, "show_tab"):
             page.show_tab(tab)
@@ -363,9 +366,28 @@ class MainWindow(QMainWindow):
     # Other windows.
 
     def open_setup_guide(self) -> None:
+        """Shows the setup guide in the main window's content area; closing it returns to the page you were on."""
         from ignite_live.ui.setup_guide import SetupGuide
 
-        SetupGuide(self.controller, self).exec()
+        if self.guide is not None:  # Already open: start over from the first step.
+            self._close_guide(None)
+        else:
+            self._guide_return = getattr(self, "_current_page_key", "overview")
+        guide = self.guide = SetupGuide(self.controller)
+        self.content_stack.addWidget(guide)
+        self.content_stack.setCurrentWidget(guide)
+        self.header.set_page("Setup Guide", "Get Ignite ready for your first stream")
+        self.setWindowTitle("Ignite — Setup Guide")
+        guide.closed.connect(self._close_guide)
+
+    def _close_guide(self, _finished: bool | None) -> None:
+        guide, self.guide = self.guide, None
+        if guide is None:
+            return
+        self.content_stack.removeWidget(guide)
+        guide.deleteLater()
+        if _finished is not None:
+            self.open_page(self._guide_return)
 
     def open_logs(self) -> None:
         folder = settings_store.log_dir(self.controller.settings_path)

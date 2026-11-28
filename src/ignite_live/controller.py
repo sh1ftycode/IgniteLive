@@ -61,10 +61,12 @@ from ignite_live.integrations.backend import (
 )
 from ignite_live.integrations import dashboard
 from ignite_live.integrations.relay import RelayClient
+from ignite_live.integrations import server_health
+from ignite_live.integrations.server_health import ServerMonitor
 from ignite_live.integrations.discord_bridge import DiscordBridge, DiscordError, Forwarding, escape
 from ignite_live.integrations import obs_targets
 from ignite_live.integrations.obs import ObsClient, ObsError
-from ignite_live.integrations.obs_studio import HealthMonitor, Studio
+from ignite_live.integrations.obs_studio import Health, Studio
 from ignite_live.integrations.obs_targets import StreamTarget
 from ignite_live.integrations.servertap import ServerTap, ServerTapError, command_value, message_value
 from ignite_live.integrations.discord_ipc import DiscordIpc, DiscordIpcError
@@ -266,6 +268,7 @@ class Controller(QObject):
     chat_event = Signal(object)  # ChatEvent
     chats_cleared = Signal()  # Clear All Chats: every chat panel empties.
     hosted_changed = Signal()  # Hosted widget links turned on or off, or new links or keys.
+    server_changed = Signal(bool)  # The Ignite server started (True) or stopped (False) answering.
     tiktok_account_changed = Signal(object)
     presence_changed = Signal(str)  # Discord Rich Presence: what it's doing, for Preferences → Discord.  # {"available", "connected", "username"}: TikTok signed in on the server.
     # Signing in to the Ignite server: {"waiting": True, "code", "url"} while the website is open, then
@@ -340,7 +343,6 @@ class Controller(QObject):
         self._relaunching = False
         self._relaunch_sleep = asyncio.sleep  # Tests make the waits instant.
         self.studio = Studio()
-        self._health = HealthMonitor(self.settings.obs_warn_dropped_pct)
         self._started_with_stream: set[str] = set()  # Outputs our automations started ("record", "replay").
         self._has_multistream = False
         self._obs_task: asyncio.Task | None = None
@@ -399,6 +401,10 @@ class Controller(QObject):
         self.viewers = ViewerStore(self.settings_path.parent / "viewers.sqlite3")
         self.points = Points(self.viewers, points_config(self.settings.points))
         self._viewers_task: asyncio.Task | None = None
+        self.server_monitor = ServerMonitor()
+        self._server_probe = server_health.http_probe  # Tests swap in a fake.
+        self._server_config = server_health.fetch_config
+        self.server_discord_app_id = ""  # The Discord application the Ignite server says to show as.
         self.leaderboards = Leaderboards(self.viewers)
         self.leaderboards.currency = self.points.config.currency
         self._leaderboards_pending = False
@@ -518,6 +524,7 @@ class Controller(QObject):
         self._obs_task = asyncio.create_task(self._obs_loop())
         self._viewers_task = asyncio.create_task(self._viewers_loop())
         self._spawn_task(self._games_loop())
+        self._spawn_task(self._server_health_loop())
         self._presence_wake = asyncio.Event()
         self._spawn_task(self._presence_loop())
         self._restart_relay()
@@ -1173,11 +1180,12 @@ class Controller(QObject):
                     self._presence_ipc, sent = None, None
                     self._presence_status("Off")
                 elif activity != sent or self._presence_ipc is None:
-                    if self._presence_ipc is not None and self._presence_ipc.app_id != config.app:
+                    app_id = config.app_for(self.server_discord_app_id)
+                    if self._presence_ipc is not None and self._presence_ipc.app_id != app_id:
                         await self._presence_ipc.close()
                         self._presence_ipc = None
                     if self._presence_ipc is None:
-                        self._presence_ipc = DiscordIpc(config.app)
+                        self._presence_ipc = DiscordIpc(app_id)
                     await self._presence_ipc.set_activity(activity)
                     sent = activity
                     self._presence_status("Showing on your Discord profile" if activity else
@@ -1683,9 +1691,6 @@ class Controller(QObject):
             tts_enabled=s.tts_enabled,
             tts_state=self.statuses["tts"].state,
             tts_detail=self.statuses["tts"].detail,
-            disk_mb=studio.health.disk_mb,
-            render_lag_pct=studio.health.render_lag_pct,
-            encode_lag_pct=studio.health.encode_lag_pct,
         )
         if obs is not None:
             try:
@@ -2097,7 +2102,6 @@ class Controller(QObject):
                 self._obs = None
                 self._set_streaming(False)
                 self._set_studio(Studio())
-                self._health.reset()
                 await client.close()
             await asyncio.sleep(OBS_RETRY_SECONDS)
 
@@ -2233,20 +2237,19 @@ class Controller(QObject):
     async def _poll_health(self, client: ObsClient) -> None:
         while True:
             try:
-                stats, stream = await client.stats(), await client.stream_status()
+                stream = await client.stream_status()
                 recording = await client.record_status()
                 vertical = self.studio.vertical
                 if vertical is not None:  # The plugin sends no scene events: follow it here.
                     vertical = await obs_targets.vertical_state(client, vertical.canvas_uuid)
             except ObsError as error:
-                log.info("OBS stats unavailable: %s", error)
+                log.info("OBS state unavailable: %s", error)
             else:
-                health, warnings = self._health.sample(time.monotonic(), stats, stream)
+                health = Health(stream_duration_ms=stream.duration_ms if stream.active else 0,
+                                reconnecting=stream.reconnecting)
                 self._set_studio(replace(self.studio, health=health, recording=recording[0],
                                          record_paused=recording[1], record_duration_ms=recording[2],
                                          vertical=vertical))
-                for warning in warnings:
-                    self.notice.emit("error", warning)
             await asyncio.sleep(HEALTH_POLL_SECONDS)
 
     async def _stream_automations(self, client: ObsClient, live: bool) -> None:
@@ -2716,6 +2719,58 @@ class Controller(QObject):
         self._relay = relay
         self._relay_task = asyncio.create_task(relay.run())
 
+    @property
+    def server_up(self) -> bool:
+        """False once the Ignite server has stopped answering; hosted links then point at this PC."""
+        return self.server_monitor.up
+
+    def hosted_link(self, page: str) -> str:
+        """The link for an overlay page: the server's while it answers, this PC's when it doesn't (or isn't set up)."""
+        s = self.settings
+        if s.hosted_widgets and s.hosted_base and self.server_up:
+            return f"{s.hosted_base}/{page}"
+        return self.overlay.url(page)
+
+    async def _server_health_loop(self) -> None:
+        """Ping the Ignite server while one is set; tell the user (once) when it goes away and when it's back."""
+        watching = ""
+        while True:
+            url = self.settings.backend_url
+            if url != watching:  # A different server (or none): start from "up".
+                watching = url
+                self.server_monitor.reset()
+                self.server_discord_app_id = ""
+                if url:
+                    await self._load_server_config(url)
+            wait = server_health.CHECK_SECONDS
+            if url:
+                answered = await asyncio.to_thread(self._server_probe, url, server_health.TIMEOUT_SECONDS)
+                changed = self.server_monitor.record(answered)
+                if changed is False:
+                    log.warning("Ignite server %s isn't answering", url)
+                    self.notice.emit("error", "Your Ignite server isn't answering. Overlay links use this PC until it "
+                                              "is back.")
+                elif changed is True:
+                    log.info("Ignite server %s is answering again", url)
+                    await self._load_server_config(url)
+                    self.notice.emit("info", "The Ignite server is back. Hosted links are in use again.")
+                if changed is not None:
+                    self.server_changed.emit(changed)
+                    self._publish_dashboard()
+                wait = self.server_monitor.next_check_seconds
+            await asyncio.sleep(wait)
+
+    async def _load_server_config(self, url: str) -> None:
+        """What the server hands out to every app: today, the Discord application Rich Presence shows as."""
+        config = await asyncio.to_thread(self._server_config, url)
+        app_id = str(config.get("discord_app_id") or "")
+        if app_id != self.server_discord_app_id:
+            self.server_discord_app_id = app_id
+            log.info("Discord application from the server: %s", app_id or "(none, using the built-in one)")
+            wake = getattr(self, "_presence_wake", None)
+            if wake is not None:
+                wake.set()  # Show as the new one right away.
+
     # Hosted widgets: the overlays and the API, served by the Ignite server to any streaming app.
 
     def _hosted_send(self, kind: str, message: dict) -> None:
@@ -2871,7 +2926,7 @@ class Controller(QObject):
         self._run("sign-in", work, on_success=done)
 
     def _dashboard_payload(self) -> dict:
-        hosted = self.settings.hosted_base if self.settings.hosted_widgets else ""
+        hosted = self.settings.hosted_base if self.settings.hosted_widgets and self.server_up else ""
         # Links only when they're hosted ones: the local ones carry this PC's overlay token.
         pages = {page: {"title": title, "url": f"{hosted}/{page}" if hosted else ""}
                  for page, (title, _w, _h) in PAGES.items()}
@@ -3349,7 +3404,6 @@ class Controller(QObject):
             new = replace(new, backend_url=main_server())  # Locked: see _move_to_main_server.
         old = replace(self.settings)
         self.settings = new
-        self._health.warn_dropped_pct = new.obs_warn_dropped_pct
         settings_store.save(new, self.settings_path)
         self._apply_settings()
         if new.overlay_theme != old.overlay_theme:

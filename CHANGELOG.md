@@ -5,6 +5,33 @@ starts with its section from this file (see `.github/workflows/build.yml`).
 For versions before 1.6.1, see the
 [GitHub releases](https://github.com/sh1ftycode/IgniteLive/releases).
 
+## Unreleased
+
+### Added
+
+- **Overlay preview in the app:** Overlays → Preview with Sample Data runs the
+  selected overlay inside Ignite (16:9, with sample songs and chat). Open in
+  Browser still opens it in your web browser.
+- **Server health check:** Ignite pings your Ignite server every 15 seconds
+  (every 5 while it is down). After two missed answers it tells you once, and
+  hosted overlay links use this PC until the server is back.
+- **Discord application from the server:** a server can hand out the Discord
+  application Rich Presence shows as (`IGNITE_DISCORD_APP_ID`, served at
+  `/v1/config`). Your own Application ID, now under Advanced, still wins.
+
+### Changed
+
+- **Setup Guide is part of the main window** instead of a separate window.
+  Finish Later returns you to the page you were on.
+- **Stream preview resizes:** it fetches frames at the size it is shown, and
+  can be made smaller.
+
+### Removed
+
+- OBS performance numbers: bitrate, dropped frames, FPS, CPU and memory, the
+  "Warn when dropping" setting, and the low-disk and frame-skip checklist items.
+  OBS control (scenes, recording, clips, tuning) is unchanged.
+
 ## 1.9.1
 
 ### Changed

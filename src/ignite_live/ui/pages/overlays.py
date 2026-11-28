@@ -115,9 +115,75 @@ OPTIONS = {
 TESTABLE = ("alerts", "chat", "goals", "leaderboard", "game")
 
 
+def web_view_class():
+    """Qt's embedded browser, or None where it isn't installed (the preview then opens your browser instead)."""
+    try:
+        from PySide6.QtWebEngineWidgets import QWebEngineView
+    except ImportError:
+        return None
+    return QWebEngineView
+
+
+class LivePreview(QFrame):
+    """The overlay running inside the app on a 16:9 canvas, filled with sample data (``&demo=1``).
+
+    The browser is created the first time a preview is asked for: it's heavy, and most visits never need it."""
+
+    CANVAS = (1920, 1080)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setObjectName("inset")
+        self.view = None
+        self._url = ""
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.hint = label("Press Preview with Sample Data to see this overlay here.", "muted", wrap=True)
+        self.hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.hint)
+        self.hide()
+
+    @staticmethod
+    def available() -> bool:
+        return web_view_class() is not None
+
+    def show_url(self, url: str) -> bool:
+        """Load ``url`` in the preview; False when there's no embedded browser."""
+        cls = web_view_class()
+        if cls is None:
+            return False
+        if self.view is None:
+            self.view = cls()
+            self.view.page().setBackgroundColor(QColor(24, 24, 28))
+            self.layout().addWidget(self.view)
+            self.hint.hide()
+        self._url = url
+        self.view.setUrl(QUrl(url))
+        self.show()
+        self._fit()
+        return True
+
+    def stop(self) -> None:
+        """Unload the page so it stops running (and holding the overlay's socket) when it isn't wanted."""
+        if self.view is not None:
+            self.view.setUrl(QUrl("about:blank"))
+        self.hide()
+
+    def _fit(self) -> None:
+        """16:9 at the width available, with the page zoomed so a full 1920-wide canvas fits."""
+        width = max(1, self.width())
+        self.setFixedHeight(max(120, round(width * self.CANVAS[1] / self.CANVAS[0])))
+        if self.view is not None:
+            self.view.setZoomFactor(width / self.CANVAS[0])
+
+    def resizeEvent(self, event) -> None:  # noqa: N802 - Qt override
+        super().resizeEvent(event)
+        self._fit()
+
+
 class CanvasPreview(QFrame):
-    """The overlay's Browser Source, drawn to scale: how much of a 1080p canvas it takes. A real look at it is a
-    click away (Preview with Sample Data) — Ignite doesn't embed a browser, so this doesn't pretend to."""
+    """The overlay's Browser Source, drawn to scale: how much of a 1080p canvas it takes. The real thing runs in
+    the LivePreview beside it."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -200,6 +266,7 @@ class OverlaysPage(QWidget):
 
     def hideEvent(self, event) -> None:  # noqa: N802 - Qt override
         self._status_timer.stop()
+        self.live_preview.stop()  # Leaving the tab ends the preview.
         super().hideEvent(event)
 
     def show_tab(self, name: str) -> None:
@@ -278,22 +345,26 @@ class OverlaysPage(QWidget):
         self.url_theme.currentIndexChanged.connect(lambda _: self._fill_urls())
         theme_row.addWidget(self.url_theme, 1)
         self.details_box.body.addLayout(theme_row)
+        self.live_preview = LivePreview()
+        self.details_box.body.addWidget(self.live_preview)
         self.preview_area = CanvasPreview()
         self.details_box.body.addWidget(self.preview_area)
         buttons_row = QHBoxLayout()
         buttons_row.setSpacing(8)
         add = button("Add to OBS", "plus", kind="primary", tip="Add this overlay (or tick more) to an OBS scene")
         add.clicked.connect(lambda: self.window().open_add_overlays([self._page()]))
-        preview = button("Preview with Sample Data", "external-link",
-                         tip="Opens this overlay in your browser with sample songs and chat")
-        preview.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(self._url(self._page()) + "&demo=1")))
+        preview = button("Preview with Sample Data", "eye",
+                         tip="Shows this overlay right here with sample songs and chat")
+        preview.clicked.connect(self._preview)
+        in_browser = button("Open in Browser", "external-link", tip="Opens the sample preview in your web browser")
+        in_browser.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(self._demo_url())))
         self.test = button("Send Test", "flask")
         self.test.clicked.connect(self._send_test)
-        for widget in (add, preview, self.test):
+        for widget in (add, preview, in_browser, self.test):
             buttons_row.addWidget(widget)
         buttons_row.addStretch(1)
         self.details_box.body.addLayout(buttons_row)
-        self.row_buttons = [copy, preview, self.test, add]
+        self.row_buttons = [copy, preview, in_browser, self.test, add]
         self.description = QLabel()
         self.description.setWordWrap(True)
         self.description.setTextFormat(Qt.TextFormat.RichText)
@@ -316,6 +387,14 @@ class OverlaysPage(QWidget):
     def _page(self) -> str:
         items = self.table.selectedItems()
         return items[0].tableWidget().item(items[0].row(), 0).data(Qt.ItemDataRole.UserRole) if items else "nowplaying"
+
+    def _demo_url(self) -> str:
+        return self._url(self._page()) + "&demo=1"
+
+    def _preview(self) -> None:
+        """Run the selected overlay in the app; with no embedded browser, in the user's browser instead."""
+        if not self.live_preview.show_url(self._demo_url()):
+            QDesktopServices.openUrl(QUrl(self._demo_url()))
 
     def _url(self, page: str) -> str:
         return self.controller.overlay.url(page, self.url_theme.currentData() or "")
@@ -349,6 +428,8 @@ class OverlaysPage(QWidget):
         self.details_box.title.setText(title)
         self.url.setText(self._url(page))
         self.preview_area.set_overlay(title, width, height)
+        if not self.live_preview.isHidden():  # Follow the selection while a preview is showing.
+            self.live_preview.show_url(self._demo_url())
         self.description.setText(DESCRIPTIONS[page])
         html = []
         if OPTIONS[page]:

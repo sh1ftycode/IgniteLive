@@ -55,6 +55,8 @@ from ignite_live.ui.kit import (
 from ignite_live.ui.theme import colors, set_live, theme_changed
 
 PREVIEW_MS = 1500
+PREVIEW_MIN_WIDTH = 320
+PREVIEW_MAX_WIDTH = 1280
 RECENT_KINDS = (ChatFollow, ChatGift, ChatShare)
 MAX_EVENTS = 5
 RANGES = ((7, "Last 7 days"), (14, "Last 14 days"), (30, "Last 30 days"))
@@ -100,7 +102,7 @@ class StreamPreview(QFrame):
         super().__init__()
         self.controller = controller
         self.setObjectName("inset")
-        self.setMinimumHeight(240)
+        self.setMinimumSize(200, 120)  # Shrinks with its card; frames are fetched at whatever size it has.
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.vertical = False
         layout = QVBoxLayout(self)
@@ -129,6 +131,8 @@ class StreamPreview(QFrame):
         self._frame: QImage | None = None
         self.timer = QTimer(self, interval=PREVIEW_MS)
         self.timer.timeout.connect(self._grab)
+        self._resized = QTimer(self, interval=200, singleShot=True)  # One fresh frame once resizing settles.
+        self._resized.timeout.connect(self._grab)
         self.restyle()
         self.update_state(controller.studio)
 
@@ -150,7 +154,12 @@ class StreamPreview(QFrame):
         if not studio.connected:
             return
         vertical = studio.vertical.scene if self.vertical and studio.vertical is not None else ""
-        self.controller.grab_preview(self._show, source=vertical or "")
+        self.controller.grab_preview(self._show, width=self._frame_width(), source=vertical or "")
+
+    def _frame_width(self) -> int:
+        """Pixels to ask OBS for: as wide as the preview is on screen, within what's worth sending."""
+        wanted = round(self.image.width() * self.devicePixelRatioF())
+        return max(PREVIEW_MIN_WIDTH, min(PREVIEW_MAX_WIDTH, wanted))
 
     def _show(self, data: bytes) -> None:
         frame = QImage.fromData(data, "JPG") if data else QImage()
@@ -168,6 +177,8 @@ class StreamPreview(QFrame):
     def resizeEvent(self, event) -> None:  # noqa: N802 - Qt override
         super().resizeEvent(event)
         self._fit()
+        if self.isVisible() and self._frame is not None:
+            self._resized.start()
 
     def showEvent(self, event) -> None:  # noqa: N802 - Qt override
         super().showEvent(event)
@@ -282,7 +293,7 @@ class OverviewPage(QWidget):
         self.target.setToolTip("The OBS output Ignite starts and puts your stream key on")
         self.target.activated.connect(lambda _i: self.controller.set_stream_target(self.target.currentData()))
         form.addWidget(self.target, 0, 1)
-        form.addWidget(label("Stream Health", "muted"), 1, 0)
+        form.addWidget(label("Stream", "muted"), 1, 0)
         self.health = StatusIndicator("–", "muted")
         form.addWidget(self.health, 1, 1)
         form.setColumnStretch(1, 1)
@@ -405,13 +416,12 @@ class OverviewPage(QWidget):
         else:
             self.preview_state.set("Live" if live else "Preview", "live" if live else "healthy")
             health = studio.health
-            bad = live and (health.reconnecting or health.network_dropped_pct >= 1 or health.render_lag_pct >= 1)
             if not live:
                 self.health.set("Not streaming", "muted")
-            elif bad:
-                self.health.set(f"Trouble · {health.network_dropped_pct:.1f}% dropped", "warning")
+            elif health.reconnecting:
+                self.health.set("Reconnecting…", "warning")
             else:
-                self.health.set(f"Healthy · {health.bitrate_kbps:,} kbps", "healthy")
+                self.health.set("Live", "healthy")
         has_vertical = studio.vertical is not None
         if has_vertical and self.canvas.count() == 1:
             self.canvas.addItem("Vertical canvas", True)

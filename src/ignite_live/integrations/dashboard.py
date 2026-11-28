@@ -27,7 +27,7 @@ REMOTE_SETTINGS: dict[str, tuple[int, int] | None] = {
     "tts_command": None, "tts_skip_commands": None, "tts_skip_links": None, "tts_max_chars": (20, 500),
     "tts_volume": (0, 100), "command_prefix": None,
     "obs_record_while_live": None, "obs_replay_while_live": None, "obs_live_scene": None,
-    "obs_warn_dropped_pct": (0, 50), "obs_chat_clip": None, "obs_chat_scene": None,
+    "obs_chat_clip": None, "obs_chat_scene": None,
     "mod_hide_links": None, "mod_chat_mode": None, "blocked_words": None,
     "panic_tts": None, "panic_alerts": None, "panic_music": None, "panic_rules": None, "panic_scene": None,
     "panic_chat_command": None,

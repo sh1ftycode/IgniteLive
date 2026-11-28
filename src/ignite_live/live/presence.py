@@ -67,7 +67,11 @@ class PresenceConfig:
     @property
     def app(self) -> str:
         """The Discord application to show as: theirs, or Ignite's."""
-        return self.app_id or DEFAULT_APP_ID
+        return self.app_for()
+
+    def app_for(self, server_default: str = "") -> str:
+        """Theirs if they set one, else the one the Ignite server gives out, else Ignite's own built in."""
+        return self.app_id or (server_default if _APP_ID.match(server_default) else "") or DEFAULT_APP_ID
 
 
 @dataclass

@@ -56,9 +56,8 @@ def stream_summary(studio: Studio) -> tuple[str, str, str]:
         return "OBS offline", "muted", "Ignite isn't connected to OBS. Check Settings → Streaming."
     health = studio.health
     if studio.streaming:
-        bad = health.reconnecting or health.network_dropped_pct >= 1 or health.render_lag_pct >= 1
-        tip = (f"Live for {clock(health.stream_duration_ms)}\n{health.bitrate_kbps:,} kbps · "
-               f"{health.network_dropped_pct:.1f}% dropped frames")
+        bad = health.reconnecting
+        tip = f"Live for {clock(health.stream_duration_ms)}"
         return f"Live · {clock(health.stream_duration_ms)}", "warning" if bad else "live", tip
     return "Offline", "muted", "OBS is connected and not streaming."
 

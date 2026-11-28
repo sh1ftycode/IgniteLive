@@ -11,12 +11,10 @@ from dataclasses import dataclass
 
 from ignite_live.core.events import ConnectionState
 from ignite_live.integrations.obs import AudioInput
-from ignite_live.integrations.obs_studio import LOW_DISK_MB
 from ignite_live.integrations.obs_targets import StreamTarget
 
 OK, INFO, WARN, FAIL = "ok", "info", "warn", "fail"
 KEY_WARN_S = 2 * 3600
-LAG_WARN_PCT = 5.0
 REPLAY_SECONDS = (30, 60)  # A clip length that suits TikTok.
 SILENT_DB = -99.0
 
@@ -62,9 +60,6 @@ class Preflight:
     tts_enabled: bool = False
     tts_state: ConnectionState = ConnectionState.OFFLINE
     tts_detail: str = ""
-    disk_mb: float = 0.0
-    render_lag_pct: float = 0.0
-    encode_lag_pct: float = 0.0
 
 
 def _hours(seconds: float) -> str:
@@ -188,15 +183,6 @@ def evaluate(p: Preflight) -> list[Check]:
                   "It connects by itself once the LIVE starts."))
     if p.tts_enabled and p.tts_state is ConnectionState.ERROR:
         add(Check("tts", "Text to speech has a problem", WARN, p.tts_detail, "open:prefs-Text to speech", "Open"))
-
-    # OBS health.
-    if p.obs_connected:
-        if 0 < p.disk_mb < LOW_DISK_MB:
-            add(Check("disk", "Low disk space", WARN,
-                      f"{p.disk_mb / 1024:.1f} GB left for recordings and clips."))
-        if p.render_lag_pct >= LAG_WARN_PCT or p.encode_lag_pct >= LAG_WARN_PCT:
-            add(Check("lag", "OBS is struggling to keep up", WARN,
-                      "Frames are being skipped. Lower the resolution or frame rate, or close other apps."))
     return checks
 
 

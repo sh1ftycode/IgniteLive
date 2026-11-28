@@ -40,8 +40,7 @@ a = Analysis(
         "tkinter",
         # Not "cryptography": the Linux keychain (secretstorage) needs it.
         "ignite_live.server",
-        "PySide6.QtWebEngineCore",
-        "PySide6.QtWebEngineWidgets",
+        # QtWebEngine stays in: the Overlays tab previews overlays inside the app.
         "PySide6.QtQml",
         "PySide6.QtQuick",
         # Not QtMultimedia: text to speech (QtTextToSpeech) needs it.

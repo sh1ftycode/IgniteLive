@@ -88,7 +88,7 @@ def _run(args: argparse.Namespace, store: Store) -> int:
         print("\n".join(store.users()))
     else:
         youtube = YouTubeClient(env("YOUTUBE_KEY"))
-        web.run_app(create_app(store, youtube), host=args.host, port=args.port, access_log=None)
+        web.run_app(create_app(store, youtube, discord_app_id=env("DISCORD_APP_ID")), host=args.host, port=args.port, access_log=None)
     return 0
 
 

@@ -70,6 +70,7 @@ def create_app(
     youtube: YouTubeClient | None = None,
     key_ttl_s: float = KEY_TTL_S,
     clock: Callable[[], float] = time.time,
+    discord_app_id: str = "",
 ) -> web.Application:
     app = web.Application(client_max_size=MAX_SETTINGS_BYTES + 1024)
     app[STORE] = store
@@ -78,6 +79,10 @@ def create_app(
 
     async def health(_request: web.Request) -> web.Response:
         return web.json_response({"ok": True, "search": app[YOUTUBE].can_search})
+
+    async def public_config(_request: web.Request) -> web.Response:
+        """What every Ignite app asks for on start-up; nothing secret. The apps use their own defaults for what's empty."""
+        return web.json_response({"discord_app_id": discord_app_id})
 
     def key_payload(stored) -> dict:
         return {
@@ -158,6 +163,7 @@ def create_app(
         return web.json_response({**result, "cached": False})
 
     app.router.add_get("/v1/health", health)
+    app.router.add_get("/v1/config", public_config)
     app.router.add_get("/v1/stream-key", get_key)
     app.router.add_put("/v1/stream-key", put_key)
     app.router.add_delete("/v1/stream-key", delete_key)

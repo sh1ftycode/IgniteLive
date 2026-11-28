@@ -9,11 +9,10 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
-    QDialog,
     QFormLayout,
     QHBoxLayout,
     QHeaderView,
@@ -92,14 +91,19 @@ def body(text: str) -> QLabel:
     return label
 
 
-class SetupGuide(QDialog):
+class SetupGuide(QWidget):
+    """The setup tutorial, shown inside the main window (not a separate window).
+
+    ``closed`` fires when the user finishes or chooses Finish Later; the host then shows the page they came from.
+    """
+
+    closed = Signal(bool)  # True: finished; False: left for later.
+
     def __init__(self, controller: Controller, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.controller = controller
         self.hardware: Hardware | None = None
         self.current_obs: tuning.ObsTuning | None = None
-        self.setWindowTitle("Ignite Setup Guide")
-        self.resize(940, 660)
         outer = QVBoxLayout(self)
         main = QHBoxLayout()
         self.steps = QListWidget()
@@ -155,6 +159,12 @@ class SetupGuide(QDialog):
         controller.key_changed.connect(lambda _key: self._marks())
         controller.settings_changed.connect(lambda _s: self._marks())
         self.go(0)
+
+    def accept(self) -> None:
+        self.closed.emit(True)
+
+    def reject(self) -> None:
+        self.closed.emit(False)
 
     # Navigation.
 
@@ -590,7 +600,7 @@ class SetupGuide(QDialog):
     def _checklist(self) -> None:
         from ignite_live.ui.checklist import ChecklistDialog
 
-        ChecklistDialog(self.controller, self.parent() or self).exec()
+        ChecklistDialog(self.controller, self.window()).exec()
 
 
 def _escape(text: str) -> str:

@@ -235,6 +235,7 @@ class ApiPage(QWidget):
         page.finish()
 
         controller.hosted_changed.connect(self._fill)
+        controller.server_changed.connect(lambda _up: self._fill())
         controller.settings_changed.connect(lambda _settings: self._fill())
         controller.status_changed.connect(self._status)
         controller.account_changed.connect(self._streamlabs)
@@ -407,7 +408,9 @@ class ApiPage(QWidget):
         s, overlay = self.controller.settings, self.controller.overlay
         on = s.hosted_widgets and bool(s.hosted_base)
         server = s.backend_url or main_server()
-        if on:
+        if on and not self.controller.server_up:
+            self.hosted_state.setText("On, but the server isn't answering. Links use this PC until it's back.")
+        elif on:
             self.hosted_state.setText("On")
         elif server:
             self.hosted_state.setText("Off")
@@ -418,7 +421,7 @@ class ApiPage(QWidget):
         for part in self.hosted_parts:
             part.setEnabled(on)
         page = self.hosted_page.currentData()
-        self.hosted_url.setText(f"{s.hosted_base}/{page}" if on else "")
+        self.hosted_url.setText(self.controller.hosted_link(page) if on else "")
         self.hosted_script.setText(f'<script src="{s.hosted_base}/ignite.js"></script>' if on else "")
         self.hosted_api.setText(s.hosted_api if on else "")
         self.hosted_control.setText((keychain.load(keychain.HOSTED_CONTROL_KEY) or "") if on else "")
