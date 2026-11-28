@@ -20,9 +20,14 @@ folder (see below).
 | Remote control was a checkbox even when signed in | Signed in to an Ignite account, remote control is on and the checkbox is locked. Signing out unlocks it. | If you don't want it, sign out of the server. |
 | Discord Rich Presence Application ID in the main form | Under **Advanced**. Empty means the application your Ignite server gives out, then Ignite's own. | Nothing. A value you set still wins. |
 | Profile pictures downloaded again every session | Kept in the `images` folder for a week and used when the network can't give a new one (50 MB at most). | Nothing. Delete the folder to clear it. |
+| Preferences → Server had a **Server URL** you could type or change | The Ignite server is built into the app. There is no address to enter, it isn't shown anywhere, and it can't be changed from the settings. | Nothing: your account signs in as before. A PC that had another server saved is moved to the built-in one and signs in there again (an account on another server doesn't carry over). |
 | Hosted overlay links failed silently when the server was down | Ignite checks the server every 15 seconds; after two missed answers it tells you once, and the API tab's hosted links use this PC until the server is back. | Nothing. |
 
-## Servers you run yourself
+## For the people who run the Ignite server
+
+The app learns the server's address only from the build (the `IGNITE_MAIN_SERVER` secret in CI, written into
+`packaging/bundled_config.json`, which is not in git) or, when running from source, from the `IGNITE_MAIN_SERVER`
+environment variable. A build with neither has no server: sign-in, hosted links and remote control are off.
 
 - `GET /v1/config` is new (public, no token). It returns `{"discord_app_id": "…"}`. Set the application
   with `IGNITE_DISCORD_APP_ID`; leave it unset and apps use their built-in one. An older server without

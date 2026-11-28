@@ -337,13 +337,13 @@ class ApiPage(QWidget):
             lambda: self.controller.set_hosted_widgets(not self.controller.settings.hosted_widgets))
         self.hosted_server = QLabel()
         self.hosted_server.setTextFormat(Qt.TextFormat.PlainText)
-        server_settings = QPushButton("Server Settings")
-        server_settings.setToolTip("Your Ignite server and account are set in one place: Preferences → Server")
+        server_settings = QPushButton("Account")
+        server_settings.setToolTip("Sign in and out of your Ignite account: Preferences → Server")
         server_settings.clicked.connect(lambda: self.open_page_requested.emit("prefs-Server"))
         where = QHBoxLayout()
         where.addWidget(self.hosted_server, 1)
         where.addWidget(server_settings)
-        form.addRow("Server:", where)
+        form.addRow("Ignite account:", where)
         top = QHBoxLayout()
         top.addWidget(self.hosted_state, 1)
         top.addWidget(self.hosted_toggle)
@@ -417,10 +417,9 @@ class ApiPage(QWidget):
         s, overlay = self.controller.settings, self.controller.overlay
         on = s.hosted_widgets and bool(s.hosted_base)
         server = s.backend_url or main_server()
-        who = f" (signed in as {s.server_username})" if s.server_username else ""
-        self.hosted_server.setText(f"{s.backend_url}{who}" if s.backend_url else
-                                   (f"{main_server()}  (default, turn on below to use it)" if main_server()
-                                    else "None set"))
+        # The server's address is built in and never shown: only whether you're signed in.
+        self.hosted_server.setText(f"Signed in as {s.server_username}" if s.server_username else
+                                   ("Not signed in" if server else "This version has no Ignite server"))
         if on and not self.controller.server_up:
             self.hosted_state.setText("On, but the server isn't answering. Links use this PC until it's back.")
         elif on:
@@ -428,7 +427,7 @@ class ApiPage(QWidget):
         elif server:
             self.hosted_state.setText("Off")
         else:
-            self.hosted_state.setText("Off. Set a server in Preferences, Server.")
+            self.hosted_state.setText("Off. This version has no Ignite server.")
         self.hosted_toggle.setText("Turn Off" if s.hosted_widgets else "Turn On")
         self.hosted_toggle.setEnabled(bool(server) or s.hosted_widgets)
         for part in self.hosted_parts:

@@ -32,6 +32,9 @@ For versions before 1.6.1, see the
 
 ### Changed
 
+- **The Ignite server is built in and private:** there is no Server URL to type, it isn't shown
+  anywhere in the app or the log, and it can't be changed from the settings. Builds without a server
+  (running from source without `IGNITE_MAIN_SERVER`) simply have no account features.
 - **Preferences → Experimental:** reading TikTok chat through the Ignite server
   and changing the title while live moved here, off unless you turn them on.
 - **Remote control is on while signed in** to an Ignite account, and its

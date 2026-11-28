@@ -467,7 +467,7 @@ class MainWindow(QMainWindow):
         elif tiktok.get("connected") and tiktok.get("username"):
             name, detail = f"@{tiktok['username']}", "TikTok via your server"
         else:
-            name, detail = "Not signed in", "Local only" if not self.controller.settings.backend_url else "Server set up"
+            name, detail = "Not signed in", "Local only" if not self.controller.settings.backend_url else "Sign in for more"
         self.sidebar.account.set_account(name, detail)
         self.header.profile.set_name(name if name != "Not signed in" else "Ignite")
         self.account_section.setText(name if name != "Not signed in" else "Ignite")

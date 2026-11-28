@@ -2757,11 +2757,11 @@ class Controller(QObject):
                 answered = await asyncio.to_thread(self._server_probe, url, server_health.TIMEOUT_SECONDS)
                 changed = self.server_monitor.record(answered)
                 if changed is False:
-                    log.warning("Ignite server %s isn't answering", url)
+                    log.warning("The Ignite server isn't answering")
                     self.notice.emit("error", "Your Ignite server isn't answering. Overlay links use this PC until it "
                                               "is back.")
                 elif changed is True:
-                    log.info("Ignite server %s is answering again", url)
+                    log.info("The Ignite server is answering again")
                     await self._load_server_config(url)
                     self.notice.emit("info", "The Ignite server is back. Hosted links are in use again.")
                 if changed is not None:
@@ -2864,10 +2864,11 @@ class Controller(QObject):
     # goes where a pasted device token went, so every server feature (keys, settings, remote control, hosted
     # links) works the same way.
 
-    def sign_in_to_server(self, url: str = "") -> None:
-        url = (url or self.settings.backend_url or main_server()).strip().rstrip("/")
+    def sign_in_to_server(self) -> None:
+        url = main_server()
         if not url:
-            self.notice.emit("error", "Enter your Ignite server's address first.")
+            self.notice.emit("error", "This version of Ignite isn't connected to an Ignite server, so there is "
+                                      "nothing to sign in to.")
             return
         self.cancel_server_sign_in()
         cancelled = self._sign_in_cancel = threading.Event()
@@ -2894,7 +2895,7 @@ class Controller(QObject):
                                        remote_control=True))  # Part of having an account: see remote_control_required.
             self.check_backend(pull_settings=True)
             self.server_sign_in.emit(self.server_account())
-            self.notice.emit("info", f"Signed in to {urlsplit(url).netloc} as {username}.")
+            self.notice.emit("info", f"Signed in to your Ignite account as {username}.")
 
         def failed(error: BaseException) -> None:
             self.busy_changed.emit("sign-in", False)
@@ -2913,7 +2914,7 @@ class Controller(QObject):
         """Who this Ignite is signed in as, from what's saved (no network): None when it isn't."""
         if not (self.settings.backend_url and keychain.load(keychain.BACKEND_TOKEN)):
             return None
-        return {"username": self.settings.server_username, "server": self.settings.backend_url}
+        return {"username": self.settings.server_username}  # Never the address: the server stays private.
 
     def sign_out_of_server(self) -> None:
         """Ends this Ignite's sign-in on the server too, then forgets it here. Hosted links stop with it."""
@@ -3399,20 +3400,20 @@ class Controller(QObject):
     # Settings.
 
     def _move_to_main_server(self) -> None:
-        """Builds with a main server always use it, whatever an older version or a profile saved."""
+        """The Ignite server is built into the app: it is never set by hand, and whatever an older version or a
+        profile saved is replaced by it (or by nothing, in a build that has none)."""
         server = main_server()
-        if not server or self.settings.backend_url == server:
+        if self.settings.backend_url == server:
             return
         if self.settings.backend_url:  # Signed up with another server: its account and links don't work here.
-            log.info("Moving to the main Ignite server; signing up there again")
+            log.info("Moving to the built-in Ignite server; signing in there again")
             keychain.forget(keychain.BACKEND_TOKEN)
             self.settings = replace(self.settings, hosted_widgets=False, hosted_base="", hosted_api="")
         self.settings = replace(self.settings, backend_url=server)
         settings_store.save(self.settings, self.settings_path)
 
     def save_settings(self, new: Settings) -> None:
-        if main_server():
-            new = replace(new, backend_url=main_server())  # Locked: see _move_to_main_server.
+        new = replace(new, backend_url=main_server())  # Built in, never changed here: see _move_to_main_server.
         old = replace(self.settings)
         self.settings = new
         settings_store.save(new, self.settings_path)

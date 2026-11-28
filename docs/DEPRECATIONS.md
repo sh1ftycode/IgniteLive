@@ -14,6 +14,7 @@ Search for these markers: `git grep -n "v1 LEGACY\|DEPRECATED"`.
 |---|---|---|
 | OBS performance metrics (`HealthMonitor`, `ObsStats`, `ObsClient.stats()`), the `obs_warn_dropped_pct` setting | next after 1.9.1 | OBS shows these itself; Ignite's copy added polling and noise. |
 | The Setup Guide as a separate window (`QDialog`) | next after 1.9.1 | It is a page in the main window. |
+| The Server URL setting, and using an Ignite server other than the built-in one | next after 1.9.1 | The server is private and part of the app; see `docs/MIGRATION.md`. |
 
 ## Still kept, and when it can go
 

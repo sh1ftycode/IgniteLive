@@ -42,7 +42,6 @@ from PySide6.QtWidgets import (
 
 from ignite_live.controller import REMOTE_CONTROL, Controller, command_aliases
 from ignite_live.core import keychain
-from ignite_live.core.bundled import main_server
 from ignite_live.core.events import PLATFORMS
 from ignite_live.core.settings import COMMAND_DEFAULTS, ROLES, Settings
 from ignite_live.core.templates import BY_KEY, GROUPS, PLACEHOLDERS, SAMPLE, TEMPLATES, render, unknown_placeholders
@@ -484,18 +483,11 @@ class PreferencesDialog(QDialog):
                          "is in chat (up to about 1,000 names), and YouTube only shows who chats."))
 
         form = _tab(self.tabs, "Server")
-        self.backend_url = QLineEdit(s.backend_url)
-        self.backend_url.setPlaceholderText(main_server() or "https://ignite.example.com")
-        form.addRow("Server &URL:", self.backend_url)
-        if main_server():  # This build always uses its main server.
-            self.backend_url.setText(main_server())
-            self.backend_url.setReadOnly(True)
-            self.backend_url.setToolTip("This version of Ignite always uses this server.")
         self.sign_in_state = QLabel()
         self.sign_in_state.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.sign_in_state.setWordWrap(True)
         self.sign_in_button = QPushButton("Sign In…")
-        self.sign_in_button.setToolTip("Opens your server's website: log in there (password or Discord) and approve "
+        self.sign_in_button.setToolTip("Opens the Ignite website: log in there (password or Discord) and approve "
                                        "this PC")
         self.sign_in_button.clicked.connect(self._sign_in)
         self.sign_in_cancel = QPushButton("Cancel")
@@ -513,8 +505,7 @@ class PreferencesDialog(QDialog):
         token_form.setContentsMargins(0, 0, 0, 0)
         self.backend_token = _secret(keychain.BACKEND_TOKEN)
         token_form.addRow("Device &token:", self.backend_token)
-        token_form.addRow(note("For a plain Ignite server (ignite-server add-user NAME), or Connect a PC on an older "
-                               "Ignite Web server. Signing in replaces it."))
+        token_form.addRow(note("A device token from your Ignite account's page. Signing in replaces it."))
         form.addRow(disclosure("Use a device token instead", token_box))
         controller.server_sign_in.connect(self._show_sign_in)
         self._show_sign_in(controller.server_account())
@@ -1175,7 +1166,6 @@ class PreferencesDialog(QDialog):
             obs_chat_clip=self.obs_chat_clip.isChecked(),
             obs_chat_scene=self.obs_chat_scene.isChecked(),
             obs_screenshot_dir=self.obs_screenshots.text().strip(),
-            backend_url=self.backend_url.text().strip().rstrip("/"),
             remote_control=self.remote_control.isChecked(),
             tiktok_via_server=self.tiktok_via_server.isChecked(),
             overlay_port=self.port.value(),
@@ -1311,20 +1301,13 @@ class PreferencesDialog(QDialog):
             self.tiktok_account.setText("Your Ignite server doesn't offer TikTok sign-in")
 
     def _sign_in(self) -> None:
-        url = self.backend_url.text().strip().rstrip("/") or main_server()
-        if not url:
-            self.tabs.setCurrentIndex(TABS.index("Server"))
-            self.message.setText("Enter your Ignite server's address first.")
-            return
-        self.backend_url.setText(url)
-        self.controller.sign_in_to_server(url)
+        self.controller.sign_in_to_server()
 
     def _show_sign_in(self, state: dict | None) -> None:
         waiting = bool(state and state.get("waiting"))
         if waiting:
             self.sign_in_state.setText(f"In your browser, approve the code <b>{html.escape(state['code'])}</b>. Waiting…")
         elif state:
-            self.backend_url.setText(state.get("server", "") or self.backend_url.text())
             who = state.get("username")
             self.sign_in_state.setText(f"Signed in as <b>{html.escape(who)}</b>" if who else "Connected with a device token")
         else:
