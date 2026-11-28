@@ -5,9 +5,16 @@ starts with its section from this file (see `.github/workflows/build.yml`).
 For versions before 1.6.1, see the
 [GitHub releases](https://github.com/sh1ftycode/IgniteLive/releases).
 
-## Unreleased
+## 1.9.2
 
 ### Added
+
+- **A new look:** a calmer, dark-first design with one ember accent (red only for live), rounder
+  cards without outlines, new stat tiles, and a matching light mode. The web dashboard follows it.
+- **Command bar (Ctrl+K):** type to jump to a screen, panic, skip a song, switch an OBS scene or
+  change the theme. Nothing happens until you press Enter.
+
+### Also in this version
 
 - **Overlay preview in the app:** Overlays → Preview with Sample Data runs the
   selected overlay inside Ignite (16:9, with sample songs and chat). Open in
@@ -32,6 +39,8 @@ For versions before 1.6.1, see the
 
 ### Changed
 
+- **Setup Guide look:** one centred column with a progress bar, status tiles that turn green when
+  ready, and dashed "+ Twitch" / "+ YouTube" buttons that open Preferences.
 - **The Ignite server is built in and private:** there is no Server URL to type, it isn't shown
   anywhere in the app or the log, and it can't be changed from the settings. Builds without a server
   (running from source without `IGNITE_MAIN_SERVER`) simply have no account features. Ignite is a
