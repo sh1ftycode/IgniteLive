@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from PySide6.QtCore import QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
+from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
     QFrame,
@@ -28,6 +28,7 @@ from ignite_live.ui.icons import logo
 from ignite_live.ui.theme import colors, theme_changed, tint
 
 ICON_SIZE = 18
+ICON_GAP = 10  # Transparent room to the right of each icon: the space between it and the label.
 LOGO_SIZE = 26
 EXPANDED_WIDTH = 232
 COLLAPSED_WIDTH = 64
@@ -188,7 +189,7 @@ class Sidebar(QFrame):
         button.key = item.key  # noqa: B010 - a plain tag read back in _menu/_restyle_button
         button.setCheckable(True)
         button.setCursor(Qt.CursorShape.PointingHandCursor)
-        button.setIconSize(QSize(ICON_SIZE, ICON_SIZE))
+        button.setIconSize(QSize(ICON_SIZE + ICON_GAP, ICON_SIZE))
         button.setText(item.title)
         button.setAccessibleName(item.title)
         button.setFixedHeight(40)
@@ -263,17 +264,23 @@ class Sidebar(QFrame):
     def _restyle_button(self, button: QToolButton) -> None:
         p = colors()
         active = button.isChecked()
-        button.setIcon(lucide.icon(self.items[button.key].icon, p.on_primary if active else p.text_muted, ICON_SIZE))
+        glyph = lucide.pixmap(self.items[button.key].icon, p.accent if active else p.text_muted, ICON_SIZE)
+        wide = QPixmap(glyph.width() + ICON_GAP * glyph.devicePixelRatio(), glyph.height())
+        wide.setDevicePixelRatio(glyph.devicePixelRatio())
+        wide.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(wide)
+        painter.drawPixmap(0, 0, glyph)
+        painter.end()
+        button.setIcon(QIcon(wide))
 
     def _restyle(self, _palette=None) -> None:
         p = colors()
-        self.brand_label.setText(f'<span style="font-size:18px; font-weight:700; color:{p.text};">Ignite</span>'
-                                 f'<span style="font-size:18px; font-weight:700; color:{p.accent};">Live</span>')
+        self.brand_label.setText(f'<span style="font-size:18px; font-weight:700; color:{p.text};">Ignite</span>')
         self.setStyleSheet(f"""
             QFrame#sidebar QToolButton {{ background: transparent; color: {p.text_muted}; border: none;
                 border-radius: 8px; padding: 0 12px; text-align: left; font-size: 14px; font-weight: 500; }}
             QFrame#sidebar QToolButton:hover {{ background: {p.raised}; color: {p.text}; }}
-            QFrame#sidebar QToolButton:checked {{ background: {tint(p.primary, 0.9)}; color: {p.on_primary};
+            QFrame#sidebar QToolButton:checked {{ background: {p.raised}; color: {p.text};
                 font-weight: 600; }}
             QFrame#sidebar QToolButton:focus {{ outline: none; }}
             QFrame#accountRow {{ background: transparent; border: 1px solid {p.divider}; border-radius: 10px; }}

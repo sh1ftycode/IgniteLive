@@ -33,6 +33,7 @@ from ignite_live.ui.actions import AppActions
 from ignite_live.ui.checklist import ChecklistDialog, go_live
 from ignite_live.ui.docks import ChatPopout
 from ignite_live.ui.kit import ToastHost
+from ignite_live.ui.command_bar import open_command_bar
 from ignite_live.ui.pages.actions import ActionsPage
 from ignite_live.ui.pages.api import ApiPage
 from ignite_live.ui.pages.live_chat import LiveChatPage
@@ -222,6 +223,11 @@ class MainWindow(QMainWindow):
             action.setShortcut(QKeySequence(f"Ctrl+{number}"))
             action.triggered.connect(lambda _=False, k=key: self.open_page(k))
             self.addAction(action)
+        bar = QAction("Command bar", self)
+        bar.setShortcut(QKeySequence("Ctrl+K"))
+        bar.triggered.connect(lambda: open_command_bar(self))
+        self.addAction(bar)
+        self.command_bar_action = bar
         guide = QAction("Setup Guide", self)
         guide.setShortcut(QKeySequence("F1"))
         guide.triggered.connect(self.open_setup_guide)

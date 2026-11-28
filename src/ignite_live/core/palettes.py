@@ -56,26 +56,26 @@ class Palette:
 
 DARK = Palette(
     name="dark", dark=True,
-    window="#0B0D12", panel="#151923", raised="#1B202C", divider="#282E3A",
-    text="#F1F3F9", text_muted="#9299AA", text_disabled="#5B6274",
-    accent="#A78BFA", accent_hover="#B9A3FC", accent_pressed="#9272F2", accent_text="#A78BFA", on_accent="#1B1033",
-    live="#EF4444", live_hover="#F25F5F", live_pressed="#DC2626", on_live="#FFFFFF",
-    healthy="#22C55E", warning="#EAB308",
-    panel_alt="#131721", selected="#231D3A", pressed="#232937", handle="#333B4D",
+    window="#0E1015", panel="#151821", raised="#1C2030", divider="#262A38",
+    text="#E8EAF0", text_muted="#8B92A5", text_disabled="#555C70",
+    accent="#FF7A3D", accent_hover="#FF8F5C", accent_pressed="#EB6628", accent_text="#FF7A3D", on_accent="#1A0F08",
+    live="#F2495C", live_hover="#F5667A", live_pressed="#DB3548", on_live="#FFFFFF",
+    healthy="#3DD68C", warning="#F5B93D",
+    panel_alt="#121620", selected="#2A1D18", pressed="#232838", handle="#333A4E",
     tiktok="#25F4EE", twitch="#9146FF", youtube="#FF4E45",
-    sidebar="#10131B", primary="#7C3AED", primary_hover="#8B4CF5", primary_pressed="#6D28D9", on_primary="#FFFFFF",
+    sidebar="#0B0D12", primary="#FF7A3D", primary_hover="#FF8F5C", primary_pressed="#EB6628", on_primary="#1A0F08",
 )
 
 LIGHT = Palette(
     name="light", dark=False,
-    window="#F4F4F8", panel="#FFFFFF", raised="#F1F1F6", divider="#E2E3EA",
-    text="#14161D", text_muted="#5C6070", text_disabled="#A3A6B4",
-    accent="#7C3AED", accent_hover="#8B4CF5", accent_pressed="#6D28D9", accent_text="#6D28D9", on_accent="#FFFFFF",
-    live="#DC2626", live_hover="#E33B3B", live_pressed="#B91C1C", on_live="#FFFFFF",
-    healthy="#16A34A", warning="#B45309",
-    panel_alt="#F8F8FB", selected="#EDE7FD", pressed="#E6E6EE", handle="#D3D4DE",
+    window="#F4F1EA", panel="#FCFAF6", raised="#EAE6DD", divider="#DAD5CA",
+    text="#14161C", text_muted="#5F6678", text_disabled="#A3A6B4",
+    accent="#C94A18", accent_hover="#D4551F", accent_pressed="#B04014", accent_text="#B04014", on_accent="#FFFFFF",
+    live="#D12B3F", live_hover="#DB4457", live_pressed="#B82336", on_live="#FFFFFF",
+    healthy="#14804D", warning="#9A6200",
+    panel_alt="#F7F4EE", selected="#F6DDD0", pressed="#DDD8CD", handle="#CFCABE",
     tiktok="#0E8F8B", twitch="#6441A5", youtube="#D9302A",
-    sidebar="#FAFAFC", primary="#7C3AED", primary_hover="#8B4CF5", primary_pressed="#6D28D9", on_primary="#FFFFFF",
+    sidebar="#EDE9E0", primary="#C94A18", primary_hover="#D4551F", primary_pressed="#B04014", on_primary="#FFFFFF",
 )
 
 # Holiday modes: dark palettes in seasonal colours. Same rules as Dark: one accent for the main action and

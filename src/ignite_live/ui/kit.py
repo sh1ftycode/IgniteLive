@@ -11,7 +11,7 @@ import math
 import time
 
 from PySide6.QtCore import QEasingCurve, QPointF, QPropertyAnimation, QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFontMetrics, QLinearGradient, QPainter, QPainterPath, QPen
+from PySide6.QtGui import QColor, QFontMetrics, QIcon, QLinearGradient, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
     QFrame,
     QGraphicsOpacityEffect,
@@ -101,8 +101,15 @@ def _paint_button_icon(widget: QPushButton) -> None:
         color = p.live
     else:
         color = p.text_muted
-    widget.setIcon(lucide.icon(name, color, 16))
-    widget.setIconSize(QSize(16, 16))
+    glyph = lucide.pixmap(name, color, 16)
+    wide = QPixmap(glyph.width() + 6 * glyph.devicePixelRatio(), glyph.height())  # 6px of room before the label
+    wide.setDevicePixelRatio(glyph.devicePixelRatio())
+    wide.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(wide)
+    painter.drawPixmap(0, 0, glyph)
+    painter.end()
+    widget.setIcon(QIcon(wide))
+    widget.setIconSize(QSize(22, 16))
 
 
 def restyle_buttons(*buttons: QPushButton) -> None:
@@ -275,10 +282,10 @@ class MetricCard(QWidget):
         self.update()
 
     def sizeHint(self) -> QSize:  # noqa: N802 - Qt override
-        return QSize(220, 76)
+        return QSize(220, 92)
 
     def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt override
-        return QSize(150, 76)
+        return QSize(150, 92)
 
     def _tone_color(self) -> str:
         p = colors()
@@ -286,46 +293,44 @@ class MetricCard(QWidget):
                 "muted": p.text_muted}.get("live" if self._live else self._tone, p.accent)
 
     def paintEvent(self, _event) -> None:  # noqa: N802 - Qt override
+        """The design's stat tile: a quiet caption on top, a large value, the trend under it, a small icon at the
+        right. No outline: the panel colour against the window does the separating (red outline only while live)."""
         p = colors()
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
-        painter.setPen(QPen(QColor(p.live if self._live else p.divider), 1))
+        painter.setPen(QPen(QColor(p.live), 1) if self._live else Qt.PenStyle.NoPen)
         painter.setBrush(QColor(p.panel))
-        painter.drawRoundedRect(rect, 10, 10)
-        icon_y = (self.height() - self.ICON) / 2
-        painter.drawPixmap(QPointF(self.PAD, icon_y), lucide.pixmap(self._icon, self._tone_color(), self.ICON))
-        text_x = self.PAD + self.ICON + 14
-        trend_w = 0
-        if self._trend:
-            small = self.font()
-            small.setPixelSize(12)
-            trend_w = QFontMetrics(small).horizontalAdvance(self._trend) + 8
-            painter.setFont(small)
-            painter.setPen(QColor(p.text_muted))
-            painter.drawText(QRectF(self.width() - self.PAD - trend_w, 0, trend_w, self.height()),
-                             Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter, self._trend)
-        available = max(0.0, self.width() - text_x - self.PAD - trend_w)
-        value_font = self.font()
-        value_font.setWeight(value_font.Weight.DemiBold)
-        for size in (20, 18, 16, 15):
-            value_font.setPixelSize(size)
-            if QFontMetrics(value_font).horizontalAdvance(self._value) <= available:
-                break
-        metrics = QFontMetrics(value_font)
-        painter.setFont(value_font)
-        painter.setPen(QColor(p.live if self._live else p.text))
-        top = self.height() / 2 - metrics.height() + 2
-        painter.drawText(QRectF(text_x, top, available, metrics.height()),
-                         Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                         metrics.elidedText(self._value, Qt.TextElideMode.ElideRight, int(available)))
+        painter.drawRoundedRect(rect, 14, 14)
+        icon = 18
+        painter.drawPixmap(QPointF(self.width() - self.PAD - icon, self.PAD), lucide.pixmap(self._icon, self._tone_color(), icon))
+        text_x = self.PAD + 2
+        available = max(0.0, self.width() - text_x - self.PAD - icon - 8)
         caption = self.font()
         caption.setPixelSize(12)
         painter.setFont(caption)
         painter.setPen(QColor(p.text_muted))
-        painter.drawText(QRectF(text_x, self.height() / 2 + 2, available, 18),
-                         Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+        painter.drawText(QRectF(text_x, 12, available, 18), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                          QFontMetrics(caption).elidedText(self._label, Qt.TextElideMode.ElideRight, int(available)))
+        value_font = self.font()
+        value_font.setWeight(value_font.Weight.DemiBold)
+        full = max(0.0, self.width() - text_x - self.PAD)
+        for size in (26, 24, 20, 18, 16):
+            value_font.setPixelSize(size)
+            if QFontMetrics(value_font).horizontalAdvance(self._value) <= full:
+                break
+        metrics = QFontMetrics(value_font)
+        painter.setFont(value_font)
+        painter.setPen(QColor(p.live if self._live else p.text))
+        painter.drawText(QRectF(text_x, 30, full, metrics.height()),
+                         Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                         metrics.elidedText(self._value, Qt.TextElideMode.ElideRight, int(full)))
+        if self._trend:
+            painter.setFont(caption)
+            painter.setPen(QColor(p.healthy if self._trend.startswith("+") else p.text_muted))
+            painter.drawText(QRectF(text_x, 30 + metrics.height() + 1, full, 16),
+                             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                             QFontMetrics(caption).elidedText(self._trend, Qt.TextElideMode.ElideRight, int(full)))
 
 
 StatTile = MetricCard  # The name the first redesigned pages used.

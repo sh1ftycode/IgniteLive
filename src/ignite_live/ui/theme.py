@@ -8,7 +8,7 @@ Rules the stylesheet follows: content (chat, stream stats) stands out, the UI
 around it stays quiet. Colour only where it means something: orange for the
 main action and selection, red for live and danger, green for healthy, yellow
 for a warning. Panels are told apart by background or a 1px divider, never by
-boxes inside boxes. Corners are 6px, spacing comes in steps of 8px.
+boxes inside boxes. Corners are 10px (cards 14px), spacing comes in steps of 8px.
 
 Buttons take a style from Qt properties, set with ``set_props``:
 ``primary`` (orange), ``live`` (red, white text) and ``danger`` (red text).
@@ -58,14 +58,14 @@ THEMES = {"dark": "Dark", "light": "Light", seasons.SEASONAL: seasons.SEASONAL_L
           "thanksgiving": "Thanksgiving", "christmas": "Christmas"}
 
 # The app icon keeps its own colours, so the logo stays the same in either mode.
-LOGO_TILE = "#12152A"
-LOGO_EDGE = "#343B5E"
-LOGO_TIP = "#22C7E8"
-LOGO_BASE = "#7C6CFF"
+LOGO_TILE = "#FF7A3D"
+LOGO_EDGE = "#FF7A3D"
+LOGO_TIP = "#1A0F08"
+LOGO_BASE = "#1A0F08"
 
 BODY_PX = 13  # Body text.
 LABEL_PX = 11  # Captions: dock titles, table headers, pills.
-RADIUS = 6
+RADIUS = 10
 
 STATE_TEXT = {
     ConnectionState.CONNECTED: "Connected",
@@ -299,7 +299,7 @@ QToolButton[iconOnly="true"] {{ padding: 6px; }}
 QToolButton[iconOnly="true"]::menu-indicator {{ image: none; width: 0; }}
 
 QPushButton {{ background: {RAISED}; color: {TEXT}; border: 1px solid {DIVIDER}; border-radius: {r};
-               padding: 6px 12px; min-height: 18px; }}
+               padding: 7px 14px; min-height: 18px; font-weight: 500; }}
 QPushButton:hover {{ background: {PRESSED}; border-color: {HANDLE}; }}
 QPushButton:focus {{ border-color: {ACCENT}; }}
 QPushButton:pressed, QPushButton:checked {{ background: {PRESSED}; }}
@@ -415,13 +415,13 @@ QSplitter::handle:vertical {{ height: 1px; }}
 QStatusBar {{ background: {WINDOW}; border-top: 1px solid {DIVIDER}; color: {TEXT_MUTED}; }}
 QStatusBar::item {{ border: none; }}
 
-QLabel[role="pageTitle"] {{ font-size: 20px; font-weight: 600; color: {TEXT}; }}
+QLabel[role="pageTitle"] {{ font-size: 24px; font-weight: 600; color: {TEXT}; }}
 QLabel[role="pageSubtitle"] {{ color: {TEXT_MUTED}; }}
-QLabel[role="sectionTitle"] {{ font-size: 15px; font-weight: 600; color: {TEXT}; }}
+QLabel[role="sectionTitle"] {{ font-size: 16px; font-weight: 600; color: {TEXT}; }}
 QLabel[role="cardTitle"] {{ font-size: 14px; font-weight: 600; color: {TEXT}; }}
 QLabel[role="caption"] {{ font-size: {LABEL_PX}px; font-weight: 600; color: {TEXT_MUTED}; }}
 QLabel[role="muted"] {{ color: {TEXT_MUTED}; }}
-QLabel[role="value"] {{ font-size: 20px; font-weight: 600; color: {TEXT}; }}
+QLabel[role="value"] {{ font-size: 24px; font-weight: 600; color: {TEXT}; }}
 QLabel[role="emptyTitle"] {{ font-size: 15px; font-weight: 600; color: {TEXT}; }}
 QLabel[tone="healthy"] {{ color: {p.healthy}; }}
 QLabel[tone="warning"] {{ color: {p.warning}; }}
@@ -429,15 +429,15 @@ QLabel[tone="error"] {{ color: {LIVE}; }}
 QLabel[tone="accent"] {{ color: {ACCENT_TEXT}; }}
 QLabel[tone="muted"] {{ color: {TEXT_MUTED}; }}
 
-QFrame#card {{ background: {PANEL}; border: 1px solid {DIVIDER}; border-radius: 10px; }}
+QFrame#card {{ background: {PANEL}; border: none; border-radius: 14px; }}
 QFrame#cardHeader {{ background: transparent; border: none; border-bottom: 1px solid {DIVIDER}; }}
-QFrame#inset {{ background: {WINDOW}; border: 1px solid {DIVIDER}; border-radius: 8px; }}
+QFrame#inset {{ background: {WINDOW}; border: 1px solid {DIVIDER}; border-radius: 10px; }}
 QFrame#sidebar {{ background: {SIDEBAR}; border: none; border-right: 1px solid {DIVIDER}; }}
-QFrame#appHeader {{ background: {WINDOW}; border: none; border-bottom: 1px solid {DIVIDER}; }}
+QFrame#appHeader {{ background: {WINDOW}; border: none; }}
 QFrame#hline {{ background: {DIVIDER}; border: none; max-height: 1px; min-height: 1px; }}
 QFrame#vline {{ background: {DIVIDER}; border: none; max-width: 1px; min-width: 1px; }}
-QFrame#pill {{ background: {RAISED}; border: 1px solid {DIVIDER}; border-radius: 13px; }}
-QFrame#popover {{ background: {PANEL}; border: 1px solid {DIVIDER}; border-radius: 10px; }}
+QFrame#pill {{ background: {RAISED}; border: none; border-radius: 13px; }}
+QFrame#popover {{ background: {PANEL}; border: 1px solid {DIVIDER}; border-radius: 14px; }}
 QFrame#toast {{ background: {RAISED}; border: 1px solid {DIVIDER}; border-radius: 8px; }}
 QFrame#toast[level="error"] {{ border-color: {LIVE}; }}
 QFrame#banner {{ background: {tint(LIVE, 0.12)}; border: 1px solid {LIVE}; border-radius: 8px; }}

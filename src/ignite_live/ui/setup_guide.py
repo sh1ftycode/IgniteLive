@@ -9,11 +9,13 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QRectF, Qt, Signal
+from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFormLayout,
+    QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -37,9 +39,10 @@ from ignite_live.integrations.streamlabs import AccountInfo
 from ignite_live.overlay.server import PAGES
 from ignite_live.setup import tuning
 from ignite_live.setup.hardware import VENDOR_NAMES, Hardware
+from ignite_live.ui import lucide
 from ignite_live.ui.icons import glyph
 from ignite_live.ui.pages.stream import disclosure, note
-from ignite_live.ui.theme import colors
+from ignite_live.ui.theme import colors, set_props, theme_changed
 from ignite_live.viewers.points import clean_config as clean_points
 
 
@@ -80,8 +83,75 @@ TOUR = (
 
 def heading(text: str) -> QLabel:
     label = QLabel(text)
-    label.setStyleSheet("font-size: 20px; font-weight: 700;")
+    label.setStyleSheet("font-size: 28px; font-weight: 600;")
     return label
+
+
+def status_tile(content: QLabel, icon_name: str) -> QFrame:
+    """A rounded tile around a status line, with an icon at the left and a green outline once it's ready
+    (``set_ready``). The design's connected-channel tile."""
+    frame = QFrame()
+    frame.setObjectName("stepTile")
+    row = QHBoxLayout(frame)
+    row.setContentsMargins(14, 12, 14, 12)
+    row.setSpacing(12)
+    icon = QLabel()
+    icon.setPixmap(lucide.pixmap(icon_name, colors().text_muted, 20))
+    row.addWidget(icon)
+    row.addWidget(content, 1)
+    frame.icon_label = icon  # type: ignore[attr-defined]
+    return frame
+
+
+def set_ready(frame: QFrame, ready: bool) -> None:
+    """Green outline and a check when ``ready``; the icon goes back to muted otherwise."""
+    p = colors()
+    frame.icon_label.setPixmap(lucide.pixmap("circle-check" if ready else "circle", p.healthy if ready else p.text_muted, 20))
+    set_props(frame, ready=ready)
+
+
+def dashed_button(text: str) -> QPushButton:
+    button = QPushButton(text)
+    set_props(button, dashed=True)
+    button.setCursor(Qt.CursorShape.PointingHandCursor)
+    return button
+
+
+GUIDE_STYLE = """
+QWidget#guidePage { background: transparent; }
+QFrame#stepTile { background: %(panel)s; border: 1px solid %(divider)s; border-radius: 12px; }
+QFrame#stepTile[ready="true"] { border-color: %(healthy)s; }
+QFrame#stepTile QLabel { background: transparent; }
+QPushButton[dashed="true"] { background: transparent; color: %(muted)s; border: 1px dashed %(handle)s; border-radius: 12px;
+    padding: 12px; }
+QPushButton[dashed="true"]:hover { color: %(text)s; border-color: %(accent)s; }
+"""
+
+
+class StepBar(QWidget):
+    """One rounded segment per step: ember up to and including the current one, a quiet divider colour after."""
+
+    GAP = 6
+
+    def __init__(self, count: int) -> None:
+        super().__init__()
+        self.count = count
+        self.value = 0
+        self.setFixedHeight(4)
+
+    def set_value(self, value: int) -> None:
+        self.value = value
+        self.update()
+
+    def paintEvent(self, _event) -> None:  # noqa: N802 - Qt override
+        p = colors()
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(Qt.PenStyle.NoPen)
+        width = (self.width() - self.GAP * (self.count - 1)) / self.count
+        for i in range(self.count):
+            painter.setBrush(QColor(p.accent if i <= self.value else p.divider))
+            painter.drawRoundedRect(QRectF(i * (width + self.GAP), 0, width, self.height()), 2, 2)
 
 
 def body(text: str) -> QLabel:
@@ -105,52 +175,65 @@ class SetupGuide(QWidget):
         self.hardware: Hardware | None = None
         self.current_obs: tuning.ObsTuning | None = None
         outer = QVBoxLayout(self)
-        main = QHBoxLayout()
-        self.steps = QListWidget()
-        self.steps.setFixedWidth(190)
+        outer.setContentsMargins(24, 24, 24, 24)
+        self.steps = QListWidget()  # Holds each step's done mark; the design shows progress as the bar instead.
         for step in STEPS:
             self.steps.addItem(QListWidgetItem(step))
+        self.steps.setVisible(False)
         self.stack = QStackedWidget()
-        right = QVBoxLayout()
+        self._restyle()
+        theme_changed().connect(lambda _p=None: self._restyle())
+        column_holder = QHBoxLayout()
+        column_holder.addStretch(1)
+        column = QVBoxLayout()
+        column.setSpacing(12)
+        holder = QWidget()
+        holder.setMaximumWidth(640)
+        holder.setMinimumWidth(420)
+        holder.setLayout(column)
+        column_holder.addWidget(holder, 100)
+        column_holder.addStretch(1)
+        outer.addLayout(column_holder, 1)
+        self.progress = StepBar(len(STEPS))
+        column.addWidget(self.progress)
         self.counter = guide_note("")
-        right.addWidget(self.counter)
-        self.progress = QProgressBar()
-        self.progress.setRange(0, len(STEPS) - 1)
-        self.progress.setTextVisible(False)
-        self.progress.setFixedHeight(6)
-        right.addWidget(self.progress)
-        right.addWidget(self.stack, 1)
-        main.addWidget(self.steps)
-        main.addLayout(right, 1)
-        outer.addLayout(main, 1)
-        buttons = QHBoxLayout()
+        column.addWidget(self.counter)
+        column.addWidget(self.stack, 1)
         self.back = QPushButton("Back")
-        self.skip = QPushButton("Skip")
+        self.skip = QPushButton("Skip for now")
         self.next = QPushButton("Next")
         self.next.setDefault(True)
+        set_props(self.next, primary=True, big=True)
+        set_props(self.back, ghost=True)
+        set_props(self.skip, ghost=True)
         self.back.clicked.connect(lambda: self.go(self.stack.currentIndex() - 1))
         self.skip.clicked.connect(lambda: self.go(self.stack.currentIndex() + 1, save=False))
         self.next.clicked.connect(self._next)
-        later = QPushButton("Finish Later")
+        later = QPushButton("Finish later")
+        set_props(later, ghost=True)
         later.setToolTip("Close for now. Help → Setup Guide brings it back.")
         later.clicked.connect(self.reject)
-        buttons.addWidget(later)
-        buttons.addStretch(1)
-        for button in (self.back, self.skip, self.next):
-            buttons.addWidget(button)
-        outer.addLayout(buttons)
+        column.addWidget(self.next)
+        under = QHBoxLayout()
+        under.addWidget(self.back)
+        under.addStretch(1)
+        under.addWidget(self.skip)
+        under.addStretch(1)
+        under.addWidget(later)
+        column.addLayout(under)
 
         for step, build in zip(STEPS, (self._welcome, self._pc, self._obs, self._tune, self._tiktok, self._overlays,
                                        self._extras, self._done)):
             page = QWidget()
             layout = QVBoxLayout(page)
             layout.setSpacing(10)
-            layout.addWidget(guide_note(SUBTITLES[step]))
             build(layout)
+            layout.insertWidget(1, guide_note(SUBTITLES[step]))  # The title first, then what the step is for.
             layout.addStretch(1)
             scroll = QScrollArea()  # Long steps scroll instead of squashing on small screens.
             scroll.setWidgetResizable(True)
             scroll.setWidget(page)
+            page.setObjectName("guidePage")
             self.stack.addWidget(scroll)
         self.steps.currentRowChanged.connect(lambda row: self.go(row, save=False))
         controller.status_changed.connect(self._status)
@@ -159,6 +242,12 @@ class SetupGuide(QWidget):
         controller.key_changed.connect(lambda _key: self._marks())
         controller.settings_changed.connect(lambda _s: self._marks())
         self.go(0)
+
+    def _restyle(self) -> None:
+        p = colors()
+        self.setStyleSheet(GUIDE_STYLE % {"panel": p.panel, "divider": p.divider, "healthy": p.healthy,
+                                          "muted": p.text_muted, "handle": p.handle, "text": p.text,
+                                          "accent": p.accent})
 
     def accept(self) -> None:
         self.closed.emit(True)
@@ -182,7 +271,7 @@ class SetupGuide(QWidget):
         self.skip.setVisible(not last and index > 0)
         self.next.setText("Finish" if last else f"Next: {STEPS[index + 1]}")
         self.counter.setText(f"Step {index + 1} of {len(STEPS)}")
-        self.progress.setValue(index)
+        self.progress.set_value(index)
         self._entered(STEPS[index])
         self._marks()
 
@@ -250,11 +339,14 @@ class SetupGuide(QWidget):
 
     def _welcome(self, layout: QVBoxLayout) -> None:
         layout.addWidget(heading("Welcome to Ignite"))
+        layout.addWidget(body("Let's get your TikTok LIVE ready. By the end you'll have:"))
+        for icon, text in (("radio", "OBS connected and tuned to what your PC can handle"),
+                           ("message-square-more", "your TikTok chat coming in and a stream key in OBS"),
+                           ("layers", "overlays for song requests, alerts and chat on your stream")):
+            line = QLabel(text)
+            line.setWordWrap(True)
+            layout.addWidget(status_tile(line, icon))
         layout.addWidget(body(
-            "Let's get your TikTok LIVE ready. By the end you'll have:<ol>"
-            "<li>OBS connected and tuned to what your PC can handle</li>"
-            "<li>your TikTok chat coming in and a stream key in OBS</li>"
-            "<li>overlays for song requests, alerts and chat on your stream</li></ol>"
             "<b>Tip: sign in to your Ignite account first</b> (Preferences → Server, or the account button at the top "
             "right). It keeps your stream key for 48 hours, syncs your settings between PCs, adds song search and "
             "hosted overlay links, and lets you run Ignite from a browser or phone. It's optional.<br><br>"
@@ -320,7 +412,8 @@ class SetupGuide(QWidget):
         connect.clicked.connect(self._connect_obs)
         layout.addWidget(connect, 0, Qt.AlignmentFlag.AlignLeft)
         self.obs_status = body("")
-        layout.addWidget(self.obs_status)
+        self.obs_tile = status_tile(self.obs_status, "radio")
+        layout.addWidget(self.obs_tile)
         self._status(self.controller.statuses["obs"])
 
     def _connect_obs(self) -> None:
@@ -342,6 +435,7 @@ class SetupGuide(QWidget):
             return
         marks = {ConnectionState.CONNECTED: "Connected", ConnectionState.ERROR: "Not connected"}
         self.obs_status.setText(f"<b>{marks.get(change.state, 'Not connected yet')}</b>: {_escape(change.detail)}")
+        set_ready(self.obs_tile, change.state is ConnectionState.CONNECTED)
         self._marks()
 
     def _tune(self, layout: QVBoxLayout) -> None:
@@ -441,7 +535,8 @@ class SetupGuide(QWidget):
         layout.addWidget(body("<b>Stream key.</b> Sign in with Streamlabs, then get a key: Ignite reuses it for "
                               "48 hours, or until you end the LIVE."))
         self.account = body("")
-        layout.addWidget(self.account)
+        self.account_tile = status_tile(self.account, "user")
+        layout.addWidget(self.account_tile)
         row = QHBoxLayout()
         self.sign_in = QPushButton("Sign In with Streamlabs…")
         self.sign_in.clicked.connect(c.login_streamlabs)
@@ -455,6 +550,14 @@ class SetupGuide(QWidget):
         layout.addLayout(row)
         self.key_status = body("")
         layout.addWidget(self.key_status)
+        more = QHBoxLayout()
+        for name in ("Twitch", "YouTube"):
+            add = dashed_button(f"+ {name}")
+            add.setToolTip(f"Connect {name} chat in Preferences")
+            add.clicked.connect(self._more_channels)
+            more.addWidget(add, 1)
+        layout.addLayout(more)
+        layout.addWidget(guide_note("You can add more channels any time in Settings."))
         manual = QWidget()
         manual_form = QFormLayout(manual)
         manual_form.setContentsMargins(0, 0, 0, 0)
@@ -481,6 +584,7 @@ class SetupGuide(QWidget):
             text = (f"Signed in as <b>@{_escape(info.username)}</b>, but TikTok hasn't approved LIVE for this "
                     f"account yet ({_escape(info.application_status.lower())}).")
         self.account.setText(text)
+        set_ready(self.account_tile, info is not None and info.can_be_live)
         self.sign_in.setVisible(info is None)
         self.get_key.setEnabled(info is not None)
 
@@ -490,6 +594,11 @@ class SetupGuide(QWidget):
             "can go live." if key is not None else "No stream key yet."
         )
         self._marks()
+
+    def _more_channels(self) -> None:
+        host = self.window()
+        if hasattr(host, "open_preferences"):
+            host.open_preferences("Integrations")
 
     def _save_key(self) -> None:
         if self.key_server.text().strip() and self.key_value.text().strip():
