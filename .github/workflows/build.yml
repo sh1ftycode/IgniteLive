@@ -257,7 +257,7 @@ jobs:
     runs-on: ubuntu-latest
     environment:
       name: github-pages
-      url: ${{ steps.deploy.outputs.page_url }}
+      url: ${{ steps.deploy.outputs.page_url || steps.deploy_again.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
 
@@ -289,7 +289,24 @@ jobs:
           IsRuntime=false
           GPGKey=mDMEaw2sYBYJKwYBBAHaRw8BAQcA7L/ERfKJJsK/hbVA/j4b45UxUxfIVvFmv/PjQDCeU8b+BAMEHCzBHGlqRqD0qZtf3qKDqKyP/tBrxDT2GLqpYAFsxbXX0FqHkD2hEbPhF8wZa1b9eWkPEwEAAQ==
           REF
+          touch _site/.nojekyll
 
+      # The Pages deploy takes this artifact; without this step it finds "No artifacts named github-pages".
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      # GitHub sometimes can't find the site it was just given: try again once.
       - name: Upload to Pages
         id: deploy
+        uses: actions/deploy-pages@v4
+        continue-on-error: true
+
+      - name: Wait before trying again
+        if: steps.deploy.outcome == 'failure'
+        run: sleep 45
+
+      - name: Upload to Pages (again)
+        id: deploy_again
+        if: steps.deploy.outcome == 'failure'
         uses: actions/deploy-pages@v4

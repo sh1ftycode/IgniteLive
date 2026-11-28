@@ -1,7 +1,7 @@
-# Re-pushes the Flatpak repository to the main server from a given build, without a new release:
-# Actions tab → "Republish Flatpak" → Run workflow. The release build (build.yml) pushes it by itself;
-# this is for when that step failed or the server's copy needs redoing.
-name: Republish Flatpak
+# Republishes the website and the Flatpak repository on GitHub Pages from a release build, without a new release:
+# Actions tab -> "Republish site" -> Run workflow. The release build (build.yml) does this by itself; this is for when
+# that step failed, or the site needs redoing. It also runs when this file changes, so fixing it republishes.
+name: Republish site
 
 on:
   workflow_dispatch:
@@ -9,14 +9,26 @@ on:
       run_id:
         description: "Build run to take the Flatpak repository from (empty: the newest release's)"
         required: false
+  push:
+    branches: [main]
+    paths: [".github/workflows/pages.yml"]
 
 permissions:
   contents: read
   actions: read  # The release build's flatpak-repo artifact.
+  pages: write
+  id-token: write  # (Required by actions/deploy-pages.)
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
 
 jobs:
-  flatpak:
+  pages:
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url || steps.deploy_again.outputs.page_url }}
     steps:
       - name: Which build
         id: run
@@ -33,19 +45,55 @@ jobs:
           [ -n "$RUN_ID" ] || { echo "::error::No build run found."; exit 1; }
           echo "id=$RUN_ID" >> "$GITHUB_OUTPUT"
 
+      - uses: actions/checkout@v4
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/jekyll-build-pages@v1
+        with:
+          source: ./
+          destination: ./_site
+
+      # Jekyll leaves _site owned by root: own it so we can add the Flatpak repository.
+      - name: Own the site folder
+        run: sudo chown -R "$USER" _site
+
       - uses: actions/download-artifact@v4
         with:
           name: flatpak-repo
-          path: flatpak-repo
+          path: _site/flatpak
           run-id: ${{ steps.run.outputs.id }}
           github-token: ${{ github.token }}
 
-      - name: Upload to the server
-        env:
-          TOKEN: ${{ secrets.FLATPAK_UPLOAD_TOKEN }}
-          URL: ${{ vars.FLATPAK_UPLOAD_URL || 'https://ignite.shiftytech.dev/v1/flatpak-upload' }}
+      # Same file as build.yml's pages job: keep the two in step.
+      - name: Create Flatpak install file
         run: |
-          tar -cJf flatpak-repo.tar.xz -C flatpak-repo .
-          curl -sf --fail-with-body -X POST "$URL" \
-            -H "Authorization: Bearer $TOKEN" \
-            --data-binary @flatpak-repo.tar.xz
+          cat > _site/flatpak/ignite.flatpakref <<'REF'
+          [Flatpak Ref]
+          Title=Ignite
+          Name=io.github.sh1ftycode.Ignite
+          Branch=stable
+          Url=https://sh1ftycode.github.io/IgniteLive/flatpak/
+          IsRuntime=false
+          GPGKey=mDMEaw2sYBYJKwYBBAHaRw8BAQcA7L/ERfKJJsK/hbVA/j4b45UxUxfIVvFmv/PjQDCeU8b+BAMEHCzBHGlqRqD0qZtf3qKDqKyP/tBrxDT2GLqpYAFsxbXX0FqHkD2hEbPhF8wZa1b9eWkPEwEAAQ==
+          REF
+          touch _site/.nojekyll
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+      # GitHub sometimes can't find the site it was just given: try again once.
+      - name: Upload to Pages
+        id: deploy
+        uses: actions/deploy-pages@v4
+        continue-on-error: true
+
+      - name: Wait before trying again
+        if: steps.deploy.outcome == 'failure'
+        run: sleep 45
+
+      - name: Upload to Pages (again)
+        id: deploy_again
+        if: steps.deploy.outcome == 'failure'
+        uses: actions/deploy-pages@v4
