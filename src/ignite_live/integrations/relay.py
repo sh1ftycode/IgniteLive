@@ -104,7 +104,7 @@ class RelayClient:
         from ignite_live.integrations.backend import server_url_allowed
 
         if not server_url_allowed(base_url):
-            raise ValueError("Use an https:// server URL (plain http only works on this PC or your local network).")
+            raise ValueError("Use an https:// server URL.")
         self.url = relay_url(base_url)
         self._token = device_token
         self._on_command = on_command

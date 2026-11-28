@@ -36,31 +36,28 @@ class CachedKey:
     expires_at: float
 
 
-LAN_SUFFIXES = (".local", ".lan", ".home.arpa", ".internal")
-
-
 def server_url_allowed(url: str) -> bool:
-    """https:// anywhere; plain http:// only on this PC or the local network (a self-hosted LAN server)."""
+    """https:// anywhere. Plain http:// only to this PC, for developing against a server running on it: the
+    Ignite service itself is always https."""
     parts = urllib.parse.urlsplit(url.strip())
     if parts.scheme == "https" and parts.hostname:
         return True
     if parts.scheme != "http" or not parts.hostname:
         return False
     host = parts.hostname.lower()
-    if host == "localhost" or host.endswith(LAN_SUFFIXES):
+    if host == "localhost":
         return True
     try:
-        address = ipaddress.ip_address(host)
+        return ipaddress.ip_address(host).is_loopback
     except ValueError:
         return False
-    return address.is_loopback or address.is_private
 
 
 def register_device(base_url: str, name: str = "", transport: Transport = urllib_transport) -> str:
     """Hosted widgets on a server that makes accounts by itself: register this PC; returns its device token."""
     base_url = base_url.strip().rstrip("/")
     if not server_url_allowed(base_url):
-        raise BackendError("Use an https:// server URL (plain http only works on this PC or your local network).")
+        raise BackendError("Use an https:// server URL.")
     try:
         status, raw = transport("POST", base_url + "/v1/register",
                                 {"Content-Type": "application/json", "Accept": "application/json"},
@@ -108,7 +105,7 @@ def device_platform() -> str:
 def _post(base_url: str, path: str, body: dict, transport: Transport) -> tuple[int, dict]:
     base_url = base_url.strip().rstrip("/")
     if not server_url_allowed(base_url):
-        raise BackendError("Use an https:// server URL (plain http only works on this PC or your local network).")
+        raise BackendError("Use an https:// server URL.")
     try:
         status, raw = transport("POST", base_url + path, {"Content-Type": "application/json",
                                                           "Accept": "application/json"}, json.dumps(body).encode())
@@ -172,7 +169,7 @@ class BackendClient:
     def __init__(self, base_url: str, device_token: str, transport: Transport = urllib_transport) -> None:
         base_url = base_url.strip().rstrip("/")
         if not server_url_allowed(base_url):
-            raise BackendError("Use an https:// server URL (plain http only works on this PC or your local network).")
+            raise BackendError("Use an https:// server URL.")
         if not device_token.strip():
             raise BackendError("Enter the device token from ignite-server add-user.")
         self._base = base_url

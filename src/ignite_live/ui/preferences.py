@@ -500,13 +500,6 @@ class PreferencesDialog(QDialog):
         for button in (self.sign_in_button, self.sign_in_cancel, self.sign_out_button):
             account_row.addWidget(button)
         form.addRow("Account:", account_row)
-        token_box = QWidget()
-        token_form = QFormLayout(token_box)
-        token_form.setContentsMargins(0, 0, 0, 0)
-        self.backend_token = _secret(keychain.BACKEND_TOKEN)
-        token_form.addRow("Device &token:", self.backend_token)
-        token_form.addRow(note("A device token from your Ignite account's page. Signing in replaces it."))
-        form.addRow(disclosure("Use a device token instead", token_box))
         controller.server_sign_in.connect(self._show_sign_in)
         self._show_sign_in(controller.server_account())
         self.remote_control = QCheckBox("Allow remote control")
@@ -1255,7 +1248,6 @@ class PreferencesDialog(QDialog):
             return False
         secrets = {
             keychain.OBS_PASSWORD: self.obs_password,
-            keychain.BACKEND_TOKEN: self.backend_token,
             keychain.YOUTUBE_API_KEY: self.youtube_key,
             keychain.SIGN_API_KEY: self.sign_key,
             keychain.DISCORD_WEBHOOK: self.discord_url,
@@ -1309,7 +1301,7 @@ class PreferencesDialog(QDialog):
             self.sign_in_state.setText(f"In your browser, approve the code <b>{html.escape(state['code'])}</b>. Waiting…")
         elif state:
             who = state.get("username")
-            self.sign_in_state.setText(f"Signed in as <b>{html.escape(who)}</b>" if who else "Connected with a device token")
+            self.sign_in_state.setText(f"Signed in as <b>{html.escape(who)}</b>" if who else "Connected")
         else:
             self.sign_in_state.setText("Not signed in")
         self._remote_control_locked(bool(state and state.get("username")) and not waiting)
