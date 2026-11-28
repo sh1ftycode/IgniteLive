@@ -66,7 +66,8 @@ class PresenceConfig:
 
     @property
     def app(self) -> str:
-        """The Discord application to show as: theirs, or Ignite's."""
+        """The Discord application to show as: theirs, or Ignite's. DEPRECATED: use ``app_for`` with the server's
+        application, which this ignores. Kept for callers that only know the built-in default."""
         return self.app_for()
 
     def app_for(self, server_default: str = "") -> str:

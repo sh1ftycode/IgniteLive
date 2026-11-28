@@ -259,6 +259,7 @@ class Settings:
 
     def apply(self, values: dict, only: tuple[str, ...] | None = None) -> None:
         """Copy valid values in, ignoring unknown keys and wrong types."""
+        # v1 LEGACY (docs/DEPRECATIONS.md): older settings files; each rule below can go once nobody has them.
         if "tts_blocked_words" in values and "blocked_words" not in values:  # Before 2026-10-29: TTS only.
             values = {**values, "blocked_words": values["tts_blocked_words"]}
         if values.get("ui_theme") in ("shiftytool", "ignite"):  # Older names of the dark look.
@@ -304,7 +305,7 @@ def default_path() -> Path:
     if override:
         return Path(override) / "settings.json"
     base = _config_dir("Ignite")
-    legacy = _config_dir("ShiftyTool")  # The app's name before 1.2.
+    legacy = _config_dir("ShiftyTool")  # v1 LEGACY: the app's name before 1.2.
     if not base.exists() and legacy.is_dir():
         # Renamed, so everything in it (sounds, profiles, viewers, the log) comes along. Rules name their
         # sounds by file name only, so nothing inside points at the old path.

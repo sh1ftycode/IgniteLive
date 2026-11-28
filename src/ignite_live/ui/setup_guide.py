@@ -255,6 +255,9 @@ class SetupGuide(QWidget):
             "<li>OBS connected and tuned to what your PC can handle</li>"
             "<li>your TikTok chat coming in and a stream key in OBS</li>"
             "<li>overlays for song requests, alerts and chat on your stream</li></ol>"
+            "<b>Tip: sign in to your Ignite account first</b> (Preferences → Server, or the account button at the top "
+            "right). It keeps your stream key for 48 hours, syncs your settings between PCs, adds song search and "
+            "hosted overlay links, and lets you run Ignite from a browser or phone. It's optional.<br><br>"
             "Have OBS open before you start. Skip anything you like: <b>Help → Setup Guide</b> (F1) brings this "
             "back, and the last page shows what's left."))
 

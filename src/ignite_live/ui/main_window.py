@@ -133,6 +133,7 @@ class MainWindow(QMainWindow):
         self.header = AppHeader(self.actions.panic)
         self.header.status_clicked.connect(lambda: self.open_page("stream"))
         self.header.chat_clicked.connect(lambda: self.open_page("api"))
+        self.header.account_clicked.connect(lambda: self.open_page("prefs-Server"))
         self.notifications = NotificationCenter(self)
         self.notifications.unread_changed.connect(self.header.bell.set_unread)
         self.header.bell.clicked.connect(lambda: self.notifications.open_below(self.header.bell))
@@ -177,6 +178,8 @@ class MainWindow(QMainWindow):
             self._tray()
 
         controller.status_changed.connect(lambda _change: self.header.set_connections(controller.statuses))
+        controller.server_changed.connect(lambda _up: self._show_server())
+        controller.settings_changed.connect(lambda _s: self._show_server())
         controller.studio_changed.connect(self._studio)
         controller.notice.connect(self._notice)
         controller.browser_link.connect(self._browser_link)
@@ -190,6 +193,7 @@ class MainWindow(QMainWindow):
         self._season_timer.start()
         theme_changed().connect(self._restyle)
         self.header.set_connections(controller.statuses)
+        self._show_server()
         self._studio(controller.studio)
         self._account()
         self._restyle()
@@ -364,6 +368,10 @@ class MainWindow(QMainWindow):
         settings_store.save(self.controller.settings, self.controller.settings_path)
 
     # Other windows.
+
+    def _show_server(self) -> None:
+        c = self.controller
+        self.header.set_server(bool(c.settings.backend_url), c.server_up, c.settings.server_username)
 
     def open_setup_guide(self) -> None:
         """Shows the setup guide in the main window's content area; closing it returns to the page you were on."""

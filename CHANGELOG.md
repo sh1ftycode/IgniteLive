@@ -19,8 +19,25 @@ For versions before 1.6.1, see the
   application Rich Presence shows as (`IGNITE_DISCORD_APP_ID`, served at
   `/v1/config`). Your own Application ID, now under Advanced, still wins.
 
+- **Account button in the header:** "Sign in" until you have an account, then
+  your name, and "Server offline" when it isn't answering. The Setup Guide now
+  suggests signing in first, and the API tab shows which server it uses, with
+  one button to Preferences → Server.
+- **Pictures kept for a week:** chat profile pictures and gift icons are saved
+  in the Ignite folder (`images`, 50 MB at most) and used again at once, or when
+  the network can't give a new one.
+- Docs: `docs/MIGRATION.md` (what changes when you update, and that settings
+  carry over by themselves) and `docs/DEPRECATIONS.md` (legacy code and when it
+  can go).
+
 ### Changed
 
+- **Preferences → Experimental:** reading TikTok chat through the Ignite server
+  and changing the title while live moved here, off unless you turn them on.
+- **Remote control is on while signed in** to an Ignite account, and its
+  checkbox is locked until you sign out.
+- **Server reads are retried** twice before Ignite says the server can't be
+  reached, and every failure is logged with what was being asked.
 - **Setup Guide is part of the main window** instead of a separate window.
   Finish Later returns you to the page you were on.
 - **Stream preview resizes:** it fetches frames at the size it is shown, and

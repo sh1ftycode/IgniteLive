@@ -68,7 +68,7 @@ from ignite_live.ui.theme import resolve_theme
 
 ROLE_NAMES = {"everyone": "Everyone", "followers": "Followers (Twitch subs, YouTube members)", "mods": "Moderators"}
 TABS = ("OBS", "Chat platforms", "Server", "Song requests", "Commands", "Text to speech", "Moderation", "Messages",
-        "Discord", "Minecraft", "Appearance", "Advanced")
+        "Discord", "Minecraft", "Appearance", "Experimental", "Advanced")
 MOD_PLACES = {"tts": "Text to speech", "overlay": "Chat and alerts on stream", "discord": "Discord",
               "songs": "Song titles and requests", "rules": "Viewer names and text in rule alerts"}
 PANIC_STEPS = {"tts": "Mute text to speech", "alerts": "Clear and hold alerts", "music": "Pause the music",
@@ -140,7 +140,7 @@ SETTING_GROUPS = (
     ("Notifications", "bell", "Everything Ignite says to viewers: chat replies, overlays, speech and Discord.",
      ("Messages",)),
     ("Privacy", "shield", "Blocked words and viewers, links, and what Panic does.", ("Moderation",)),
-    ("Advanced", "wrench", "Updates, experiments and the rest.", ("Advanced",)),
+    ("Advanced", "wrench", "Updates, experiments and the rest.", ("Experimental", "Advanced")),
     ("About", "info", "Version, files and help.", ("About",)),
 )
 GROUP_OF = {section: index for index, (_name, _icon, _text, sections) in enumerate(SETTING_GROUPS)
@@ -530,15 +530,9 @@ class PreferencesDialog(QDialog):
         # REMOTE_CONTROL (controller.py) can hide it; the setting itself is kept.
         self.remote_control.setVisible(REMOTE_CONTROL)
         remote_note.setVisible(REMOTE_CONTROL)
-        self.tiktok_via_server = QCheckBox("Read TikTok chat through the server instead of this PC")
-        self.tiktok_via_server.setChecked(s.tiktok_via_server)
-        self.tiktok_via_server.setToolTip("Off by default: this PC already reads TikTok chat itself for free. "
-                                          "Turning this on routes it through the server's Euler Stream key instead, "
-                                          "which every signed-in account shares.")
-        form.addRow("", self.tiktok_via_server)
-        form.addRow(note("Leave this off unless your own connection is unreliable: the server's TikTok key is "
-                         "shared by every signed-in account, so it's best saved for dashboards reading chat while "
-                         "this PC is off, which always works regardless of this setting."))
+        self._remote_note = remote_note
+        account = controller.server_account()
+        self._remote_control_locked(bool(account and account.get("username")))
         form.addRow(note("Optional. Sign in to keep your stream key for 48 hours when the app is closed, sync "
                          "settings between computers, run song search, and use Ignite from a browser or your "
                          "phone. Every signed-in PC is listed on the website under Account, where you can sign it out."))
@@ -679,6 +673,28 @@ class PreferencesDialog(QDialog):
                          "theme. Each overlay's URL also takes options (see the Overlays tab). Fonts must be "
                          "installed on this computer."))
 
+        form = _tab(self.tabs, "Experimental")
+        form.addRow(note("These features work, but they can change or stop working without notice. They are off "
+                         "unless you turn them on."))
+        form.addRow(QLabel("<b>TikTok chat</b>"))
+        self.tiktok_via_server = QCheckBox("Read TikTok chat through the Ignite server")
+        self.tiktok_via_server.setChecked(s.tiktok_via_server)
+        self.tiktok_via_server.setToolTip("Off by default: this PC already reads TikTok chat itself for free. "
+                                          "Turning this on routes it through the server's Euler Stream key instead, "
+                                          "which every signed-in account shares.")
+        form.addRow("", self.tiktok_via_server)
+        form.addRow(note("Uses the Ignite server and may be unstable. Leave this off unless your own connection is unreliable: the server's TikTok key is "
+                         "shared by every signed-in account, so it's best saved for dashboards reading chat while "
+                         "this PC is off, which always works regardless of this setting."))
+        form.addRow(QLabel("<b>Going live</b>"))
+        self.experimental_relaunch = QCheckBox("Change the TikTok title and category while live")
+        self.experimental_relaunch.setChecked(s.experimental_relaunch)
+        form.addRow("", self.experimental_relaunch)
+        form.addRow(note("Adds Update While Live to the Stream tab. TikTok can't change a LIVE that's running, so "
+                         "Ignite gets a new Streamlabs key with the new title and category, puts it on your OBS "
+                         "output and restarts the LIVE. Viewers see it end and a new one start, and some may "
+                         "not follow. Uses Streamlabs' private API: it may stop working without notice."))
+
         form = _tab(self.tabs, "Advanced")
         self.port = _spin(s.overlay_port, 1024, 65535)
         form.addRow("Overlay &port:", self.port)
@@ -692,13 +708,6 @@ class PreferencesDialog(QDialog):
         form.addRow(note("Checks Ignite's GitHub releases every few hours and downloads a new version in the "
                          "background. It installs when you quit Ignite, or right away from the banner, never in "
                          "the middle of a stream. Help → Check for Updates checks now."))
-        self.experimental_relaunch = QCheckBox("Change the TikTok title and category while live")
-        self.experimental_relaunch.setChecked(s.experimental_relaunch)
-        form.addRow("&Experimental:", self.experimental_relaunch)
-        form.addRow(note("Adds Update While Live to the Stream tab. TikTok can't change a LIVE that's running, so "
-                         "Ignite gets a new Streamlabs key with the new title and category, puts it on your OBS "
-                         "output and restarts the LIVE. Viewers see it end and a new one start, and some may "
-                         "not follow. Uses Streamlabs' private API: it may stop working without notice."))
 
         self.message = QLabel("")
         self.message.setWordWrap(True)
@@ -1320,9 +1329,20 @@ class PreferencesDialog(QDialog):
             self.sign_in_state.setText(f"Signed in as <b>{html.escape(who)}</b>" if who else "Connected with a device token")
         else:
             self.sign_in_state.setText("Not signed in")
+        self._remote_control_locked(bool(state and state.get("username")) and not waiting)
         self.sign_in_button.setVisible(not waiting and not state)
         self.sign_in_cancel.setVisible(waiting)
         self.sign_out_button.setVisible(bool(state) and not waiting)
+
+    def _remote_control_locked(self, signed_in: bool) -> None:
+        """Signed in to an account, remote control is on and stays on until you sign out."""
+        if not hasattr(self, "_remote_note"):
+            return
+        if signed_in:
+            self.remote_control.setChecked(True)
+        self.remote_control.setEnabled(not signed_in)
+        self.remote_control.setToolTip("Remote control is on for your Ignite account. Sign out to change it."
+                                       if signed_in else "")
 
     @staticmethod
     def _command_clash(s: Settings) -> str:

@@ -50,6 +50,19 @@ def connection_summary(statuses: dict) -> tuple[str, str, str]:
     return "Chat not connected", "muted", tip
 
 
+def server_summary(configured: bool, up: bool, user: str = "") -> tuple[str, str, str]:
+    """(text, tone, tooltip) for the Ignite account and server."""
+    if not configured:
+        return "Sign in", "accent", ("Sign in to your Ignite account: your stream key is kept for 48 hours, settings "
+                                     "sync between PCs, you get song search, hosted overlay links, and you can run "
+                                     "Ignite from a browser or phone. Click to sign in.")
+    who = f"@{user}" if user else "your Ignite server"
+    if up:
+        return (f"@{user}" if user else "Server"), "healthy", f"Signed in as {who}. The server is answering."
+    return "Server offline", "warning", (f"The server for {who} isn't answering. Overlay links use this PC until it "
+                                         "is back; Ignite keeps checking.")
+
+
 def stream_summary(studio: Studio) -> tuple[str, str, str]:
     """(text, tone, tooltip) for OBS's main output."""
     if not studio.connected:
@@ -216,6 +229,7 @@ class AppHeader(QFrame):
 
     status_clicked = Signal()
     chat_clicked = Signal()
+    account_clicked = Signal()  # The account pill: sign in, or see which server this is.
 
     def __init__(self, panic_action) -> None:
         super().__init__()
@@ -240,6 +254,9 @@ class AppHeader(QFrame):
         self.stream = Pill("OBS offline")
         self.stream.clicked.connect(self.status_clicked.emit)
         layout.addWidget(self.stream, 0, Qt.AlignmentFlag.AlignVCenter)
+        self.server = Pill("Sign in")  # Your Ignite account and server: always here, so it is easy to find.
+        self.server.clicked.connect(self.account_clicked.emit)
+        layout.addWidget(self.server, 0, Qt.AlignmentFlag.AlignVCenter)
         layout.addWidget(vline())
 
         # Panic is never tucked into a menu: one click, always in the same place.
@@ -266,6 +283,9 @@ class AppHeader(QFrame):
     def set_connections(self, statuses: dict) -> None:
         text, tone, tip = connection_summary(statuses)
         self.connection.set(text, tone, tip + "\n\nClick for Integrations.")
+
+    def set_server(self, configured: bool, up: bool, user: str = "") -> None:
+        self.server.set(*server_summary(configured, up, user))
 
     def set_stream(self, studio: Studio) -> None:
         text, tone, tip = stream_summary(studio)

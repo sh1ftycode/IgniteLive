@@ -7,6 +7,7 @@ import keyring
 from keyring.errors import KeyringError
 
 SERVICE = "Ignite"
+# v1 LEGACY: see docs/DEPRECATIONS.md.
 LEGACY_SERVICE = "ShiftyTool"  # The app's name before 1.2; read once, then copied to SERVICE.
 
 STREAMLABS_TOKEN = "streamlabs-token"

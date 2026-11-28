@@ -23,6 +23,7 @@ from ignite_live.actions.rules import SOUND_NAME, new_id, parse_rules
 from ignite_live.core.settings import Settings
 
 FORMAT = "ignite-profile"
+# v1 LEGACY: see docs/DEPRECATIONS.md.
 LEGACY_FORMAT = "shiftytool-profile"  # Profiles made before the rename to Ignite.
 VERSION = 1
 EXTENSION = ".igniteprofile"

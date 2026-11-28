@@ -2600,7 +2600,7 @@ class Controller(QObject):
     # Experimental: a new title or category while live.
 
     def relaunch_live(self, title: str, category_id: str, audience: str = "0") -> None:
-        """Change the TikTok title or category mid-stream (Preferences → Advanced; experimental).
+        """Change the TikTok title or category mid-stream (Preferences → Experimental).
 
         Streamlabs can't edit a LIVE that's running, so this gets a new key with the new title and category,
         stops the chosen OBS output, ends the old LIVE, puts the new key on the output and starts it again.
@@ -2608,7 +2608,7 @@ class Controller(QObject):
         leaderboards, the stream report and record-while-live carry on.
         """
         if not self.settings.experimental_relaunch:
-            self.notice.emit("error", "Turn on “Change title and category while live” in Preferences → Advanced first.")
+            self.notice.emit("error", "Turn on “Change title and category while live” in Preferences → Experimental first.")
             return
         provider = self._provider
         if provider is None:
@@ -2681,7 +2681,7 @@ class Controller(QObject):
     def _restart_relay(self) -> None:
         """On the event loop: (re)connect to the server's relay, or stop, to match the settings."""
         token = keychain.load(keychain.BACKEND_TOKEN)
-        remote = REMOTE_CONTROL and self.settings.remote_control
+        remote = self.remote_control_on
         wanted = (self.settings.backend_url, token) if remote or self.settings.hosted_widgets else None
         running = self._relay_task is not None and not self._relay_task.done()
         if running and wanted == self._relay_target:
@@ -2705,7 +2705,7 @@ class Controller(QObject):
         try:
             relay = RelayClient(self.settings.backend_url, token, self._run_command, on_status,
                                 on_player=self._remote_player,
-                                allow_commands=lambda: REMOTE_CONTROL and self.settings.remote_control,
+                                allow_commands=lambda: self.remote_control_on,
                                 snapshot=self._hosted_snapshot, on_fetch=self._hosted_file,
                                 local=lambda: self.overlay.local_fallback() if self.settings.hosted_widgets else None)
             # Hosted pages from this server may fall back to this PC's overlays when it doesn't answer.
@@ -2718,6 +2718,16 @@ class Controller(QObject):
             relay.publish(kind, data)
         self._relay = relay
         self._relay_task = asyncio.create_task(relay.run())
+
+    @property
+    def remote_control_required(self) -> bool:
+        """Signed in to an Ignite account: remote control is part of that, and can't be switched off here.
+        (Sign out to turn it off.)"""
+        return REMOTE_CONTROL and bool(self.settings.backend_url and self.settings.server_username)
+
+    @property
+    def remote_control_on(self) -> bool:
+        return REMOTE_CONTROL and (self.settings.remote_control or self.remote_control_required)
 
     @property
     def server_up(self) -> bool:
@@ -2880,7 +2890,8 @@ class Controller(QObject):
                 self.server_sign_in.emit(None)
                 self.notice.emit("error", "No system keychain was found, so Ignite can't stay signed in.")
                 return
-            self.save_settings(replace(self.settings, backend_url=url, server_username=username))
+            self.save_settings(replace(self.settings, backend_url=url, server_username=username,
+                                       remote_control=True))  # Part of having an account: see remote_control_required.
             self.check_backend(pull_settings=True)
             self.server_sign_in.emit(self.server_account())
             self.notice.emit("info", f"Signed in to {urlsplit(url).netloc} as {username}.")

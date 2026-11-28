@@ -4,15 +4,22 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import logging
 import socket
 import sys
 import threading
+import time
 import urllib.parse
 from dataclasses import dataclass
 
 from ignite_live.core.http import Transport, TransportError, urllib_transport
 from ignite_live.integrations.streamlabs import StreamCredentials
 from ignite_live.music.youtube import Track
+
+log = logging.getLogger("ignite")
+
+# A read that can't get through is tried again after these waits (seconds); writes are never repeated.
+RETRY_DELAYS = (0.5, 1.0)
 
 
 class BackendError(Exception):
@@ -171,6 +178,7 @@ class BackendClient:
         self._base = base_url
         self._token = device_token.strip()
         self._transport = transport
+        self._sleep = time.sleep  # Tests make the waits instant.
 
     # A server can choose not to keep stream keys (HTTP 410): then they stay in this PC's keychain, as without one.
 
@@ -279,10 +287,19 @@ class BackendClient:
         if body is not None:
             headers["Content-Type"] = "application/json"
             data = json.dumps(body).encode()
-        try:
-            status, raw = self._transport(method, self._base + path, headers, data)
-        except TransportError as error:
-            raise BackendError("Could not reach the Ignite backend.") from error
+        delays = iter(RETRY_DELAYS if method == "GET" else ())  # Only reads: a repeated write could happen twice.
+        while True:
+            try:
+                status, raw = self._transport(method, self._base + path, headers, data)
+                break
+            except TransportError as error:
+                wait = next(delays, None)
+                if wait is None:
+                    log.warning("Ignite server unreachable: %s %s (%s)", method, path, error)
+                    raise BackendUnreachable("Could not reach the Ignite server. Check your connection; Ignite "
+                                             "keeps trying.") from error
+                log.info("Ignite server did not answer %s %s (%s); trying again in %.1f s", method, path, error, wait)
+                self._sleep(wait)
         try:
             payload = json.loads(raw) if raw else {}
         except (json.JSONDecodeError, UnicodeDecodeError):
@@ -291,6 +308,8 @@ class BackendClient:
             raise BackendError(str(payload.get("error") or "Sign in to TikTok again on the website."))
         if status == 401:
             raise BackendError("The backend rejected this device token.")
+        if status >= 500:
+            log.warning("Ignite server error: %s %s -> HTTP %s", method, path, status)
         if status >= 400 and status not in (404, 410):
             raise BackendError(str(payload.get("error") or f"Backend returned HTTP {status}."))
         return status, payload if isinstance(payload, dict) else {}

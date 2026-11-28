@@ -20,6 +20,8 @@ from PySide6.QtWidgets import (
     QStyleOptionViewItem,
 )
 
+from ignite_live.core import settings as settings_store
+from ignite_live.core.image_store import ImageStore
 from ignite_live.core.images import allowed_image_url
 from ignite_live.core.events import PLATFORMS, ChatComment, ChatEvent, ChatFollow, ChatGift, ChatJoin, ChatUser
 from ignite_live.ui.theme import RADIUS, colors, tint_color
@@ -76,12 +78,13 @@ def opacity(arrived: float | None, now: float) -> float:
 
 
 class ImageCache(QObject):
-    """Downloads avatars and gift icons once, keeps them in memory."""
+    """Downloads avatars and gift icons once, keeps them in memory and (``store``) on disk for a week."""
 
     loaded = Signal(str)
 
-    def __init__(self) -> None:
+    def __init__(self, store: ImageStore | None = None) -> None:
         super().__init__()
+        self._store = store
         self._network = QNetworkAccessManager(self)
         self._images: dict[str, QImage] = {}
         self._pending: set[str] = set()
@@ -91,12 +94,17 @@ class ImageCache(QObject):
         image = self._images.get(url)
         if image is None and url and url not in self._pending and url not in self._failed:
             self._fetch(url)
+            image = self._images.get(url)  # Already there if the disk had it.
         return image
 
     def _fetch(self, url: str) -> None:
         if not allowed_image_url(url):
             self._failed.add(url)
             return
+        if self._store is not None:
+            saved = self._store.fresh(url)
+            if saved is not None and self._keep(url, saved):
+                return
         request = QNetworkRequest(QUrl(url))
         request.setTransferTimeout(10_000)
         reply = self._network.get(request)
@@ -108,14 +116,26 @@ class ImageCache(QObject):
         self._pending.discard(url)
         data = reply.read(MAX_IMAGE_BYTES + 1)
         reply.deleteLater()
-        image = QImage()
-        if reply.error() != QNetworkReply.NetworkError.NoError or len(data) > MAX_IMAGE_BYTES or not image.loadFromData(data):
-            self._failed.add(url)
+        if reply.error() != QNetworkReply.NetworkError.NoError or len(data) > MAX_IMAGE_BYTES or not QImage().loadFromData(data):
+            # No new picture: an old copy beats a letter in a circle.
+            old = self._store.stale(url) if self._store is not None else None
+            if old is None or not self._keep(url, old, emit=True):
+                self._failed.add(url)
             return
+        if self._store is not None:
+            self._store.save(url, data)
+        self._keep(url, data, emit=True)
+
+    def _keep(self, url: str, data: bytes, emit: bool = False) -> bool:
+        image = QImage()
+        if len(data) > MAX_IMAGE_BYTES or not image.loadFromData(data):
+            return False
         if len(self._images) >= MAX_CACHED_IMAGES:
             self._images.pop(next(iter(self._images)))  # Oldest first.
         self._images[url] = image.scaled(96, 96, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation)
-        self.loaded.emit(url)
+        if emit:
+            self.loaded.emit(url)
+        return True
 
 
 _cache: ImageCache | None = None
@@ -124,7 +144,7 @@ _cache: ImageCache | None = None
 def image_cache() -> ImageCache:
     global _cache
     if _cache is None:
-        _cache = ImageCache()
+        _cache = ImageCache(ImageStore(settings_store.default_path().parent / "images"))
     return _cache
 
 

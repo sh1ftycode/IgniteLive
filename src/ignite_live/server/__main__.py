@@ -27,7 +27,7 @@ from ignite_live.server.store import Store, load_or_create_secret
 
 
 def env(name: str) -> str:
-    """$IGNITE_<name>, or $SHIFTYTOOL_<name> from before the rename to Ignite."""
+    """$IGNITE_<name>, or $SHIFTYTOOL_<name> from before the rename to Ignite (v1 LEGACY: docs/DEPRECATIONS.md)."""
     return os.environ.get(f"IGNITE_{name}") or os.environ.get(f"SHIFTYTOOL_{name}", "")
 
 
