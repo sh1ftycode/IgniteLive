@@ -8,4 +8,4 @@ import concurrent.futures as _futures
 # never uses it, and it would load multiprocessing at every start.)
 _futures.ThreadPoolExecutor  # noqa: B018
 
-__version__ = "1.9.2"
+__version__ = "1.9.3"

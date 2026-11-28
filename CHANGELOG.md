@@ -5,9 +5,9 @@ starts with its section from this file (see `.github/workflows/build.yml`).
 For versions before 1.6.1, see the
 [GitHub releases](https://github.com/sh1ftycode/IgniteLive/releases).
 
-## Unreleased
+## 1.9.3
 
-### Changed
+### New and changed
 
 - **Overview rebuilt to match the design:** four stat tiles (Viewers with a small trend line, Chat per min,
   Gifts, New followers), the chat beside the stream preview and go-live controls, **Scenes you can switch from
@@ -16,7 +16,6 @@ For versions before 1.6.1, see the
 - **Chat rows follow the design:** name first, a blue Mod badge, the platform as a quiet word, neutral avatars.
 - **Inter is now bundled** (SIL Open Font License), so Ignite looks the same on every PC.
 - Shortcut letters (underlined) no longer show in Settings forms; the shortcuts still work. Menus keep them.
-
 - **Setup guide rebuilt as the design's five steps**, full window: Account, Connect your channel, Pick a look,
   Add it to OBS, then Test everything and Go live. PC and OBS tuning, the OBS connection, text to speech, loyalty
   points, the panic scene and the stream key are all still there, tucked into the step they belong to.
