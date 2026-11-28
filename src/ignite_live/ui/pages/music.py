@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -27,6 +29,7 @@ from ignite_live.music.commands import CommandKind
 from ignite_live.ui.actions import AppActions, action_button
 from ignite_live.ui.kit import Card, PageContainer
 from ignite_live.ui.live_widgets import MusicBar
+from ignite_live.ui.music_player import AppPlayer
 from ignite_live.ui.pages.stream import buttons, note
 from ignite_live.ui.theme import theme_changed
 
@@ -66,9 +69,10 @@ def read_only_table(headers: list[str], min_rows: int = 3) -> QTableWidget:
     table.setHorizontalHeaderLabels(headers)
     table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
     table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-    table.setAlternatingRowColors(True)
+    table.setShowGrid(False)  # The design separates rows with a hairline, not a grid or stripes.
     table.verticalHeader().setVisible(False)
-    row = table.fontMetrics().height() + 8
+    table.horizontalHeader().setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+    row = table.fontMetrics().height() + 20
     table.verticalHeader().setDefaultSectionSize(row)
     table.setMinimumHeight(table.horizontalHeader().sizeHint().height() + min_rows * row + 2 * table.frameWidth())
     return table
@@ -90,6 +94,24 @@ class MusicPage(QWidget):
         page.add(grid_holder, 1)
         grid.setColumnStretch(0, 3)
         grid.setColumnStretch(1, 2)
+
+        # Ignite's own player: the song plays here (and shows its cover); the overlay in OBS just shows it too.
+        self.player_box = player = Card("Player")
+        self.in_app = QCheckBox()
+        self.in_app.setAccessibleName("Play music in Ignite")
+        self.in_app.setToolTip("Play the songs in Ignite instead of the Now Playing overlay in OBS")
+        header_row = QHBoxLayout()
+        header_row.addWidget(QLabel("Play music in Ignite"), 1)
+        header_row.addWidget(self.in_app)
+        player.body.addLayout(header_row)
+        self.player_note = note("")
+        player.body.addWidget(self.player_note)
+        self.player = AppPlayer(controller)
+        player.body.addWidget(self.player)
+        self.in_app.toggled.connect(self._in_app_toggled)
+        controller.settings_changed.connect(lambda _s: self._fill_player())
+        page.layout_.insertWidget(0, player)  # Above the rest.
+        self._fill_player()
 
         # Now playing.
         self.playing_box = playing = Card("Now playing", icon="music", primary=True)
@@ -221,6 +243,25 @@ class MusicPage(QWidget):
             self.commands.setItem(row_index, 0, QTableWidgetItem(command))
             self.commands.setItem(row_index, 1, QTableWidgetItem(meaning))
         self.commands.resizeRowsToContents()
+
+    def _in_app_toggled(self, on: bool) -> None:
+        s = self.controller.settings
+        if on != s.music_in_app:
+            self.controller.save_settings(replace(s, music_in_app=on))
+
+    def _fill_player(self) -> None:
+        on = self.controller.settings.music_in_app
+        self.in_app.blockSignals(True)
+        self.in_app.setChecked(on)
+        self.in_app.blockSignals(False)
+        running = self.player.set_enabled(on)
+        if running:
+            self.player_note.setText("Songs play here, on this PC, and show their album cover. In OBS, add Ignite's "
+                                     "audio (Application Audio Capture for Ignite, or Desktop Audio). The Now "
+                                     "Playing overlay then only shows the cover, title and what's next.")
+        else:
+            self.player_note.setText("Off: the Now Playing overlay in OBS plays the music (tick Control audio via "
+                                     "OBS on it). Turn this on to play songs here instead.")
 
     def _request(self) -> None:
         text = self.request.text().strip()

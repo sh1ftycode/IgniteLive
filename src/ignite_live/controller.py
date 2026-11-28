@@ -16,7 +16,7 @@ import os
 import secrets
 import threading
 import time
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit
 from dataclasses import asdict, fields, replace
 from pathlib import Path
 from typing import Callable
@@ -481,6 +481,9 @@ class Controller(QObject):
             lambda people: self._publish("audience", dashboard.audience_payload(people, self.stats_snapshot)))
         self.settings_changed.connect(lambda _settings: self._publish_dashboard())
         self.hosted_changed.connect(self._publish_dashboard)
+        self._hosted_auto_tried = False
+        self.hosted_changed.connect(self._repoint_soon)
+        self.server_changed.connect(self._repoint_soon)
         self.stream_report_ready.connect(lambda _path: self._publish_reports())
         self._reports: list[dict] = []
 
@@ -1689,6 +1692,7 @@ class Controller(QObject):
             replay_starts_with_stream=s.obs_replay_while_live,
             tiktok_username=s.tiktok_username,
             tts_enabled=s.tts_enabled,
+            music_in_app=s.music_in_app,
             tts_state=self.statuses["tts"].state,
             tts_detail=self.statuses["tts"].detail,
         )
@@ -1940,7 +1944,7 @@ class Controller(QObject):
                                       "since it started. Try again once they do.")
             return
         if not (self.settings.backend_url and token):
-            self.notice.emit("error", "Sign in to your Ignite server first (File → Preferences → Server), then sign "
+            self.notice.emit("error", "Sign in to your Ignite account first (File → Preferences → Server), then sign "
                                       "in to TikTok on its website.")
             return
         name = key.split(":", 1)[-1]
@@ -1952,14 +1956,14 @@ class Controller(QObject):
                   on_success=lambda _result: self.notice.emit("info", done.get(action, "Done.")))
 
     def send_tiktok_chat(self, text: str) -> bool:
-        """Say ``text`` in your TikTok LIVE's chat, as you (TikTok signed in on the Ignite server's website).
+        """Say ``text`` in your TikTok LIVE's chat, as you (TikTok signed in in your Ignite account).
         GUI thread. False, with a notice, when that isn't set up."""
         text = " ".join(text.split())[:150]
         token = keychain.load(keychain.BACKEND_TOKEN)
         if not text:
             return False
         if not (self.settings.backend_url and token) or not self.tiktok_account.get("connected"):
-            self.notice.emit("error", "To chat from Ignite, sign in to your Ignite server (Settings → "
+            self.notice.emit("error", "To chat from Ignite, sign in to your Ignite account (Settings → "
                                       "Integrations), then sign in to TikTok on its website.")
             return False
         client = BackendClient(self.settings.backend_url, token)
@@ -2120,7 +2124,7 @@ class Controller(QObject):
             log.warning("Could not check OBS browser sources: %s", error)
             return
         if stale:
-            self.notice.emit("info", f"Updated the music overlay link in OBS ({', '.join(stale)}).")
+            self.notice.emit("info", f"Updated {len(stale)} overlay link{'s' if len(stale) != 1 else ''} in OBS.")
 
     async def _discover_targets(self, client: ObsClient) -> None:
         try:
@@ -2142,11 +2146,30 @@ class Controller(QObject):
             log.warning("Could not read the stream state of %s: %s", target.label, error)
 
     def _current_overlay_url(self, url: str) -> str | None:
-        """Same overlay page and options, at the current address; None if it isn't one of ours."""
+        """Same overlay page and options, where it should point now (the server's link while that answers, this
+        PC's otherwise); None if it isn't one of ours."""
         parts = urlsplit(url)
-        if not parts.path.startswith("/overlay/") or self.overlay.token not in parts.query:
+        hosted = self.settings.hosted_base.rstrip("/")
+        if parts.path.startswith("/overlay/") and self.overlay.token in parts.query:
+            page = parts.path.rsplit("/", 1)[-1]
+            extra = [(k, v) for k, v in parse_qsl(parts.query) if k != "token"]
+            local = f"http://localhost:{self.overlay.port}{parts.path}?{parts.query}"
+        elif hosted and url.startswith(hosted + "/"):
+            page = parts.path.rsplit("/", 1)[-1]
+            extra = parse_qsl(parts.query)
+            local = f"http://localhost:{self.overlay.port}/overlay/{page}?" + urlencode(
+                [("token", self.overlay.token), *extra])
+        else:
             return None
-        return f"http://localhost:{self.overlay.port}{parts.path}?{parts.query}"
+        if self.links_are_hosted:
+            return f"{hosted}/{page}" + (f"?{urlencode(extra)}" if extra else "")
+        return local
+
+    def _repoint_soon(self, *_args) -> None:
+        """Links in OBS follow the server: its own while it answers, this PC's while it doesn't."""
+        if self._obs is not None and self.runtime.loop.is_running():
+            obs = self._obs
+            self.runtime.loop.call_soon_threadsafe(lambda: self._spawn_task(self._repoint_overlay_sources(obs)))
 
     def _on_obs_event(self, kind: str, data: dict) -> None:
         target = self.stream_target
@@ -2428,7 +2451,7 @@ class Controller(QObject):
                 while name in names:
                     name, number = f"Ignite {title} {number}", number + 1
                 names.add(name)
-                await obs.add_browser_source(target, name, self.overlay.url(page), width, height, canvas)
+                await obs.add_browser_source(target, name, self.hosted_link(page), width, height, canvas)
                 added.append(title)
             where = f"the vertical scene “{target}”" if vertical else f"“{target}”"
             message = f"Added {', '.join(added)} to {where}. Arrange them in OBS." if added else "Nothing added."
@@ -2676,7 +2699,7 @@ class Controller(QObject):
 
     # Backend.
 
-    # Remote control (the web dashboard on your Ignite server). The app connects out; see integrations/relay.py.
+    # Remote control (the web dashboard on your Ignite account). The app connects out; see integrations/relay.py.
 
     def _restart_relay(self) -> None:
         """On the event loop: (re)connect to the server's relay, or stop, to match the settings."""
@@ -2734,12 +2757,29 @@ class Controller(QObject):
         """False once the Ignite server has stopped answering; hosted links then point at this PC."""
         return self.server_monitor.up
 
-    def hosted_link(self, page: str) -> str:
-        """The link for an overlay page: the server's while it answers, this PC's when it doesn't (or isn't set up)."""
+    @property
+    def links_are_hosted(self) -> bool:
+        """Whether overlay links are the Ignite server's right now (signed in, links made, server answering)."""
         s = self.settings
-        if s.hosted_widgets and s.hosted_base and self.server_up:
-            return f"{s.hosted_base}/{page}"
-        return self.overlay.url(page)
+        return bool(s.hosted_widgets and s.hosted_base and self.server_up)
+
+    def hosted_link(self, page: str, theme: str = "") -> str:
+        """The link for an overlay page: the server's while it answers, this PC's when it doesn't (or isn't set up)."""
+        if self.links_are_hosted:
+            return f"{self.settings.hosted_base.rstrip('/')}/{page}" + (f"?theme={theme}" if theme else "")
+        return self.overlay.url(page, theme)
+
+    def backup_link(self, page: str, theme: str = "") -> str:
+        """The same overlay on this PC: what the links fall back to when the server can't be reached."""
+        return self.overlay.url(page, theme)
+
+    def _auto_host_links(self) -> None:
+        """Signed in means hosted links: they are the links, with this PC only as the backup. Tried once per run,
+        so a server that can't make them doesn't get asked again and again."""
+        if self._hosted_auto_tried or self.settings.hosted_widgets:
+            return
+        self._hosted_auto_tried = True
+        self.set_hosted_widgets(True)
 
     async def _server_health_loop(self) -> None:
         """Ping the Ignite server while one is set; tell the user (once) when it goes away and when it's back."""
@@ -2758,12 +2798,12 @@ class Controller(QObject):
                 changed = self.server_monitor.record(answered)
                 if changed is False:
                     log.warning("The Ignite server isn't answering")
-                    self.notice.emit("error", "Your Ignite server isn't answering. Overlay links use this PC until it "
-                                              "is back.")
+                    self.notice.emit("error", "Ignite's servers aren't answering. Overlay links use this PC until they "
+                                              "are back.")
                 elif changed is True:
                     log.info("The Ignite server is answering again")
                     await self._load_server_config(url)
-                    self.notice.emit("info", "The Ignite server is back. Hosted links are in use again.")
+                    self.notice.emit("info", "Ignite's servers are back. Your hosted links are in use again.")
                 if changed is not None:
                     self.server_changed.emit(changed)
                     self._publish_dashboard()
@@ -2814,7 +2854,7 @@ class Controller(QObject):
             return
         url = self.settings.backend_url or main_server()
         if not url:
-            self.notice.emit("error", "Set your Ignite server first (File → Preferences → Server).")
+            self.notice.emit("error", "Set your Ignite account first (File → Preferences → Server).")
             return
         registered = bool(self.settings.backend_url and keychain.load(keychain.BACKEND_TOKEN))
 
@@ -2933,7 +2973,7 @@ class Controller(QObject):
             self.check_backend()
             self.hosted_changed.emit()
             self.server_sign_in.emit(None)
-            self.notice.emit("info", "Signed out of your Ignite server.")
+            self.notice.emit("info", "Signed out of your Ignite account.")
 
         self._run("sign-in", work, on_success=done)
 
@@ -3212,6 +3252,7 @@ class Controller(QObject):
 
         def ok(remote: dict | None) -> None:
             self._status("backend", ConnectionState.CONNECTED, url)
+            self._auto_host_links()
             if pull_settings and remote:
                 self.settings.apply(remote, only=settings_store.SYNCED_FIELDS)
                 self._apply_settings()

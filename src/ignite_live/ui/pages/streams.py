@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 
 from ignite_live.controller import Controller
 from ignite_live.live import analytics
-from ignite_live.ui.kit import Card, Legend, LineChart, MetricCard, PageContainer, StatTile, button, label, restyle_buttons
+from ignite_live.ui.kit import Card, Legend, LineChart, MetricCard, PageContainer, Segmented, StatTile, button, label, restyle_buttons
 from ignite_live.ui.pages.music import read_only_table
 from ignite_live.ui.pages.stream import note
 from ignite_live.ui.theme import colors, theme_changed
@@ -139,8 +139,8 @@ class Chart(QWidget):
         painter.setPen(text)
 
 
-STAT_TILES = (("eye", "peak viewers"), ("chart", "average viewers"), ("heart", "new follows"),
-             ("star", "likes"), ("zap", "coins"), ("chat", "comments"))
+STAT_TILES = (("eye", "Peak viewers"), ("chart", "Average viewers"), ("heart", "New follows"),
+             ("star", "Likes"), ("zap", "Coins"), ("chat", "Comments"))
 
 
 class StreamsPage(QWidget):
@@ -158,12 +158,11 @@ class StreamsPage(QWidget):
         # Range and summary.
         top = QHBoxLayout()
         top.setSpacing(8)
-        self.range = QComboBox()
+        self.range = Segmented()
         self.range.setAccessibleName("Time range")
         for days, text in RANGES:
             self.range.addItem(text, days)
         self.range.currentIndexChanged.connect(lambda _i: self.refresh())
-        top.addWidget(label("Time range", "muted"))
         top.addWidget(self.range)
         top.addStretch(1)
         self.export = button("Export CSV", "download", tip="Export the selected stream as a spreadsheet")

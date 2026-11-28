@@ -147,10 +147,10 @@ class ViewersPage(QWidget):
         self.block = QPushButton("Block")
         self.block.setToolTip("Ignite ignores their messages: no text to speech, commands, requests or points")
         self.block.clicked.connect(self._toggle_block)
-        # As the streamer, in their TikTok LIVE (TikTok signed in on the Ignite server's website).
+        # As the streamer, in their TikTok LIVE (TikTok signed in in your Ignite account).
         self.tiktok = QPushButton("TikTok")
         self.tiktok.setToolTip("Make them a moderator, mute them, or kick them out of your LIVE. Needs TikTok signed in "
-                               "on your Ignite server's website (File → Preferences → Chat platforms)")
+                               "in your Ignite account (File → Preferences → Chat platforms)")
         menu = QMenu(self.tiktok)
         for label, action, duration in (("Make Moderator", "mod", 0), ("Remove Moderator", "unmod", 0), (None, "", 0),
                                         ("Mute for 30 Seconds", "mute", 30), ("Mute for 5 Minutes", "mute", 300),

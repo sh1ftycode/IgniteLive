@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 from ignite_live.ui import lucide
-from ignite_live.ui.theme import colors, set_props, tabular, theme_changed, tint_color
+from ignite_live.ui.theme import card_fill, colors, set_props, tabular, theme_changed, tint_color
 
 TRANSITION_MS = 170
 
@@ -209,11 +209,9 @@ class Card(QFrame):
             self.header = QFrame()
             self.header.setObjectName("cardHeader")
             self.header_layout = QHBoxLayout(self.header)
-            self.header_layout.setContentsMargins(16, 10, 10, 10)
+            self.header_layout.setContentsMargins(18, 16, 14, 0)
             self.header_layout.setSpacing(8)
-            if icon:
-                self._icon = icon_label(icon, None, 18)
-                self.header_layout.addWidget(self._icon)
+            # ``icon`` is accepted for older callers: the design's card titles are plain text.
             self.title = label(title, "cardTitle")
             self.header_layout.addWidget(self.title)
             self.header_layout.addStretch(1)
@@ -221,7 +219,7 @@ class Card(QFrame):
         content = QWidget()
         self.body = QVBoxLayout(content)
         if padded:
-            self.body.setContentsMargins(16, 14, 16, 16)
+            self.body.setContentsMargins(18, 12, 18, 18)
         else:
             self.body.setContentsMargins(0, 0, 0, 0)
         self.body.setSpacing(10)
@@ -235,6 +233,65 @@ class Card(QFrame):
     def restyle(self) -> None:
         if self._icon is not None:
             recolor(self._icon, colors().accent)
+
+
+class Segmented(QFrame):
+    """A row of mutually exclusive choices in one pill (the design's range and scene switchers).
+
+    Reads like a combo box (``addItem``, ``currentData``, ``currentText``, ``currentIndex``,
+    ``currentIndexChanged``) so it can stand in for one.
+    """
+
+    currentIndexChanged = Signal(int)  # noqa: N815 - the Qt name this stands in for
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setObjectName("segmented")
+        row = QHBoxLayout(self)
+        row.setContentsMargins(4, 4, 4, 4)
+        row.setSpacing(2)
+        self._row = row
+        self._buttons: list[QPushButton] = []
+        self._data: list[object] = []
+        self._current = -1
+        self.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+
+    def addItem(self, text: str, data: object = None) -> None:  # noqa: N802 - Qt-style name
+        index = len(self._buttons)
+        item = QPushButton(text)
+        item.setProperty("segment", True)
+        item.setCheckable(True)
+        item.setCursor(Qt.CursorShape.PointingHandCursor)
+        item.clicked.connect(lambda _=False, i=index: self.setCurrentIndex(i))
+        self._row.addWidget(item)
+        self._buttons.append(item)
+        self._data.append(data)
+        if self._current < 0:
+            self.setCurrentIndex(0)
+
+    def count(self) -> int:
+        return len(self._buttons)
+
+    def currentIndex(self) -> int:  # noqa: N802
+        return self._current
+
+    def currentData(self) -> object:  # noqa: N802
+        return self._data[self._current] if self._current >= 0 else None
+
+    def currentText(self) -> str:  # noqa: N802
+        return self._buttons[self._current].text() if self._current >= 0 else ""
+
+    def findData(self, data: object) -> int:  # noqa: N802
+        return self._data.index(data) if data in self._data else -1
+
+    def setCurrentIndex(self, index: int) -> None:  # noqa: N802
+        if not 0 <= index < len(self._buttons):
+            return
+        for i, item in enumerate(self._buttons):
+            item.setChecked(i == index)
+        if index != self._current:
+            self._current = index
+            self.currentIndexChanged.emit(index)
 
 
 # Metrics and status.
@@ -257,6 +314,7 @@ class MetricCard(QWidget):
         self._value = "–"
         self._trend = ""
         self._live = False
+        self._series: list[float] = []
         self.setFont(tabular(self.font()))
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setAccessibleName(label_text)
@@ -273,6 +331,13 @@ class MetricCard(QWidget):
             self._trend = text
             self.update()
 
+    def set_series(self, values: list[float]) -> None:
+        """A small line under the value (the last few readings); needs at least two points."""
+        values = list(values)
+        if values != self._series:
+            self._series = values
+            self.update()
+
     def set_live(self, live: bool) -> None:
         if live != self._live:
             self._live = live
@@ -282,10 +347,10 @@ class MetricCard(QWidget):
         self.update()
 
     def sizeHint(self) -> QSize:  # noqa: N802 - Qt override
-        return QSize(220, 92)
+        return QSize(220, 100)
 
     def minimumSizeHint(self) -> QSize:  # noqa: N802 - Qt override
-        return QSize(150, 92)
+        return QSize(150, 100)
 
     def _tone_color(self) -> str:
         p = colors()
@@ -300,12 +365,10 @@ class MetricCard(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
         painter.setPen(QPen(QColor(p.live), 1) if self._live else Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(p.panel))
+        painter.setBrush(card_fill())
         painter.drawRoundedRect(rect, 14, 14)
-        icon = 18
-        painter.drawPixmap(QPointF(self.width() - self.PAD - icon, self.PAD), lucide.pixmap(self._icon, self._tone_color(), icon))
         text_x = self.PAD + 2
-        available = max(0.0, self.width() - text_x - self.PAD - icon - 8)
+        available = max(0.0, self.width() - text_x - self.PAD)
         caption = self.font()
         caption.setPixelSize(12)
         painter.setFont(caption)
@@ -325,6 +388,20 @@ class MetricCard(QWidget):
         painter.drawText(QRectF(text_x, 30, full, metrics.height()),
                          Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
                          metrics.elidedText(self._value, Qt.TextElideMode.ElideRight, int(full)))
+        if len(self._series) > 1:
+            top = 30 + metrics.height() + 10 if not self._trend else 30 + metrics.height() + 22
+            low, high = min(self._series), max(self._series)
+            span = (high - low) or 1.0
+            height = max(10.0, self.height() - top - 14)
+            step = full / (len(self._series) - 1)
+            path = QPainterPath()
+            for index, value in enumerate(self._series):
+                point = QPointF(text_x + index * step, top + height - (value - low) / span * height)
+                path.moveTo(point) if index == 0 else path.lineTo(point)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.setPen(QPen(QColor(p.accent), 2, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap,
+                                Qt.PenJoinStyle.RoundJoin))
+            painter.drawPath(path)
         if self._trend:
             painter.setFont(caption)
             painter.setPen(QColor(p.healthy if self._trend.startswith("+") else p.text_muted))

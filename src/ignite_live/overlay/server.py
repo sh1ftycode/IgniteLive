@@ -459,7 +459,10 @@ class OverlayServer:
             self._pages[ws] = page
         self._sockets.add(ws)
         if page == MUSIC_PAGE and ws not in self._previews:
-            self._players.append(ws)
+            if request.query.get("host") == "app":
+                self._players.insert(0, ws)  # Ignite's own player plays the music; OBS copies show the cover.
+            else:
+                self._players.append(ws)
         self._clients_changed()
         try:
             await ws.send_json(self._state)
@@ -511,12 +514,17 @@ class OverlayServer:
         return ws
 
     async def _choose_audio(self) -> None:
-        """The oldest open Now Playing overlay plays the music; tell it when that changes."""
+        """Ignite's own player, else the oldest open Now Playing overlay, plays the music; tell them when that changes."""
         leader = self._players[0] if self._players else None
         if leader is self._audio:
             return
         had_player = self._audio is not None
-        self._audio = leader
+        previous, self._audio = self._audio, leader
+        if previous is not None and previous in self._players:
+            try:
+                await previous.send_json({"type": "role", "audio": False})  # Still open: it stops, never both.
+            except ConnectionError:
+                pass
         if (leader is not None) != had_player and self.on_player_changed:
             self.on_player_changed(leader is not None)
         if leader is not None:

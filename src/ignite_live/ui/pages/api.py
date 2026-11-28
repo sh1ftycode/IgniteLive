@@ -39,12 +39,11 @@ from ignite_live.ui.theme import colors, set_props, theme_changed
 API_DOCS = "https://github.com/sh1ftycode/IgniteLive/blob/main/docs/API.md"
 
 HOSTED_HELP = (
-    "Each overlay gets a link on your Ignite server, like a TikFinity widget link. Paste it into a Browser Source "
-    "in OBS, Streamlabs Desktop, TikTok LIVE Studio, Meld or vMix, on this PC or another. Ignite sends your chat, "
-    "alerts and music to the server for them while it runs. If the server stops answering, widgets on this PC "
-    "switch to Ignite here by themselves, and go back when it's working again. Anyone with a link can see what "
-    "that widget shows: New Links replaces them all. Turning this on makes you an account on the server; there's "
-    "no sign-up."
+    "Each overlay gets a link on Ignite's servers. Paste it into a Browser Source in OBS, Streamlabs Desktop, "
+    "TikTok LIVE Studio, Meld or vMix, on this PC or another. Ignite sends your chat, alerts and music to the "
+    "server for them while it runs. If the server can't be reached, Ignite points OBS at the same overlay on this "
+    "PC and switches back by itself when the server answers. Anyone with a link can see what that widget shows: "
+    "New Links replaces them all."
 )
 CUSTOM_HELP = (
     "For your own widgets: add the script line to the widget's page and use Ignite.connect() (see the API "
@@ -182,9 +181,9 @@ class ApiPage(QWidget):
             platforms.addWidget(card, 0, column)
             self.cards[key] = card
         tiktok = IntegrationCard("TikTok account", "user",
-                                 "Signed in on your Ignite server's website: chat as yourself from Ignite, and "
+                                 "Signed in in your Ignite account: chat as yourself from Ignite, and "
                                  "moderate (mod, mute, kick) from Live Chat.")
-        tiktok.add_button("Open Server Website", "external-link", self._open_server)
+        tiktok.add_button("My Account", "external-link", self._open_server)
         platforms.addWidget(tiktok, 1, 0)
         self.cards["tiktok_account"] = tiktok
         streamlabs = IntegrationCard("Streamlabs", "key", "Gets your TikTok LIVE stream key (Stream Control).")
@@ -199,8 +198,6 @@ class ApiPage(QWidget):
         services.setSpacing(16)
         for index, (key, name, icon, about, prefs) in enumerate((
                 ("obs", "OBS Studio", "monitor", "Scenes, streaming, recording and clips, through OBS WebSocket.", "OBS"),
-                ("backend", "Ignite server", "server", "Your account, hosted widget links, the web dashboard and "
-                                                       "remote control.", "Server"),
                 ("discord", "Discord", "message-circle", "Chat, gifts and follows sent to a Discord channel, and "
                                                         "Rich Presence on your profile.", "Discord"),
                 ("tts", "Text to speech", "audio-lines", "Chat read aloud on stream.", "Text to speech"),
@@ -296,11 +293,11 @@ class ApiPage(QWidget):
         elif status.get("error"):
             card.set_state("Problem", "error", status["error"])
         elif status.get("server") is False:
-            card.set_state("Unavailable", "muted", "Sign in to your Ignite server first (Settings → Integrations).")
+            card.set_state("Unavailable", "muted", "Sign in to your Ignite account first (Settings → Integrations).")
         elif status.get("available"):
-            card.set_state("Not signed in", "muted", "Sign in to TikTok on your server's website.")
+            card.set_state("Not signed in", "muted", "Sign in to TikTok in your Ignite account.")
         else:
-            card.set_state("Unavailable", "muted", "Your Ignite server doesn't offer TikTok sign-in.")
+            card.set_state("Unavailable", "muted", "Your Ignite account doesn't offer TikTok sign-in.")
 
     def _minecraft(self) -> None:
         card = self.cards["minecraft"]
@@ -330,11 +327,11 @@ class ApiPage(QWidget):
     # Hosted links.
 
     def _hosted(self) -> Card:
-        box, form = titled("Hosted links", HOSTED_HELP, icon="puzzle", primary=True)
+        box, form = titled("Overlay links", HOSTED_HELP, icon="puzzle", primary=True)
         self.hosted_state = QLabel()
-        self.hosted_toggle = QPushButton("Turn On")
-        self.hosted_toggle.clicked.connect(
-            lambda: self.controller.set_hosted_widgets(not self.controller.settings.hosted_widgets))
+        self.hosted_toggle = QPushButton("Sign In")  # Hosted links come with your account: only shown until then.
+        self.hosted_toggle.setProperty("primary", True)
+        self.hosted_toggle.clicked.connect(self.controller.sign_in_to_server)
         self.hosted_server = QLabel()
         self.hosted_server.setTextFormat(Qt.TextFormat.PlainText)
         server_settings = QPushButton("Account")
@@ -376,8 +373,8 @@ class ApiPage(QWidget):
         new_links = QPushButton("New Links…")
         new_links.setToolTip("Replace every link: the old ones stop working everywhere")
         new_links.clicked.connect(self._new_hosted_links)
-        account = QPushButton("My Account on the Server…")
-        account.setToolTip("Opens the server's website, signed in")
+        account = QPushButton("My Account…")
+        account.setToolTip("Opens your Ignite account in your browser, signed in")
         account.clicked.connect(lambda: self.controller.open_server_account(
             lambda url: QDesktopServices.openUrl(QUrl(url))))
         buttons = QHBoxLayout()
@@ -421,15 +418,18 @@ class ApiPage(QWidget):
         self.hosted_server.setText(f"Signed in as {s.server_username}" if s.server_username else
                                    ("Not signed in" if server else "This version has no Ignite server"))
         if on and not self.controller.server_up:
-            self.hosted_state.setText("On, but the server isn't answering. Links use this PC until it's back.")
+            self.hosted_state.setText("The server isn't answering, so OBS is using this PC's backup links. They "
+                                      "switch back by themselves.")
         elif on:
-            self.hosted_state.setText("On")
+            self.hosted_state.setText("Active: these links work from any PC.")
+        elif server and not s.server_username:
+            self.hosted_state.setText("Sign in to your Ignite account to get your overlay links.")
         elif server:
-            self.hosted_state.setText("Off")
+            self.hosted_state.setText("Getting your links…")
         else:
-            self.hosted_state.setText("Off. This version has no Ignite server.")
-        self.hosted_toggle.setText("Turn Off" if s.hosted_widgets else "Turn On")
-        self.hosted_toggle.setEnabled(bool(server) or s.hosted_widgets)
+            self.hosted_state.setText("This version has no Ignite server, so overlays use this PC.")
+        self.hosted_toggle.setVisible(bool(server) and not s.server_username)
+        self.hosted_toggle.setEnabled(True)
         for part in self.hosted_parts:
             part.setEnabled(on)
         page = self.hosted_page.currentData()

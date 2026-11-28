@@ -1,13 +1,14 @@
 """Overview: the stream at a glance.
 
-Metrics, a live preview of OBS's program scene, the go-live controls, the chat, a chart of your last streams,
-the latest follows, gifts and shares, and shortcuts. Every number is one Ignite already tracks; what isn't
-available says so (OBS offline, no streams yet) instead of showing zeros that look real.
+Four stat tiles, the chat, the stream (preview and go-live controls), the OBS scenes, the latest follows, gifts
+and shares, and the Ctrl+K bar. Every number is one Ignite already tracks; what isn't available says so (OBS
+offline, nothing yet) instead of showing zeros that look real.
 """
 
 from __future__ import annotations
 
 import time
+from collections import deque
 
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QImage, QPixmap
@@ -29,19 +30,18 @@ from PySide6.QtWidgets import (
 )
 
 from ignite_live.controller import Controller
-from ignite_live.core.events import ChatFollow, ChatGift, ChatShare
+from ignite_live.core.events import ChatComment, ChatFollow, ChatGift, ChatShare
 from ignite_live.integrations.obs_studio import Studio, clock
-from ignite_live.live import analytics
 from ignite_live.live.audience import compact
 from ignite_live.ui.actions import AppActions
 from ignite_live.ui.chat_feed import ChatFeed
+from ignite_live.ui.command_bar import open_command_bar
+from ignite_live.ui.flow_layout import FlowLayout
 from ignite_live.ui.icons import logo
 from ignite_live.ui.kit import (
     Card,
     EmptyState,
     EventRow,
-    LineChart,
-    Legend,
     MetricCard,
     PageContainer,
     StatusIndicator,
@@ -59,7 +59,8 @@ PREVIEW_MIN_WIDTH = 320
 PREVIEW_MAX_WIDTH = 1280
 RECENT_KINDS = (ChatFollow, ChatGift, ChatShare)
 MAX_EVENTS = 5
-RANGES = ((7, "Last 7 days"), (14, "Last 14 days"), (30, "Last 30 days"))
+SPARK_POINTS = 40  # Viewer readings kept for the small line on the Viewers tile.
+RATE_WINDOW = 60.0  # Seconds of chat counted for "Chat per min".
 
 
 def event_text(event) -> tuple[str, str, str, str]:
@@ -73,26 +74,35 @@ def event_text(event) -> tuple[str, str, str, str]:
     return "share", "accent", "New share", f"{name} shared your LIVE"
 
 
-def daily_report(controller: Controller, days: int) -> tuple[list[str], list[float], list[float]]:
-    """Average viewers and new follows for each of the last ``days`` days, from the saved stream reports."""
-    now = time.time()
-    keys = [time.strftime("%Y-%m-%d", time.localtime(now - offset * 86400)) for offset in range(days - 1, -1, -1)]
-    views = dict.fromkeys(keys, 0.0)
-    follows = dict.fromkeys(keys, 0.0)
-    for path in controller.saved_streams():
-        data = analytics.load(path)
-        if data is None or data.get("started", 0) < now - days * 86400:
-            continue
-        key = time.strftime("%Y-%m-%d", time.localtime(data["started"]))
-        if key in views:
-            summary = analytics.summary(data)
-            views[key] += summary["average_viewers"]
-            follows[key] += summary["follows"]
-    labels = []
-    for key in keys:
-        day = time.strptime(key, "%Y-%m-%d")
-        labels.append(f"{time.strftime('%b', day)} {day.tm_mday}")
-    return labels, list(views.values()), list(follows.values())
+class CommandHint(QFrame):
+    """A clickable bar that says what Ctrl+K does."""
+
+    clicked = Signal()
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setObjectName("commandHint")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip("Jump to any screen or run an action (Ctrl+K)")
+        self.setFixedHeight(48)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setAccessibleName("Search or run a command")
+        row = QHBoxLayout(self)
+        row.setContentsMargins(18, 0, 16, 0)
+        row.addWidget(label("Search or run a command…", "muted"), 1)
+        row.addWidget(label("Ctrl K", "muted"))
+        for child in self.findChildren(QLabel):
+            child.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802 - Qt override
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802 - Qt override
+        if event.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Space):
+            self.clicked.emit()
+        else:
+            super().keyPressEvent(event)
 
 
 class StreamPreview(QFrame):
@@ -113,13 +123,14 @@ class StreamPreview(QFrame):
         column = QVBoxLayout(empty)
         column.addStretch(1)
         mark = QLabel()
-        mark.setPixmap(QPixmap.fromImage(logo(56)))
+        mark.setPixmap(QPixmap.fromImage(logo(36)))
         mark.setAlignment(Qt.AlignmentFlag.AlignCenter)
         column.addWidget(mark)
         self.brand = QLabel()
         self.brand.setAlignment(Qt.AlignmentFlag.AlignCenter)
         column.addWidget(self.brand)
         self.hint = label("", "muted", wrap=True)
+        self.hint.setContentsMargins(12, 0, 12, 0)
         self.hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         column.addWidget(self.hint)
         column.addStretch(1)
@@ -138,13 +149,13 @@ class StreamPreview(QFrame):
 
     def restyle(self) -> None:
         p = colors()
-        self.brand.setText(f'<span style="font-size:28px; font-weight:700; color:{p.text};">Ignite</span>'
-                           f'<span style="font-size:28px; font-weight:700; color:{p.accent};">Live</span>')
+        self.brand.setText(f'<span style="font-size:18px; font-weight:700; color:{p.text};">Ignite</span>'
+                           f'<span style="font-size:18px; font-weight:700; color:{p.accent};">Live</span>')
 
     def update_state(self, studio: Studio) -> None:
         if not studio.connected:
             self._frame = None
-            self.hint.setText("Connect OBS to see your program scene here (Settings → Streaming).")
+            self.hint.setText("Connect OBS to preview your program scene here.")
             self.stack.setCurrentIndex(0)
         elif self._frame is None:
             self.hint.setText("Your stream will appear here.")
@@ -199,48 +210,55 @@ class OverviewPage(QWidget):
         super().__init__()
         self.controller, self.actions = controller, actions
         self._events: list[tuple[float, object]] = []
+        self._comments: deque[float] = deque()  # When each chat message arrived, for "Chat per min".
+        self._viewer_samples: deque[float] = deque(maxlen=SPARK_POINTS)
+        self._gifts = 0
+        self._gifters: set[str] = set()
+        self._new_follows = 0
+        self._scenes_shown: tuple = ()
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         page = PageContainer()
         outer.addWidget(page)
 
-        # Metrics.
+        # Stat tiles.
         metrics = QHBoxLayout()
-        metrics.setSpacing(16)
+        metrics.setSpacing(12)
         self.viewers = MetricCard("users", "Viewers", "accent")
-        self.uptime = MetricCard("clock", "Stream Uptime", "muted")
-        self.followers = MetricCard("heart", "Followers", "live")
-        self.subscribers = MetricCard("star", "Subscribers", "warning")
-        self.subscribers.setToolTip("Subscribers and members in your audience right now (Twitch, YouTube)")
-        for tile in (self.viewers, self.uptime, self.followers, self.subscribers):
+        self.chat_rate = MetricCard("message-square-more", "Chat per min", "accent")
+        self.gifts = MetricCard("gift", "Gifts", "accent")
+        self.followers = MetricCard("heart", "New followers", "accent")
+        self.chat_rate.set_value("0")
+        self.gifts.set_value("0")
+        self.followers.set_value("0")
+        self.chat_rate.set_trend("Quiet")
+        self.gifts.set_trend("Since Ignite opened")
+        self.followers.set_trend("Since Ignite opened")
+        for tile in (self.viewers, self.chat_rate, self.gifts, self.followers):
             metrics.addWidget(tile, 1)
         page.add_layout(metrics)
 
-        # Preview, controls, chat.
+        # Chat on the left; the stream, its scenes and the latest events on the right.
         grid = QGridLayout()
-        grid.setHorizontalSpacing(16)
-        grid.setVerticalSpacing(16)
-        grid.addWidget(self._preview_card(), 0, 0)
-        grid.addWidget(self._control_card(), 0, 1)
-        grid.addWidget(self._chat_card(history), 0, 2)
-        grid.addWidget(self._analytics_card(), 1, 0)
-        grid.addWidget(self._events_card(), 1, 1)
-        grid.addWidget(self._actions_card(), 1, 2)
+        grid.setHorizontalSpacing(12)
+        grid.setVerticalSpacing(12)
+        grid.addWidget(self._chat_card(history), 0, 0, 3, 1)
+        grid.addWidget(self._stream_card(), 0, 1)
+        grid.addWidget(self._scenes_card(), 1, 1)
+        grid.addWidget(self._events_card(), 2, 1)
         grid.setColumnStretch(0, 5)
         grid.setColumnStretch(1, 3)
-        grid.setColumnStretch(2, 3)
-        grid.setRowStretch(0, 1)
-        grid.setRowStretch(1, 1)
+        grid.setRowStretch(0, 3)
+        grid.setRowStretch(2, 2)
         holder = QWidget()
         holder.setLayout(grid)
         page.add(holder, 1)
+        page.add(self._command_hint())
 
         controller.studio_changed.connect(self._studio)
         controller.stats_changed.connect(self._stats)
-        controller.audience_changed.connect(self._audience)
         controller.chat_event.connect(self._chat_event)
         controller.chats_cleared.connect(self._chats_cleared)
-        controller.stream_report_ready.connect(lambda _path: self._fill_chart())
         controller.targets_changed.connect(self._targets)
         controller.settings_changed.connect(lambda _s: self._targets(controller.targets))
         controller.obs_streaming_changed.connect(lambda _live: self._studio(controller.studio))
@@ -248,61 +266,67 @@ class OverviewPage(QWidget):
         theme_changed().connect(self._restyle)
         self._clock = QTimer(self, interval=30_000)
         self._clock.timeout.connect(self._render_events)
+        self._rate_clock = QTimer(self, interval=5_000)
+        self._rate_clock.timeout.connect(self._rate)
         self._studio(controller.studio)
         self._stats(controller.stats_snapshot)
-        self._audience(controller.audience_snapshot)
         self._targets(controller.targets)
-        self._fill_chart()
         self._render_events()
         self._composer()
         self._restyle()
 
     # Cards.
 
-    def _preview_card(self) -> Card:
-        card = self.preview_card = Card("Stream Preview", icon="circle-dot")
+    def _stream_card(self) -> Card:
+        card = self.stream_card = Card("Stream")
         self.preview_state = StatusIndicator("Offline", "muted")
         card.add_header_widget(self.preview_state)
-        self.canvas = QComboBox()
-        self.canvas.addItem("Main canvas", False)
-        self.canvas.setToolTip("Which canvas to preview")
-        self.canvas.currentIndexChanged.connect(lambda _i: setattr(self.preview, "vertical",
-                                                                   bool(self.canvas.currentData())))
-        card.add_header_widget(self.canvas)
         self.preview = StreamPreview(self.controller)
+        self.preview.setMinimumHeight(90)
         card.body.addWidget(self.preview, 1)
-        return card
-
-    def _control_card(self) -> Card:
-        card = self.control_card = Card("Stream Control", icon="radio")
+        buttons = QHBoxLayout()
+        buttons.setSpacing(8)
         self.go_live = button("Go Live", "play", kind="primary", tip="Run the pre-stream check, then start OBS's output")
-        self.go_live.setProperty("big", True)
         self.go_live.clicked.connect(lambda: self.actions.go_live())
-        self.stop = button("Stop Stream", "square", tip="Stop OBS's output")
-        self.stop.setProperty("big", True)
+        self.stop = button("End stream", "square", tip="Stop OBS's output")
         self.stop.clicked.connect(self._stop)
-        card.body.addWidget(self.go_live)
-        card.body.addWidget(self.stop)
-        card.body.addSpacing(4)
-        card.body.addWidget(hline())
+        buttons.addWidget(self.go_live, 1)
+        buttons.addWidget(self.stop, 1)
+        card.body.addLayout(buttons)
         form = QGridLayout()
         form.setHorizontalSpacing(12)
-        form.setVerticalSpacing(12)
+        form.setVerticalSpacing(8)
         form.addWidget(label("Output", "muted"), 0, 0)
         self.target = QComboBox()
         self.target.setToolTip("The OBS output Ignite starts and puts your stream key on")
         self.target.activated.connect(lambda _i: self.controller.set_stream_target(self.target.currentData()))
         form.addWidget(self.target, 0, 1)
-        form.addWidget(label("Stream", "muted"), 1, 0)
+        form.addWidget(label("Status", "muted"), 1, 0)
         self.health = StatusIndicator("–", "muted")
         form.addWidget(self.health, 1, 1)
         form.setColumnStretch(1, 1)
         card.body.addLayout(form)
-        card.body.addStretch(1)
         return card
 
+    def _scenes_card(self) -> Card:
+        card = self.scenes_card = Card("Scenes")
+        self.scene_flow = QWidget()
+        self.scene_layout = FlowLayout(self.scene_flow)
+        self.scene_layout.setSpacing(8)
+        card.body.addWidget(self.scene_flow)
+        self.scene_empty = label("Connect OBS to switch scenes from here.", "muted", wrap=True)
+        card.body.addWidget(self.scene_empty)
+        self.scene_buttons: list[QPushButton] = []
+        return card
+
+    def _command_hint(self) -> QFrame:
+        """The design's wide bar at the bottom: opens the Ctrl+K command bar."""
+        bar = self.command_hint = CommandHint()
+        bar.clicked.connect(lambda: open_command_bar(self.window()))
+        return bar
+
     def _chat_card(self, history) -> Card:
-        card = self.chat_card = Card("Live Chat", icon="message-square-more", padded=False)
+        card = self.chat_card = Card("Chat", padded=False)
         self.popout = icon_button("external-link", "Pop out chat")
         self.popout.clicked.connect(self.actions.popout_chat.trigger)
         self.chat_more = icon_button("ellipsis-vertical", "Chat actions")
@@ -341,24 +365,8 @@ class OverviewPage(QWidget):
         card.body.addWidget(composer)
         return card
 
-    def _analytics_card(self) -> Card:
-        card = self.analytics_card = Card("Analytics", icon="chart-column")
-        self.range = QComboBox()
-        for days, text in RANGES:
-            self.range.addItem(text, days)
-        self.range.currentIndexChanged.connect(lambda _i: self._fill_chart())
-        card.add_header_widget(self.range)
-        legend_row = QHBoxLayout()
-        legend_row.addStretch(1)
-        self.legend = Legend([("Avg. viewers", "accent"), ("New followers", "healthy")])
-        legend_row.addWidget(self.legend)
-        card.body.addLayout(legend_row)
-        self.chart = LineChart("No streams in this period yet. A report is saved each time you stream.")
-        card.body.addWidget(self.chart, 1)
-        return card
-
     def _events_card(self) -> Card:
-        card = self.events_card = Card("Recent Events", icon="star")
+        card = self.events_card = Card("Recent events")
         view_all = QPushButton("View all")
         view_all.setProperty("ghost", True)
         view_all.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -367,23 +375,9 @@ class OverviewPage(QWidget):
         self.events_list = QVBoxLayout()
         self.events_list.setSpacing(0)
         card.body.addLayout(self.events_list)
-        self.events_empty = EmptyState("star", "Nothing yet", "Follows, gifts and shares show up here while you're live.")
+        self.events_empty = EmptyState("star", "Nothing yet", "Follows, gifts and shares appear here.")
+        self.events_empty.layout().setContentsMargins(16, 6, 16, 6)
         card.body.addWidget(self.events_empty, 1)
-        card.body.addStretch(1)
-        return card
-
-    def _actions_card(self) -> Card:
-        card = self.quick_card = Card("Quick Actions", icon="zap")
-        self.quick = []
-        for key, icon, text, kind in (("overlays", "video", "Manage Overlays", "outline"),
-                                      ("streams", "chart-column", "View Analytics", ""),
-                                      ("actions", "bell", "Configure Alerts", ""),
-                                      ("checklist", "circle-check", "Check Before Going Live", "")):
-            widget = button(text, icon, kind=kind)
-            widget.setProperty("big", True)
-            widget.clicked.connect(lambda _=False, k=key: self.open_page_requested.emit(k))
-            card.body.addWidget(widget)
-            self.quick.append(widget)
         card.body.addStretch(1)
         return card
 
@@ -392,9 +386,12 @@ class OverviewPage(QWidget):
     def showEvent(self, event) -> None:  # noqa: N802 - Qt override
         super().showEvent(event)
         self._clock.start()
+        self._rate_clock.start()
+        self._rate()
 
     def hideEvent(self, event) -> None:  # noqa: N802 - Qt override
         self._clock.stop()
+        self._rate_clock.stop()
         super().hideEvent(event)
 
     def _stop(self) -> None:
@@ -404,8 +401,6 @@ class OverviewPage(QWidget):
 
     def _studio(self, studio: Studio) -> None:
         live = studio.streaming
-        self.uptime.set_value(clock(studio.health.stream_duration_ms) if live else "00:00")
-        self.uptime.set_live(live)
         self.go_live.setEnabled(studio.connected and not live)
         self.stop.setEnabled(studio.connected and live)
         set_live(self.stop, live)
@@ -421,22 +416,48 @@ class OverviewPage(QWidget):
             elif health.reconnecting:
                 self.health.set("Reconnecting…", "warning")
             else:
-                self.health.set("Live", "healthy")
-        has_vertical = studio.vertical is not None
-        if has_vertical and self.canvas.count() == 1:
-            self.canvas.addItem("Vertical canvas", True)
-        elif not has_vertical and self.canvas.count() > 1:
-            self.canvas.removeItem(1)
-        self.canvas.setVisible(has_vertical)
+                self.health.set(f"Live {clock(health.stream_duration_ms)}", "healthy")
         self.preview.update_state(studio)
+        self._scenes(studio)
+
+    def _scenes(self, studio: Studio) -> None:
+        shown = (studio.scenes, studio.scene) if studio.connected else ()
+        if shown == self._scenes_shown:
+            return
+        self._scenes_shown = shown
+        for widget in self.scene_buttons:
+            self.scene_layout.removeWidget(widget)
+            widget.hide()
+            widget.deleteLater()
+        self.scene_buttons = []
+        for name in studio.scenes if studio.connected else ():
+            current = name == studio.scene
+            scene = button(name, kind="primary" if current else "", tip=f"Switch OBS to {name}")
+            scene.setCheckable(False)
+            scene.clicked.connect(lambda _=False, n=name: self.controller.switch_scene(n))
+            self.scene_layout.addWidget(scene)
+            self.scene_buttons.append(scene)
+        self.scene_empty.setVisible(not self.scene_buttons)
+        self.scene_empty.setText("Connect OBS to switch scenes from here." if not studio.connected
+                                 else "OBS has no scenes yet.")
+        restyle_buttons(*self.scene_buttons)
 
     def _stats(self, stats: dict) -> None:
         total = stats["total"]
-        self.viewers.set_value(compact(total.get("viewers")))
-        self.followers.set_value(compact(total.get("followers")))
+        count = total.get("viewers")
+        self.viewers.set_value(compact(count))
+        if isinstance(count, (int, float)):
+            self._viewer_samples.append(float(count))
+        self.viewers.set_series(list(self._viewer_samples))
 
-    def _audience(self, people: list) -> None:
-        self.subscribers.set_value(compact(sum(1 for row in people if row["user"].is_subscriber)))
+    def _rate(self) -> None:
+        """Chat messages in the last minute, and a word for how busy that is."""
+        cutoff = time.time() - RATE_WINDOW
+        while self._comments and self._comments[0] < cutoff:
+            self._comments.popleft()
+        count = len(self._comments)
+        self.chat_rate.set_value(str(count))
+        self.chat_rate.set_trend("Busy" if count >= 60 else "Steady" if count >= 15 else "Quiet")
 
     def _targets(self, targets) -> None:
         chosen = self.controller.settings.stream_target
@@ -453,18 +474,22 @@ class OverviewPage(QWidget):
         self.target.setCurrentIndex(max(0, index))
         self.target.blockSignals(False)
 
-    def _fill_chart(self) -> None:
-        labels, views, follows = daily_report(self.controller, self.range.currentData() or 7)
-        has_data = any(views) or any(follows)
-        p = colors()
-        self.chart.set_data(labels if has_data else [], [("Avg. viewers", p.accent, views),
-                                                         ("New followers", p.healthy, follows)])
-
     def _chat_event(self, event) -> None:
-        if not isinstance(event, RECENT_KINDS) or getattr(event, "streaking", False):
-            self._chat_line(event)
-            return
         self._chat_line(event)
+        if isinstance(event, ChatComment):
+            self._comments.append(time.time())
+            self._rate()
+        if not isinstance(event, RECENT_KINDS) or getattr(event, "streaking", False):
+            return
+        who = event.user.unique_id or event.user.nickname
+        if isinstance(event, ChatGift):
+            self._gifts += max(1, event.count)
+            self._gifters.add(who)
+            self.gifts.set_value(compact(self._gifts))
+            self.gifts.set_trend(f"{len(self._gifters)} {'person' if len(self._gifters) == 1 else 'people'}")
+        elif isinstance(event, ChatFollow):
+            self._new_follows += 1
+            self.followers.set_value(f"+{compact(self._new_follows)}")
         self._events.insert(0, (time.time(), event))
         del self._events[MAX_EVENTS:]
         self._render_events()
@@ -477,6 +502,8 @@ class OverviewPage(QWidget):
     def _chats_cleared(self) -> None:
         self.feed.clear()
         self.chat_stack.setCurrentWidget(self.chat_empty)
+        self._comments.clear()
+        self._rate()
 
     def _render_events(self) -> None:
         while self.events_list.count():
@@ -496,22 +523,20 @@ class OverviewPage(QWidget):
         ready = bool(tiktok.get("connected"))
         self.message.setEnabled(ready)
         self.send.setEnabled(ready)
-        self.message.setPlaceholderText("Send a message…" if ready else "Sign in to TikTok on your server to chat")
+        self.message.setPlaceholderText("Send a message…" if ready else "Sign in to TikTok in your Ignite account to chat")
 
     def _send(self) -> None:
         if self.controller.send_tiktok_chat(self.message.text()):
             self.message.clear()
 
     def _restyle(self, _palette=None) -> None:
-        for card in (self.preview_card, self.control_card, self.chat_card, self.analytics_card, self.events_card,
-                     self.quick_card):
+        for card in (self.stream_card, self.scenes_card, self.chat_card, self.events_card):
             card.restyle()
-        for tile in (self.viewers, self.uptime, self.followers, self.subscribers):
+        for tile in (self.viewers, self.chat_rate, self.gifts, self.followers):
             tile.restyle()
         self.preview.restyle()
         self.chat_empty.restyle()
         self.events_empty.restyle()
         recolor_icon_button(self.popout)
         recolor_icon_button(self.chat_more)
-        restyle_buttons(self.go_live, self.stop, self.send, *self.quick)
-        self._fill_chart()
+        restyle_buttons(self.go_live, self.stop, self.send, *self.scene_buttons)

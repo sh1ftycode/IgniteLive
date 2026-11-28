@@ -16,6 +16,7 @@ from PySide6.QtWidgets import QApplication
 from ignite_live import __version__
 from ignite_live.controller import Controller
 from ignite_live.core import keychain, settings, updates
+from ignite_live.core.themes import effective_ui_theme
 from ignite_live.core.browser import restore_host_library_path
 from ignite_live.core.bundled import import_bundled_keys
 from ignite_live.core.runtime import Runtime
@@ -137,7 +138,7 @@ def main() -> int:
         log.info("Copied bundled keys into the keychain: %s", ", ".join(imported))
     splash.step("Loading your settings…", 0.25)
     controller = Controller(Runtime())
-    apply_theme(app, controller.settings.ui_theme)
+    apply_theme(app, effective_ui_theme(controller.settings))
     splash.step("Setting up the workspace…", 0.55)
     window = MainWindow(controller)
     instance.activated.connect(window.bring_forward)

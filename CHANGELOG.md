@@ -5,6 +5,48 @@ starts with its section from this file (see `.github/workflows/build.yml`).
 For versions before 1.6.1, see the
 [GitHub releases](https://github.com/sh1ftycode/IgniteLive/releases).
 
+## Unreleased
+
+### Changed
+
+- **Overview rebuilt to match the design:** four stat tiles (Viewers with a small trend line, Chat per min,
+  Gifts, New followers), the chat beside the stream preview and go-live controls, **Scenes you can switch from
+  the Overview**, recent events, and a Ctrl+K bar along the bottom. The numbers come from live data.
+- **Flatter cards and buttons:** plain card titles, no divider lines, borderless buttons.
+- **Chat rows follow the design:** name first, a blue Mod badge, the platform as a quiet word, neutral avatars.
+- **Inter is now bundled** (SIL Open Font License), so Ignite looks the same on every PC.
+- Shortcut letters (underlined) no longer show in Settings forms; the shortcuts still work. Menus keep them.
+
+- **Setup guide rebuilt as the design's five steps**, full window: Account, Connect your channel, Pick a look,
+  Add it to OBS, then Test everything and Go live. PC and OBS tuning, the OBS connection, text to speech, loyalty
+  points, the panic scene and the stream key are all still there, tucked into the step they belong to.
+- **Hosted links are now THE links.** Sign in and every overlay link is Ignite's, and OBS is pointed at it. If the
+  server can't be reached, OBS is pointed at the same overlay on this PC (the backup) and back again when the
+  server answers. Overlays and Integrations show the hosted link first with the PC link as a labelled backup.
+- **Themes**, a new screen in the sidebar: one look for the dashboard and the overlays. Pick any of the 21
+  built-in themes (the dashboard wears it too, unless you turn off "Match my overlays"), switch with the season
+  automatically, or **make your own**: five colours, corner radius and an overlay font, with a preview of the
+  overlays and of the dashboard and a check that the text can still be read. Your themes are saved, and can be
+  duplicated, exported to a file and imported again. Saved with your settings, so they sync with your account.
+- **Dashboard background** (Themes): a picture behind the screens, from four built-in ones or your own, with Hue,
+  Blur and Dim, and Full, Subtle or Off. Panels turn slightly see-through so the picture shows, and Subtle keeps
+  text easy to read. Your picture is copied into the Ignite folder (`backgrounds`) and stays on this PC. Overlays
+  stay see-through: they sit on top of your scene in OBS, so a picture there would cover your stream.
+- **Music plays in Ignite (optional):** "Play music in Ignite" on Live Chat → Song Requests runs the player inside
+  Ignite, visible in that tab, instead of inside the Now Playing overlay in OBS. The overlay then only shows the
+  cover, title and progress, and plays again if you switch this off. In OBS, add Ignite's audio (Application Audio
+  Capture, or Desktop Audio). Off by default, so nothing changes until you turn it on.
+- **Covers instead of videos:** a pasted music-video link is swapped for the same song's art track (the album cover)
+  when YouTube Music has a clear match, and songs without cover art look one up on Apple's public iTunes search
+  (only the title and artist are sent).
+- Every checkbox is a toggle switch; form labels lose their trailing colons; tables have taller rows.
+- The "Ignite server" card is gone from Integrations, and screens now say "your Ignite account".
+
+### Removed
+
+- The Overview's analytics chart and quick-action buttons. Analytics has the same reports, and the sidebar and
+  Ctrl+K reach every screen.
+
 ## 1.9.2
 
 ### Added

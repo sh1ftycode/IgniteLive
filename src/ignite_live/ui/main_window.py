@@ -28,7 +28,8 @@ from ignite_live import __version__
 from ignite_live.controller import Controller
 from ignite_live.core import settings as settings_store
 from ignite_live.core.bundled import main_server
-from ignite_live.core.seasons import SEASONAL
+from ignite_live.core.themes import effective_ui_theme
+from ignite_live.ui import background
 from ignite_live.ui.actions import AppActions
 from ignite_live.ui.checklist import ChecklistDialog, go_live
 from ignite_live.ui.docks import ChatPopout
@@ -40,6 +41,7 @@ from ignite_live.ui.pages.live_chat import LiveChatPage
 from ignite_live.ui.pages.overlays import OverlaysPage
 from ignite_live.ui.pages.overview import OverviewPage
 from ignite_live.ui.pages.settings import SettingsPage
+from ignite_live.ui.pages.themes import ThemesPage
 from ignite_live.ui.pages.stream import StreamPage
 from ignite_live.ui.pages.streams import StreamsPage
 from ignite_live.ui.profiles import ProfilesMenu
@@ -47,7 +49,8 @@ from ignite_live.ui.shell import AppHeader, NotificationCenter
 from ignite_live.ui.sidebar import EXPANDED_WIDTH as SIDEBAR_WIDTH
 from ignite_live.ui.sidebar import NavItem, Sidebar
 from ignite_live.ui.simulate import SimulateDialog
-from ignite_live.ui.theme import apply_theme, colors, resolve_theme, theme_changed
+from ignite_live.ui.theme import apply_theme, colors, resolve_theme, set_background, theme_changed
+from ignite_live.ui.background import BackgroundHost
 from ignite_live.ui.updates import UpdateBanner, UpdateButton, UpdateManager, show_notes
 
 # The screens, in sidebar order (Ctrl+1… follows it): key, title, Lucide icon, the header's description.
@@ -58,6 +61,7 @@ SCREENS = (
     ("actions", "Alerts", "bell", "What happens on stream when viewers follow, gift, share or chat"),
     ("streams", "Analytics", "chart-column", "How your streams went, from the reports Ignite saves"),
     ("overlays", "Overlays", "layers", "Browser Sources for OBS, goal bars and chat games"),
+    ("themes", "Themes", "palette", "One look for your dashboard and your overlays: pick one, or make your own"),
     ("api", "Integrations", "puzzle", "Platforms and services Ignite works with, and its links and API"),
     ("settings", "Settings", "settings", "Preferences for Ignite on this PC"),
 )
@@ -99,6 +103,7 @@ class MainWindow(QMainWindow):
         self.pages["actions"] = ActionsPage(controller)
         self.pages["streams"] = StreamsPage(controller)
         self.pages["overlays"] = OverlaysPage(controller)
+        self.pages["themes"] = ThemesPage(controller)
         self.pages["api"] = ApiPage(controller)
         self.pages["settings"] = SettingsPage(controller, {
             "check_updates": lambda: self.updates.check(manual=True), "whats_new": lambda: show_notes(self.updates, self),
@@ -161,7 +166,7 @@ class MainWindow(QMainWindow):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
         root.addWidget(self.sidebar)
-        column_widget = QWidget()
+        column_widget = self.backdrop = BackgroundHost()  # The picture behind the screens, when there is one.
         column = QVBoxLayout(column_widget)
         column.setContentsMargins(0, 0, 0, 0)
         column.setSpacing(0)
@@ -187,7 +192,7 @@ class MainWindow(QMainWindow):
         controller.settings_changed.connect(self._settings_changed)
         controller.account_changed.connect(lambda _info: self._account())
         controller.tiktok_account_changed.connect(lambda _status: self._account())
-        self._theme = controller.settings.ui_theme  # Applied by app.py at startup.
+        self._theme = effective_ui_theme(controller.settings)  # Applied by app.py at startup.
         # "Seasonal": move on to the next season or holiday when the date gets there (checked twice an hour).
         self._season_timer = QTimer(self, interval=30 * 60 * 1000)
         self._season_timer.timeout.connect(self._season_tick)
@@ -199,6 +204,7 @@ class MainWindow(QMainWindow):
         self._account()
         self._restyle()
         self._restore_layout()
+        self._background(controller.settings)
 
     # Construction.
 
@@ -341,10 +347,20 @@ class MainWindow(QMainWindow):
     def _restore_sidebar(self) -> None:
         s = self.controller.settings
         order = [key for key in s.tab_order if key in PAGE_TITLES]
-        order += [key for key in PAGE_TITLES if key not in order]
+        order = self._with_new_sections(order)
         visible = [key for key in order if key not in s.closed_tabs]
         self.sidebar.set_visible_items(visible)
         self.open_page(visible[0]) if visible else self._show_empty()
+
+    @staticmethod
+    def _with_new_sections(order: list[str]) -> list[str]:
+        """A section that isn't in a saved order (one added since) goes where it sits in the default order."""
+        keys = list(PAGE_TITLES)
+        for key in keys:
+            if key not in order:
+                before = keys[keys.index(key) - 1] if keys.index(key) else ""
+                order.insert(order.index(before) + 1 if before in order else len(order), key)
+        return order
 
     def hide_page(self, key: str) -> None:
         s = self.controller.settings
@@ -359,7 +375,7 @@ class MainWindow(QMainWindow):
         s = self.controller.settings
         s.closed_tabs = []
         order = [key for key in s.tab_order if key in PAGE_TITLES] or list(PAGE_TITLES)
-        order += [key for key in PAGE_TITLES if key not in order]
+        order = self._with_new_sections(order)
         self.sidebar.set_visible_items(order)
         if self.content_stack.currentWidget() is self.empty_page:
             self.open_page(order[0])
@@ -390,6 +406,8 @@ class MainWindow(QMainWindow):
         guide = self.guide = SetupGuide(self.controller)
         self.content_stack.addWidget(guide)
         self.content_stack.setCurrentWidget(guide)
+        self.sidebar.hide()  # The guide takes the whole window, like a first-run screen.
+        self.header.hide()
         self.header.set_page("Setup Guide", "Get Ignite ready for your first stream")
         self.setWindowTitle("Ignite — Setup Guide")
         guide.closed.connect(self._close_guide)
@@ -398,6 +416,8 @@ class MainWindow(QMainWindow):
         guide, self.guide = self.guide, None
         if guide is None:
             return
+        self.sidebar.show()
+        self.header.show()
         self.content_stack.removeWidget(guide)
         guide.deleteLater()
         if _finished is not None:
@@ -471,7 +491,7 @@ class MainWindow(QMainWindow):
         if info is not None:
             name, detail = f"@{info.username}", "Streamlabs" + (" · TikTok" if tiktok.get("connected") else "")
         elif tiktok.get("connected") and tiktok.get("username"):
-            name, detail = f"@{tiktok['username']}", "TikTok via your server"
+            name, detail = f"@{tiktok['username']}", "TikTok via your account"
         else:
             name, detail = "Not signed in", "Local only" if not self.controller.settings.backend_url else "Sign in for more"
         self.sidebar.account.set_account(name, detail)
@@ -506,15 +526,36 @@ class MainWindow(QMainWindow):
 
     def _settings_changed(self, settings) -> None:
         app = QApplication.instance()
-        if app is not None and settings.ui_theme != self._theme:
-            self._theme = settings.ui_theme
-            apply_theme(app, settings.ui_theme)
+        wanted = effective_ui_theme(settings)  # The overlays' theme while they're matched, else the Settings look.
+        if app is not None and wanted != self._theme:
+            self._theme = wanted
+            apply_theme(app, wanted)
+        self._background(settings)
         self._account()
+
+    def _background(self, s) -> None:
+        """The dashboard background: the picture, turned, softened and darkened as set, behind the screens."""
+        signature = (s.bg_source, s.bg_hue, s.bg_blur, s.bg_dim, s.bg_mode, s.bg_dashboard)
+        if signature == getattr(self, "_bg_signature", None):
+            return
+        self._bg_signature = signature
+        image = None
+        if s.bg_dashboard and s.bg_source and s.bg_mode != "off":
+            folder = background.folder_of(self.controller.settings_path)
+            source = background.load_source(s.bg_source, folder)
+            if source is not None:
+                image = background.render(source, s.bg_source, s.bg_hue, s.bg_blur, s.bg_dim)
+        self.backdrop.set_picture(image, background.OPACITY.get(s.bg_mode, 1.0))
+        changed = set_background(image is not None, background.CARD_ALPHA.get(s.bg_mode, 1.0))
+        app = QApplication.instance()
+        if changed and app is not None:
+            apply_theme(app, self._theme)  # Panels turn see-through (or solid again).
 
     def _season_tick(self) -> None:
         app = QApplication.instance()
-        if app is not None and self.controller.settings.ui_theme == SEASONAL and resolve_theme(SEASONAL) != colors().name:
-            apply_theme(app, SEASONAL)
+        wanted = effective_ui_theme(self.controller.settings)
+        if app is not None and resolve_theme(wanted) != colors().name:
+            apply_theme(app, wanted)
 
     def _restyle(self, _palette=None) -> None:
         """Colours set in code (rather than by the stylesheet) follow a switch between dark and light."""

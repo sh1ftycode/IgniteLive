@@ -28,6 +28,9 @@ from PySide6.QtCore import QEasingCurve, QEvent, QObject, QRectF, Qt, QTemporary
 from PySide6.QtGui import QColor, QFont, QFontDatabase, QGuiApplication, QPainter, QPalette
 from PySide6.QtWidgets import (
     QApplication,
+    QLabel,
+    QMenu,
+    QMenuBar,
     QProxyStyle,
     QStyle,
     QStyleFactory,
@@ -76,6 +79,8 @@ STATE_TEXT = {
 }
 
 _base_font: QFont | None = None
+_bg_active = False  # A picture is behind the screens: surfaces let it show.
+_card_alpha = 1.0  # How solid the panels over it are.
 _style: QStyle | None = None  # Kept referenced while the app uses it.
 _active: Palette = DARK
 _images: dict[str, QTemporaryDir] = {}  # Per mode: the stylesheet's small SVGs, drawn in its colours.
@@ -109,6 +114,23 @@ def resolve_theme(name: str) -> str:
         return name
     hints = QGuiApplication.styleHints() if QGuiApplication.instance() is not None else None
     return "light" if hints is not None and hints.colorScheme() == Qt.ColorScheme.Light else "dark"
+
+
+def set_background(active: bool, card_alpha: float = 1.0) -> bool:
+    """A picture is (or isn't) behind the screens, and how solid the panels over it are. Returns whether anything
+    changed, in which case the stylesheet needs applying again."""
+    global _bg_active, _card_alpha
+    card_alpha = 1.0 if not active else card_alpha
+    changed = (active, card_alpha) != (_bg_active, _card_alpha)
+    _bg_active, _card_alpha = active, card_alpha
+    return changed
+
+
+def card_fill() -> QColor:
+    """The colour of a panel, as seen by widgets that paint their own (a little see-through over a picture)."""
+    color = QColor(colors().panel)
+    color.setAlphaF(_card_alpha)
+    return color
 
 
 def tint(color: str, alpha: float) -> str:
@@ -202,6 +224,8 @@ class EmberStyle(QProxyStyle):
     def styleHint(self, hint, option=None, widget=None, data=None) -> int:  # noqa: N802 - Qt override
         if hint == QStyle.StyleHint.SH_DockWidget_ButtonsHaveFrame:
             return 0  # The stylesheet draws them; with a frame, Qt would also shrink their icons to 10px.
+        if hint == QStyle.StyleHint.SH_UnderlineShortcut and not isinstance(widget, (QMenu, QMenuBar)):
+            return 0  # Shortcut letters stay hidden in forms (the shortcuts still work); menus show them.
         return super().styleHint(hint, option, widget, data)
 
     def drawControl(self, element, option, painter, widget=None) -> None:  # noqa: N802 - Qt override
@@ -244,6 +268,15 @@ def _image_dir(p: Palette) -> str:
         for name, body in svgs.items():
             svg = f'<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">{body}</svg>'
             (Path(folder.path()) / f"{name}.svg").write_text(svg, "utf-8")
+        # Toggle switches (every checkbox): a pill with its knob, off and on.
+        knob_off, knob_on = p.text, "#ffffff"
+        for name, track, knob_x, knob in (("switch_off", p.handle, 10, knob_off), ("switch_on", p.primary, 26, knob_on),
+                                          ("switch_off_disabled", p.divider, 10, p.text_disabled),
+                                          ("switch_on_disabled", p.divider, 26, p.text_disabled)):
+            svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="36" height="20" viewBox="0 0 36 20">'
+                   f'<rect width="36" height="20" rx="10" fill="{track}"/><circle cx="{knob_x}" cy="10" r="7" '
+                   f'fill="{knob}"/></svg>')
+            (Path(folder.path()) / f"{name}.svg").write_text(svg, "utf-8")
     return _images[p.name].path()
 
 
@@ -251,6 +284,7 @@ def stylesheet(p: Palette) -> str:
     img, r = _image_dir(p), f"{RADIUS}px"
     WINDOW, PANEL, RAISED, DIVIDER, PANEL_ALT, SELECTED, PRESSED = (  # noqa: N806 - read like the CSS they fill
         p.window, p.panel, p.raised, p.divider, p.panel_alt, p.selected, p.pressed)
+    CARD = PANEL if _card_alpha >= 1 else tint(PANEL, _card_alpha)  # noqa: N806 - panels over a background picture
     TEXT, TEXT_MUTED, TEXT_DISABLED = p.text, p.text_muted, p.text_disabled  # noqa: N806
     ACCENT, ACCENT_HOVER, ACCENT_PRESSED, ON_ACCENT = p.accent, p.accent_hover, p.accent_pressed, p.on_accent  # noqa: N806
     LIVE, LIVE_HOVER, LIVE_PRESSED, ON_LIVE = p.live, p.live_hover, p.live_pressed, p.on_live  # noqa: N806
@@ -272,7 +306,9 @@ def stylesheet(p: Palette) -> str:
     PRIMARY, PRIMARY_HOVER, PRIMARY_PRESSED, ON_PRIMARY = p.primary, p.primary_hover, p.primary_pressed, p.on_primary  # noqa: N806
     SIDEBAR, HANDLE, ACCENT_TEXT = p.sidebar, p.handle, p.accent_text  # noqa: N806
     return f"""
-QMainWindow, QWidget#appContent, QWidget#page {{ background: {WINDOW}; }}
+QMainWindow {{ background: {WINDOW}; }}
+{"QWidget#appContent, QWidget#page, QFrame#appHeader { background: transparent; }" if _bg_active else
+ f"QWidget#appContent, QWidget#page {{ background: {WINDOW}; }}"}
 QMainWindow::separator {{ background: {DIVIDER}; width: 1px; height: 1px; }}
 QDialog {{ background: {PANEL}; }}
 QToolTip {{ background: {RAISED}; color: {TEXT}; border: 1px solid {DIVIDER}; border-radius: {r}; padding: 4px 8px; }}
@@ -298,12 +334,20 @@ QToolButton::menu-indicator {{ image: url({img}/down.svg); subcontrol-position: 
 QToolButton[iconOnly="true"] {{ padding: 6px; }}
 QToolButton[iconOnly="true"]::menu-indicator {{ image: none; width: 0; }}
 
-QPushButton {{ background: {RAISED}; color: {TEXT}; border: 1px solid {DIVIDER}; border-radius: {r};
+QPushButton {{ background: {RAISED}; color: {TEXT}; border: 1px solid {RAISED}; border-radius: {r};
                padding: 7px 14px; min-height: 18px; font-weight: 500; }}
-QPushButton:hover {{ background: {PRESSED}; border-color: {HANDLE}; }}
+QPushButton:hover {{ background: {PRESSED}; border-color: {PRESSED}; }}
 QPushButton:focus {{ border-color: {ACCENT}; }}
 QPushButton:pressed, QPushButton:checked {{ background: {PRESSED}; }}
-QPushButton:disabled {{ background: {RAISED}; color: {TEXT_DISABLED}; border-color: {DIVIDER}; }}
+QPushButton:disabled {{ background: {RAISED}; color: {TEXT_DISABLED}; border-color: {RAISED}; }}
+QFrame#segmented {{ background: {PANEL}; border: none; border-radius: 17px; }}
+QPushButton[segment="true"] {{ background: transparent; border: none; border-radius: 13px; padding: 6px 14px; min-height: 16px;
+    color: {TEXT_MUTED}; font-weight: 500; }}
+QPushButton[segment="true"]:hover {{ color: {TEXT}; background: transparent; }}
+QPushButton[segment="true"]:checked {{ background: {RAISED}; color: {TEXT}; font-weight: 600; }}
+QFrame#commandHint {{ background: transparent; border: 1px solid {DIVIDER}; border-radius: 10px; }}
+QFrame#commandHint:hover {{ background: {RAISED}; border-color: {HANDLE}; }}
+QFrame#commandHint:focus {{ border-color: {ACCENT}; }}
 QPushButton::menu-indicator {{ image: url({img}/down.svg); subcontrol-position: right center; subcontrol-origin: padding;
                                width: 10px; right: 8px; }}
 QPushButton[primary="true"], QToolButton[primary="true"] {{ background: {PRIMARY}; color: {ON_PRIMARY};
@@ -362,7 +406,7 @@ QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {{
 QAbstractSpinBox::up-arrow {{ image: url({img}/up.svg); width: 10px; height: 10px; }}
 QAbstractSpinBox::down-arrow {{ image: url({img}/down.svg); width: 10px; height: 10px; }}
 
-QCheckBox, QRadioButton {{ spacing: 8px; }}
+QCheckBox, QRadioButton {{ spacing: 10px; }}
 QCheckBox:disabled, QRadioButton:disabled {{ color: {TEXT_DISABLED}; }}
 QCheckBox::indicator, QRadioButton::indicator {{ width: 14px; height: 14px; background: {WINDOW};
                                                  border: 1px solid {HANDLE}; }}
@@ -371,22 +415,29 @@ QRadioButton::indicator {{ border-radius: 8px; }}
 QCheckBox::indicator:hover, QRadioButton::indicator:hover {{ border-color: {TEXT_MUTED}; }}
 QCheckBox::indicator:checked, QRadioButton::indicator:checked, QCheckBox::indicator:indeterminate {{
     background: {PRIMARY}; border-color: {PRIMARY}; }}
-QCheckBox::indicator:checked {{ image: url({img}/check.svg); }}
-QCheckBox::indicator:indeterminate {{ image: url({img}/dash.svg); }}
 QRadioButton::indicator:checked {{ image: url({img}/dot.svg); }}
-QCheckBox::indicator:disabled, QRadioButton::indicator:disabled {{ background: transparent; border-color: {DIVIDER}; }}
-QCheckBox::indicator:checked:disabled {{ background: {DIVIDER}; image: url({img}/check_disabled.svg); }}
+QRadioButton::indicator:disabled {{ background: transparent; border-color: {DIVIDER}; }}
+QCheckBox::indicator {{ width: 36px; height: 20px; background: transparent; border: none; border-radius: 10px;
+                        image: url({img}/switch_off.svg); }}
+QCheckBox::indicator:hover {{ border: none; }}
+QCheckBox::indicator:checked {{ background: transparent; border: none; image: url({img}/switch_on.svg); }}
+QCheckBox::indicator:indeterminate {{ background: transparent; border: none; image: url({img}/switch_off.svg); }}
+QCheckBox::indicator:disabled {{ background: transparent; border: none; image: url({img}/switch_off_disabled.svg); }}
+QCheckBox::indicator:checked:disabled {{ background: transparent; image: url({img}/switch_on_disabled.svg); }}
+QCheckBox:focus {{ color: {TEXT}; }}
 
 {views} {{ background: {PANEL}; border: none; alternate-background-color: {PANEL_ALT}; outline: 0;
            gridline-color: {PANEL}; selection-background-color: {SELECTED}; selection-color: {TEXT}; }}
 QListView::item, QTreeView::item {{ padding: 4px 8px; border-radius: {r}; }}
 QListView::item:hover, QTreeView::item:hover {{ background: {RAISED}; }}
-QListView::item:selected, QTreeView::item:selected, QTableView::item:selected {{
+QListView::item:selected, QTreeView::item:selected {{
     background: {SELECTED}; color: {TEXT}; }}
-QTableView::item {{ padding: 0 8px; }}
+QTableView::item {{ padding: 0 8px; border: none; border-bottom: 1px solid {DIVIDER}; }}
+QTableView::item:hover {{ background: {PANEL_ALT}; }}
+QTableView::item:selected {{ background: {RAISED}; color: {TEXT}; }}
 QHeaderView {{ background: transparent; border: none; }}
 QHeaderView::section {{ background: {PANEL}; color: {TEXT_MUTED}; border: none; border-bottom: 1px solid {DIVIDER};
-                        padding: 6px 8px; font-size: {LABEL_PX}px; font-weight: 600; }}
+                        padding: 8px 8px; font-size: {LABEL_PX}px; font-weight: 500; }}
 QTableCornerButton::section {{ background: {PANEL}; border: none; }}
 QScrollArea {{ background: transparent; border: none; }}
 
@@ -418,7 +469,7 @@ QStatusBar::item {{ border: none; }}
 QLabel[role="pageTitle"] {{ font-size: 24px; font-weight: 600; color: {TEXT}; }}
 QLabel[role="pageSubtitle"] {{ color: {TEXT_MUTED}; }}
 QLabel[role="sectionTitle"] {{ font-size: 16px; font-weight: 600; color: {TEXT}; }}
-QLabel[role="cardTitle"] {{ font-size: 14px; font-weight: 600; color: {TEXT}; }}
+QLabel[role="cardTitle"] {{ font-size: 15px; font-weight: 600; color: {TEXT}; }}
 QLabel[role="caption"] {{ font-size: {LABEL_PX}px; font-weight: 600; color: {TEXT_MUTED}; }}
 QLabel[role="muted"] {{ color: {TEXT_MUTED}; }}
 QLabel[role="value"] {{ font-size: 24px; font-weight: 600; color: {TEXT}; }}
@@ -429,11 +480,11 @@ QLabel[tone="error"] {{ color: {LIVE}; }}
 QLabel[tone="accent"] {{ color: {ACCENT_TEXT}; }}
 QLabel[tone="muted"] {{ color: {TEXT_MUTED}; }}
 
-QFrame#card {{ background: {PANEL}; border: none; border-radius: 14px; }}
-QFrame#cardHeader {{ background: transparent; border: none; border-bottom: 1px solid {DIVIDER}; }}
+QFrame#card {{ background: {CARD}; border: none; border-radius: 14px; }}
+QFrame#cardHeader {{ background: transparent; border: none; }}
 QFrame#inset {{ background: {WINDOW}; border: 1px solid {DIVIDER}; border-radius: 10px; }}
 QFrame#sidebar {{ background: {SIDEBAR}; border: none; border-right: 1px solid {DIVIDER}; }}
-QFrame#appHeader {{ background: {WINDOW}; border: none; }}
+{"" if _bg_active else f"QFrame#appHeader {{ background: {WINDOW}; border: none; }}"}
 QFrame#hline {{ background: {DIVIDER}; border: none; max-height: 1px; min-height: 1px; }}
 QFrame#vline {{ background: {DIVIDER}; border: none; max-width: 1px; min-width: 1px; }}
 QFrame#pill {{ background: {RAISED}; border: none; border-radius: 13px; }}
@@ -455,13 +506,40 @@ QListWidget#overlayList::item:selected {{ background: {SELECTED}; border-color: 
 """
 
 
+class _FormLabelFilter(QObject):
+    """The design's form labels have no trailing colon ("Address", not "Address:"): drop it from every label that
+    belongs to a field, the first time it is shown."""
+
+    def eventFilter(self, watched, event) -> bool:  # noqa: N802 - Qt override
+        if event.type() == QEvent.Type.Show and isinstance(watched, QLabel) and watched.buddy() is not None:
+            text = watched.text()
+            if text.endswith(":") and watched.textFormat() != Qt.TextFormat.RichText:
+                watched.setText(text[:-1])
+        return False
+
+
+_form_labels: _FormLabelFilter | None = None
+
+
+def _load_fonts() -> None:
+    """Register the Inter files that ship with Ignite, so it looks the same on every PC."""
+    folder = Path(__file__).parent / "fonts"
+    for file in sorted(folder.glob("Inter-*.ttf")):
+        QFontDatabase.addApplicationFont(str(file))
+
+
 def apply_theme(app: QApplication, name: str) -> None:
     """Switch the app to dark or light mode (at startup, or live from Preferences)."""
     global _base_font, _style, _active
     if _base_font is None:
         _base_font = QFont(app.font())  # The system font, kept; only its size changes.
-        if "Inter" in QFontDatabase.families():  # Ignite's chosen font, when it's installed; the system font otherwise.
+        _load_fonts()
+        if "Inter" in QFontDatabase.families():  # Ignite's font (bundled, SIL Open Font License); the system font otherwise.
             _base_font.setFamily("Inter")
+    global _form_labels
+    if _form_labels is None:
+        _form_labels = _FormLabelFilter(app)
+        app.installEventFilter(_form_labels)
     _active = PALETTES[resolve_theme(name)]
     if _style is None:
         _style = EmberStyle()

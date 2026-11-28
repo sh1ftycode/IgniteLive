@@ -6,7 +6,6 @@ Used by the Chat panel and the pop-out chat window.
 from __future__ import annotations
 
 import time
-import zlib
 
 from PySide6.QtCore import QModelIndex, QObject, QPointF, QRect, QRectF, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QImage, QPainter, QPainterPath, QPalette
@@ -49,7 +48,7 @@ def text_size(percent: int) -> int:
 
 MAX_IMAGE_BYTES = 512 * 1024
 MAX_CACHED_IMAGES = 800
-AVATAR_COLORS = ("#fe2c55", "#25c9c3", "#7c6cff", "#ff8a5c", "#3fa7f5", "#f5a623", "#59c27a", "#e45dbf")
+MOD_BLUE, MOD_BLUE_LIGHT = "#6f95f5", "#2f5fd0"  # The design's secondary blue, for moderators.
 
 
 def kind_of(event: ChatEvent) -> str | None:
@@ -278,9 +277,8 @@ class ChatDelegate(QStyledItemDelegate):
             painter.drawImage(circle, image)
             painter.restore()
             return
-        color = AVATAR_COLORS[zlib.crc32(user.unique_id.encode()) % len(AVATAR_COLORS)]
-        painter.fillPath(path, QColor(color))
-        painter.setPen(QColor("#ffffff"))
+        painter.fillPath(path, QColor(colors().raised))  # Neutral: colour is kept for things that mean something.
+        painter.setPen(QColor(colors().text_muted))
         painter.setFont(_font(self.name_font, size * 0.42, QFont.Weight.Bold))
         painter.drawText(circle, Qt.AlignmentFlag.AlignCenter, (user.nickname or user.unique_id or "?")[:1].upper())
 
@@ -305,11 +303,7 @@ class ChatDelegate(QStyledItemDelegate):
         """Platform pill, nickname, and Host/Mod/Sub/follower badges; returns the line's height."""
         metrics = QFontMetrics(self.name_font)
         mid = y + metrics.height() / 2
-        mixed = len(getattr(self.view, "platforms", ())) > 1
         p = colors()  # Each mode's colours are picked to read on its own background.
-        platform_color = getattr(p, user.platform, None) if user.platform in PLATFORMS else None
-        if platform_color and (always_platform or user.platform in ALWAYS_BADGED or mixed):
-            x = self._badge(painter, x, mid, PLATFORMS[user.platform], platform_color)
         name = metrics.elidedText(user.nickname or user.unique_id, Qt.TextElideMode.ElideRight, int(max_w * 0.6))
         painter.setFont(self.name_font)
         painter.setPen(QColor(color))
@@ -318,11 +312,15 @@ class ChatDelegate(QStyledItemDelegate):
         if user.is_host:
             bx = self._badge(painter, bx, mid, "HOST", p.accent_text)
         if user.is_moderator:
-            bx = self._badge(painter, bx, mid, "MOD", p.healthy)
+            bx = self._badge(painter, bx, mid, "MOD", MOD_BLUE if self._dark() else MOD_BLUE_LIGHT)
         if user.is_subscriber:
             bx = self._badge(painter, bx, mid, "MEMBER" if user.platform == "youtube" else "SUB", p.warning)
         if user.is_follower:
             bx = self._badge(painter, bx, mid, "FOLLOWER", p.text_muted)
+        if user.platform in PLATFORMS:  # The platform is a quiet word after the name, not a coloured pill.
+            painter.setFont(self.small_font)
+            painter.setPen(self._muted())
+            self._draw_text(painter, QPointF(bx + 2, y + metrics.ascent()), PLATFORMS[user.platform])
         return metrics.height()
 
     def _paint_comment(self, painter: QPainter, rect: QRect, event: ChatComment) -> None:
@@ -331,7 +329,7 @@ class ChatDelegate(QStyledItemDelegate):
         x = rect.left() + self.pad
         self._paint_avatar(painter, x, top, self.avatar, event.user)
         tx = x + self.avatar + self.pad
-        name_h = self._name_line(painter, tx, top, self._text_width(), event.user, self._muted())
+        name_h = self._name_line(painter, tx, top, self._text_width(), event.user, self._text())
         painter.setFont(self.text_font)
         painter.setPen(self._text())
         self._draw_text(painter, QRect(int(tx), int(top + name_h + 2), self._text_width(), 100_000), event.text,

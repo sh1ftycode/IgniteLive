@@ -134,7 +134,7 @@ SETTING_GROUPS = (
      ("Song requests", "Commands", "Text to speech")),
     ("Appearance", "palette", "How Ignite and your overlays look.", ("Appearance",)),
     ("Streaming", "radio", "OBS: the connection, and what happens when you go live.", ("OBS",)),
-    ("Integrations", "puzzle", "Chat platforms, your Ignite server, Discord and Minecraft.",
+    ("Integrations", "puzzle", "Chat platforms, your Ignite account, Discord and Minecraft.",
      ("Chat platforms", "Server", "Discord", "Minecraft")),
     ("Notifications", "bell", "Everything Ignite says to viewers: chat replies, overlays, speech and Discord.",
      ("Messages",)),
@@ -442,11 +442,11 @@ class PreferencesDialog(QDialog):
         self.tiktok = QLineEdit(s.tiktok_username)
         self.tiktok.setPlaceholderText("without the @")
         form.addRow("&TikTok username:", self.tiktok)
-        # TikTok signed in on the Ignite server's website (Euler Stream): Ignite can act as the streamer.
+        # TikTok signed in in your Ignite account (Euler Stream): Ignite can act as the streamer.
         self.tiktok_account = QLabel("Checking…")
         self.tiktok_account.setWordWrap(True)
         tiktok_site = QPushButton("Sign In on the Website…")
-        tiktok_site.setToolTip("Opens your account on the Ignite server's website, signed in: TikTok is at the top")
+        tiktok_site.setToolTip("Opens your account in your Ignite account, signed in: TikTok is at the top")
         tiktok_site.clicked.connect(lambda: controller.open_server_account(
             lambda url: QDesktopServices.openUrl(QUrl(url))))
         tiktok_row = QHBoxLayout()
@@ -458,7 +458,7 @@ class PreferencesDialog(QDialog):
         self.tiktok_replies.setToolTip("“@name: added Song (#2)”, refusals and skips, said in your LIVE's chat. At most "
                                        "one message every 3 seconds")
         form.addRow("", self.tiktok_replies)
-        form.addRow(note("Sign your TikTok account in on the Ignite server's website (by scanning a QR code with the "
+        form.addRow(note("Sign your TikTok account in in your Ignite account (by scanning a QR code with the "
                          "TikTok app) to let Ignite answer requests in your chat, and to make viewers moderators, "
                          "mute them or kick them out from the Viewers tab. Your TikTok password never reaches Ignite."))
         controller.tiktok_account_changed.connect(self._show_tiktok_account)
@@ -983,7 +983,7 @@ class PreferencesDialog(QDialog):
         self.presence_on.setChecked(config.enabled)
         form.addRow(self.presence_on)
         self.presence_app = QLineEdit(config.app_id)
-        self.presence_app.setPlaceholderText("Empty: the one your Ignite server gives out (“Playing Ignite”)")
+        self.presence_app.setPlaceholderText("Empty: the one your Ignite account gives out (“Playing Ignite”)")
         advanced = QWidget()  # Few people need their own Discord application: it stays out of the way.
         QFormLayout(advanced).addRow("&Application ID:", self.presence_app)
         form.addRow(disclosure("Advanced", advanced))
@@ -1286,11 +1286,11 @@ class PreferencesDialog(QDialog):
         elif status.get("error"):
             self.tiktok_account.setText(f"Couldn't check: {status['error']}")
         elif status.get("server") is False:
-            self.tiktok_account.setText("Sign in to your Ignite server first (Server tab)")
+            self.tiktok_account.setText("Sign in to your Ignite account first (Server tab)")
         elif status.get("available"):
             self.tiktok_account.setText("Not signed in")
         else:
-            self.tiktok_account.setText("Your Ignite server doesn't offer TikTok sign-in")
+            self.tiktok_account.setText("Your Ignite account doesn't offer TikTok sign-in")
 
     def _sign_in(self) -> None:
         self.controller.sign_in_to_server()

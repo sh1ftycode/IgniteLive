@@ -10,6 +10,10 @@ Links (youtube.com or music.youtube.com) resolve with the keyless oEmbed
 endpoint, or with the Data API when a key is set (then duration and
 embeddability are known up front).
 
+A pasted link to a music video is swapped for the same song's art track (the album cover instead of the video),
+when YouTube Music has one that is clearly the same song. Anything still without cover art asks Apple's public
+iTunes search for it (just the title and artist; no account, no key) and falls back to the video's thumbnail.
+
 ``radio`` gives songs like one song (YouTube Music's radio for it, the same
 genre and vibe), and ``playlist`` reads a public YouTube or YouTube Music
 playlist; both come from the same undocumented "up next" list music.youtube.com
@@ -26,6 +30,12 @@ from dataclasses import dataclass, replace
 from ignite_live.core.http import Transport, TransportError, urllib_transport
 
 _VIDEO_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
+_BRACKETS = re.compile(r"[\(\[\{][^)\]\}]*[\)\]\}]")
+_NOISE = {"official", "video", "audio", "lyrics", "lyric", "music", "hd", "hq", "4k", "mv", "visualizer", "visualiser",
+          "remastered", "remaster", "explicit", "clean", "topic", "vevo", "records", "recordings", "ft", "feat", "featuring",
+          "the", "a", "and", "with"}
+ITUNES_SEARCH = "https://itunes.apple.com/search"
+ART_LENGTH_SLACK_S = 5  # An art track and its video differ by a second or two, not more.
 _HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"}
 _DURATION = re.compile(r"^P(?:(\d+)D)?(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?)?$")
 _CLOCK = re.compile(r"^(?:(\d+):)?(\d{1,2}):(\d{2})$")
@@ -96,6 +106,25 @@ def video_id_from(text: str) -> str | None:
         parts = url.path.strip("/").split("/")
         candidate = parts[1] if len(parts) >= 2 and parts[0] in {"shorts", "embed", "live", "v"} else ""
     return candidate if _VIDEO_ID.match(candidate) else None
+
+
+def _words(text: str) -> set[str]:
+    """A title or artist as comparable words: no brackets (Official Video), no filler, no punctuation."""
+    text = _BRACKETS.sub(" ", text.lower())
+    return {word for word in re.findall(r"[^\W_]+", text) if word not in _NOISE}
+
+
+def same_song(original: Track, candidate: Track) -> bool:
+    """Is ``candidate`` clearly the same song as ``original`` (a video of it)? Strict on purpose: a wrong swap is worse
+    than leaving the video as it was. The song's words must all be in the video's title, the artist must be named by
+    the video's channel or title, and the lengths must agree."""
+    song, artist = _words(candidate.title), _words(candidate.channel)
+    named = _words(original.title) | _words(original.channel)
+    if not song or not song <= named or (artist and not artist <= named):
+        return False
+    if candidate.duration_s is not None and original.duration_s is not None:
+        return abs(candidate.duration_s - original.duration_s) <= ART_LENGTH_SLACK_S
+    return original.duration_s is None and song == _words(original.title) - artist  # No length to check: exact title.
 
 
 def parse_request(text: str) -> LinkRequest | SearchRequest | None:
@@ -282,10 +311,53 @@ class YouTubeClient:
                 tracks = self.videos([request.video_id])
                 if not tracks:
                     raise TrackLookupError("That video doesn't exist or is private.")
-                return tracks[0]
+                return self.with_cover(tracks[0])
             track = self.oembed(request.video_id)
-            return replace(track, duration_s=self.watch_length(request.video_id))
+            return self.with_cover(replace(track, duration_s=self.watch_length(request.video_id)))
         return self.search(request)
+
+    def with_cover(self, track: Track) -> Track:
+        """``track`` as its album art track when YouTube Music has that, and with real cover art if it can be found.
+        Never fails: whatever can't be improved stays as it was."""
+        if track.image_url:
+            return track
+        try:
+            art = self._art_track(track)
+            if art is not None:
+                return art
+            url = self._itunes_cover(track)
+        except (TrackLookupError, TransportError, ValueError, KeyError, TypeError):
+            return track
+        return replace(track, image_url=url) if url else track
+
+    def _art_track(self, video: Track) -> Track | None:
+        artist = re.sub(r"\s*-\s*Topic$|VEVO$", "", video.channel, flags=re.IGNORECASE).strip()
+        title = _BRACKETS.sub(" ", video.title)
+        for candidate in self._music_search(f"{title} {artist}".strip())[:5]:
+            if candidate.video_id == video.video_id:
+                return candidate
+            if same_song(video, candidate):
+                try:
+                    self.oembed(candidate.video_id)  # Only if it can be embedded.
+                except TrackLookupError:
+                    continue
+                return replace(candidate, embeddable=True)
+        return None
+
+    def _itunes_cover(self, track: Track) -> str:
+        """Square cover art for the song from Apple's public search (title and artist only), or ''."""
+        wanted_title, wanted_artist = _words(track.title), _words(track.channel)
+        query = urllib.parse.urlencode({"term": " ".join(sorted(_words(track.title) | wanted_artist))[:100],
+                                        "media": "music", "entity": "song", "limit": 5})
+        status, raw = self._transport("GET", f"{ITUNES_SEARCH}?{query}", {"Accept": "application/json"}, None)
+        results = json.loads(raw).get("results", []) if status == 200 and raw else []
+        for item in results if isinstance(results, list) else []:
+            name, by = _words(str(item.get("trackName", ""))), _words(str(item.get("artistName", "")))
+            url = str(item.get("artworkUrl100", ""))
+            if name and name <= (wanted_title | wanted_artist) and by & (wanted_artist | wanted_title) \
+                    and url.startswith("https://") and "/100x100" in url:
+                return url.replace("/100x100", "/600x600", 1)
+        return ''
 
     def watch_length(self, video_id: str) -> int | None:
         """A video's length from its watch page (oEmbed doesn't say). Undocumented: None when it can't be read."""

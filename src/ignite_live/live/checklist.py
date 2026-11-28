@@ -56,6 +56,7 @@ class Preflight:
     replay_is_vertical: bool = False
     replay_starts_with_stream: bool = False
     replay_seconds: int | None = None
+    music_in_app: bool = False  # Ignite plays the music itself; the Now Playing overlay only shows it.
     tiktok_username: str = ""
     tts_enabled: bool = False
     tts_state: ConnectionState = ConnectionState.OFFLINE
@@ -133,7 +134,15 @@ def evaluate(p: Preflight) -> list[Check]:
 
     # Overlays.
     if p.obs_connected:
-        if not p.player_sources:
+        if p.music_in_app:
+            # Ignite plays the songs: what OBS needs is Ignite's audio, and (to show the cover) the overlay.
+            add(Check("player", "Ignite plays the music", INFO,
+                      "Make sure OBS has Ignite's audio: add an Application Audio Capture for Ignite, or Desktop Audio."))
+            if not p.player_sources:
+                add(Check("player_overlay", "The Now Playing overlay isn't in OBS", INFO,
+                          "Optional: it shows the cover, title and what's next on stream.",
+                          "add_overlay:nowplaying", "Add to OBS"))
+        elif not p.player_sources:
             add(Check("player", "The Now Playing overlay isn't in OBS", WARN,
                       "It plays the song requests: without it they won't be seen or heard.",
                       "add_overlay:nowplaying", "Add to OBS"))

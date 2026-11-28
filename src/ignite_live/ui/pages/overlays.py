@@ -31,10 +31,11 @@ from ignite_live.ui.theme import colors, theme_changed
 
 DESCRIPTIONS = {
     "nowplaying": (
-        "Plays the song requests, with the cover, title, requester, progress, what's next, and replies to "
-        "viewers. Required for music. Songs come from YouTube Music and play in the cover square: YouTube's "
-        "rules say it must stay visible, at least 200×200. In OBS, tick <b>Control audio via OBS</b> on this "
-        "source. Added in more than one scene, only one copy plays the sound."
+        "Shows the song requests: the cover, title, requester, progress, what's next, and replies to viewers. "
+        "With <b>Play music in Ignite</b> on (Live Chat → Song Requests) Ignite plays the songs itself and this "
+        "overlay only shows the cover. Otherwise it plays them: songs come from YouTube Music and play in the cover "
+        "square (YouTube's rules say it must stay visible, at least 200×200), and in OBS you tick <b>Control audio "
+        "via OBS</b> on this source. Added in more than one scene, only one copy plays the sound."
     ),
     "queue": "The next songs and who requested them.",
     "visualizer": (
@@ -253,6 +254,9 @@ class OverlaysPage(QWidget):
         self.games = GamesPage(controller)
         self.tabs.addTab(self.games, "Chat Games")
         controller.settings_changed.connect(self._settings)
+        controller.settings_changed.connect(lambda _s: self._refresh_links())
+        controller.hosted_changed.connect(self._refresh_links)
+        controller.server_changed.connect(lambda _up: self._refresh_links())
         theme_changed().connect(self._restyle)
         self._status_timer = QTimer(self, interval=3000)
         self._status_timer.timeout.connect(self._statuses)
@@ -336,6 +340,23 @@ class OverlaysPage(QWidget):
         url_row.addWidget(copy)
         self.details_box.body.addWidget(label("Browser Source URL", "caption"))
         self.details_box.body.addLayout(url_row)
+        self.link_note = label("", "muted", wrap=True)
+        self.details_box.body.addWidget(self.link_note)
+        self.backup_box = QWidget()  # The same overlay on this PC: only the fallback while the server is away.
+        backup = QVBoxLayout(self.backup_box)
+        backup.setContentsMargins(0, 0, 0, 0)
+        backup.setSpacing(6)
+        backup.addWidget(label("Backup on this PC", "caption"))
+        backup_row = QHBoxLayout()
+        self.backup_url = QLineEdit()
+        self.backup_url.setReadOnly(True)
+        self.backup_url.setAccessibleName("Backup Browser Source URL on this PC")
+        backup_copy = button("Copy", "copy", tip="The link for this PC, if you ever want it by hand")
+        backup_copy.clicked.connect(self._copy_backup)
+        backup_row.addWidget(self.backup_url, 1)
+        backup_row.addWidget(backup_copy)
+        backup.addLayout(backup_row)
+        self.details_box.body.addWidget(self.backup_box)
         theme_row = QHBoxLayout()
         theme_row.addWidget(label("Theme for this URL", "muted"))
         self.url_theme = QComboBox()
@@ -364,7 +385,7 @@ class OverlaysPage(QWidget):
             buttons_row.addWidget(widget)
         buttons_row.addStretch(1)
         self.details_box.body.addLayout(buttons_row)
-        self.row_buttons = [copy, preview, in_browser, self.test, add]
+        self.row_buttons = [copy, backup_copy, preview, in_browser, self.test, add]
         self.description = QLabel()
         self.description.setWordWrap(True)
         self.description.setTextFormat(Qt.TextFormat.RichText)
@@ -397,7 +418,33 @@ class OverlaysPage(QWidget):
             QDesktopServices.openUrl(QUrl(self._demo_url()))
 
     def _url(self, page: str) -> str:
-        return self.controller.overlay.url(page, self.url_theme.currentData() or "")
+        """The link on this PC: the in-app preview always uses it, so it works with the server away."""
+        return self.controller.backup_link(page, self.url_theme.currentData() or "")
+
+    def _link(self, page: str) -> str:
+        """THE link, to copy and paste into a Browser Source: the Ignite server's, or this PC's when there isn't one."""
+        return self.controller.hosted_link(page, self.url_theme.currentData() or "")
+
+    def _refresh_links(self) -> None:
+        page = self._page()
+        self.url.setText(self._link(page))
+        self.backup_url.setText(self._url(page))
+        self._link_note()
+
+    def _link_note(self) -> None:
+        c = self.controller
+        configured = bool(c.settings.hosted_widgets and c.settings.hosted_base)
+        if c.links_are_hosted:
+            text = ("Hosted on Ignite, so it works from any PC. If the server can't be reached, Ignite points OBS at "
+                    "the backup link on this PC and switches back by itself.")
+        elif configured:
+            text = ("The Ignite server isn't answering, so OBS is using the backup link on this PC. This link comes "
+                    "back by itself when the server does.")
+        else:
+            text = ("Sign in to your Ignite account to get hosted links that work from any PC. Until then this link "
+                    "only works on this PC.")
+        self.link_note.setText(text)
+        self.backup_box.setVisible(configured)
 
     def _fill_urls(self) -> None:
         self._selected()
@@ -426,7 +473,7 @@ class OverlaysPage(QWidget):
                              else "Use Preview with Sample Data for this overlay")
         title, width, height = PAGES[page]
         self.details_box.title.setText(title)
-        self.url.setText(self._url(page))
+        self._refresh_links()
         self.preview_area.set_overlay(title, width, height)
         if not self.live_preview.isHidden():  # Follow the selection while a preview is showing.
             self.live_preview.show_url(self._demo_url())
@@ -453,8 +500,12 @@ class OverlaysPage(QWidget):
             self.controller.simulate(*sample_events(page))
 
     def _copy(self) -> None:
-        QGuiApplication.clipboard().setText(self._url(self._page()))
+        QGuiApplication.clipboard().setText(self._link(self._page()))
         self.controller.notice.emit("info", f"Copied the {PAGES[self._page()][0]} overlay URL.")
+
+    def _copy_backup(self) -> None:
+        QGuiApplication.clipboard().setText(self._url(self._page()))
+        self.controller.notice.emit("info", f"Copied the backup link for {PAGES[self._page()][0]} (this PC only).")
 
     def _theme_chosen(self) -> None:
         theme = self.theme.currentData()

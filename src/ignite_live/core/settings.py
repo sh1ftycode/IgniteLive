@@ -15,6 +15,7 @@ from pathlib import Path
 
 from ignite_live.actions.goals import clean_goals
 from ignite_live.actions.rules import clean_rules
+from ignite_live.core.themes import clean_custom
 from ignite_live.games.manager import parse_games
 from ignite_live.live.presence import clean_presence
 from ignite_live.viewers.points import clean_config as clean_points
@@ -61,6 +62,9 @@ SYNCED_FIELDS = (
     "overlay_accent_2",
     "overlay_font",
     "overlay_css",
+    "custom_themes",
+    "theme_active",
+    "theme_match_overlays",
     "action_rules",
     "goals",
     "points",
@@ -217,6 +221,21 @@ class Settings:
     overlay_accent_2: str = ""
     overlay_font: str = ""
     overlay_css: str = ""
+    # Themes (core/themes.py): your own, which one is applied (empty: a built-in, named by overlay_theme), and
+    # whether the dashboard wears whatever the overlays do.
+    custom_themes: list[dict] = field(default_factory=list)
+    theme_active: str = ""
+    theme_match_overlays: bool = True
+    # The dashboard background (ui/background.py), on this PC only: "" none, "preset:<name>", or "file:<name>" in the
+    # backgrounds folder. Hue 0..359, blur 0..24, dim 0..90; the mode is how much of it shows: full, subtle or off.
+    bg_source: str = ""
+    bg_hue: int = 0
+    bg_blur: int = 0
+    bg_dim: int = 30
+    bg_mode: str = "subtle"
+    bg_dashboard: bool = True
+    # Music plays in Ignite's own player (ui/music_player.py) instead of the Now Playing overlay in OBS. This PC only.
+    music_in_app: bool = False
     # Event → action rules (Actions tab), as JSON dicts; see actions/rules.py for the format.
     action_rules: list[dict] = field(default_factory=list)
     # Goal bars (Overlays tab → Goals); progress is kept separately (see actions/goals.py).
@@ -275,6 +294,8 @@ class Settings:
                 value = clean_rules(value)
             elif spec.name == "goals":
                 value = clean_goals(value)
+            elif spec.name == "custom_themes":
+                value = clean_custom(value)
             elif spec.name == "points":
                 value = clean_points(value)
             elif spec.name == "presence":
@@ -289,7 +310,17 @@ class Settings:
                 continue
             if spec.name == "mod_chat_mode" and value not in CHAT_MODES:
                 continue
+            if spec.name == "bg_mode" and value not in ("full", "subtle", "off"):
+                continue
+            if spec.name == "bg_source" and value and value.partition(":")[0] not in ("preset", "file"):
+                continue
+            if spec.name in BG_RANGES:
+                low, high = BG_RANGES[spec.name]
+                value = max(low, min(high, value))
             setattr(self, spec.name, value)
+
+
+BG_RANGES = {"bg_hue": (0, 359), "bg_blur": (0, 24), "bg_dim": (0, 90)}
 
 
 def _config_dir(name: str) -> Path:

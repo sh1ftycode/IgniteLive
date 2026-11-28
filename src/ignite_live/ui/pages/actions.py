@@ -62,6 +62,7 @@ from ignite_live.actions.rules import (
 )
 from ignite_live.controller import Controller, action_engine_config
 from ignite_live.core.events import PLATFORMS, ChatFollow, ChatGift, ChatShare, ConnectionState
+from ignite_live.ui.flow_layout import FlowLayout
 from ignite_live.ui.kit import (
     Card,
     EmptyState,
@@ -548,14 +549,18 @@ class ActionsPage(QWidget):
         self.types_card = Card("Alert types", icon="layers")
         self.types_card.body.addWidget(label("What can start a rule. Pick one to add a rule for it.", "muted", wrap=True))
         self.type_rows: dict[str, QPushButton] = {}
+        chips = QWidget()
+        flow = FlowLayout(chips)
+        flow.setSpacing(8)
         for key, text in TRIGGERS.items():
             widget = QPushButton(text)
-            widget.setProperty("ghost", True)
-            widget.setStyleSheet("text-align: left;")
+            widget.setStyleSheet("padding: 5px 12px; border-radius: 14px; font-size: 12px; min-height: 16px;")
             widget.setCursor(Qt.CursorShape.PointingHandCursor)
+            widget.setToolTip(f"Add a rule that starts when: {text.lower()}")
             widget.clicked.connect(lambda _=False, k=key: self._add(k))
-            self.types_card.body.addWidget(widget)
+            flow.addWidget(widget)
             self.type_rows[key] = widget
+        self.types_card.body.addWidget(chips)
         side.addWidget(self.types_card)
 
         self.preview_card = Card("Preview", icon="eye")

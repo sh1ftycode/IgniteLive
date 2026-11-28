@@ -2,7 +2,7 @@
 then who's watching (and their loyalty points) and the song requests, as tabs.
 
 Moderation is on each message's right-click menu: block a viewer from Ignite, and, with TikTok signed in on
-your Ignite server, make them a moderator, mute or kick them in your LIVE. Messages can be sent to TikTok chat
+your Ignite account, make them a moderator, mute or kick them in your LIVE. Messages can be sent to TikTok chat
 the same way; the box says so when that isn't set up rather than pretending to send.
 """
 
@@ -302,7 +302,7 @@ class ChatTab(QWidget):
         name = tiktok.get("username")
         self.message.setPlaceholderText(f"Send a message as @{name}…" if ready and name else
                                         "Send a message to your TikTok chat…" if ready else
-                                        "To chat from here, sign in to TikTok on your Ignite server (Integrations)")
+                                        "To chat from here, sign in to TikTok in your Ignite account (Integrations)")
 
     def _send(self) -> None:
         if self.controller.send_tiktok_chat(self.message.text()):

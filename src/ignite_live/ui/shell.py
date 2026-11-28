@@ -56,11 +56,11 @@ def server_summary(configured: bool, up: bool, user: str = "") -> tuple[str, str
         return "Sign in", "accent", ("Sign in to your Ignite account: your stream key is kept for 48 hours, settings "
                                      "sync between PCs, you get song search, hosted overlay links, and you can run "
                                      "Ignite from a browser or phone. Click to sign in.")
-    who = f"@{user}" if user else "your Ignite server"
+    who = f"@{user}" if user else "your Ignite account"
     if up:
         return (f"@{user}" if user else "Server"), "healthy", f"Signed in as {who}. The server is answering."
-    return "Server offline", "warning", (f"The server for {who} isn't answering. Overlay links use this PC until it "
-                                         "is back; Ignite keeps checking.")
+    return "Server offline", "warning", (f"Ignite's servers aren't answering for {who}. Overlay links use this PC until they "
+                                         "are back; Ignite keeps checking.")
 
 
 def stream_summary(studio: Studio) -> tuple[str, str, str]:

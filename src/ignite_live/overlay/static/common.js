@@ -77,7 +77,8 @@ const ST = (() => {
   const page = location.pathname.split("/").pop(); // Lets the app's checklist see which overlays are open.
 
   function address(where) {
-    const query = `&page=${encodeURIComponent(page)}` + (demo ? "&preview=1" : "");
+    const host = new URLSearchParams(location.search).get("host") === "app"; // Ignite's own player window.
+    const query = `&page=${encodeURIComponent(page)}` + (demo ? "&preview=1" : "") + (host ? "&host=app" : "");
     if (where === "local") return `${local.socket}?token=${encodeURIComponent(local.token)}${query}`;
     // Next to the page: /overlay/chat → /overlay/ws on the PC, /w/<key>/chat → /w/<key>/ws on an Ignite server.
     const folder = location.pathname.slice(0, location.pathname.lastIndexOf("/") + 1);
